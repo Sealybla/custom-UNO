@@ -12,13 +12,12 @@ end
 
 module Effect = struct
   type t = 
-| Skip
-| Plus
-| Reverse
-| NoEffect
-| Wild
-| Wild4
-
+  | Skip
+  | Plus
+  | Reverse
+  | NoEffect
+  | Wild
+  | Wild4
 end
 
 type t = 

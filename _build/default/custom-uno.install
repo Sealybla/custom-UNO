@@ -8,4 +8,5 @@ bin: [
 ]
 doc: [
   "_build/install/default/doc/custom-uno/README.md"
+  "_build/install/default/doc/custom-uno/odoc-config.sexp"
 ]
