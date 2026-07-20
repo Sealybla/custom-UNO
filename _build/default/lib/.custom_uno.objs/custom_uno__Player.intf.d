@@ -1,1 +1,1 @@
-lib/player.mli:
+lib/player.mli: Core

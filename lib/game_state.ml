@@ -10,7 +10,7 @@ type t =
 { players : Player.t list
 ; draw_pile : Card.t Queue.t
 ; played_pile : Card.t Stack.t
-; current_color : Color.t
-; direction : 
-; turn: 
+; current_color : Card.Color.t
+; direction : Direction.t
+; turn: int
 }

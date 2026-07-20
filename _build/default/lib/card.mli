@@ -1,6 +1,6 @@
 open! Core
 
-type t [@@deriving sexp_of]
+type t 
 
 module Color: sig
 end
