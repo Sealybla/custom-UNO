@@ -1,0 +1,4 @@
+(executable
+ (public_name custom-uno)
+ (name main)
+ (libraries custom_uno core))

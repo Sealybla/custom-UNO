@@ -1,0 +1,11 @@
+lib: [
+  "_build/install/default/lib/custom-uno/META"
+  "_build/install/default/lib/custom-uno/dune-package"
+  "_build/install/default/lib/custom-uno/opam"
+]
+bin: [
+  "_build/install/default/bin/custom-uno"
+]
+doc: [
+  "_build/install/default/doc/custom-uno/README.md"
+]
