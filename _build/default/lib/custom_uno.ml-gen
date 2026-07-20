@@ -6,9 +6,6 @@ module Card = Custom_uno__Card
 (** @canonical Custom_uno.Command *)
 module Command = Custom_uno__Command
 
-(** @canonical Custom_uno.Deck *)
-module Deck = Custom_uno__Deck
-
 (** @canonical Custom_uno.Game_state *)
 module Game_state = Custom_uno__Game_state
 

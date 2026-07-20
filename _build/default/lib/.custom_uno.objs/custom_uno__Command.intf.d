@@ -1,1 +1,1 @@
-lib/command.mli:
+lib/command.mli: Core

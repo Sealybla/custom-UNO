@@ -7,6 +7,7 @@ module Color = struct
   | Blue
   | Yellow
   | NoColor
+  [@@deriving enumerate]
 
 end
 
@@ -18,6 +19,8 @@ module Effect = struct
   | NoEffect
   | Wild
   | Wild4
+  [@@deriving enumerate]
+
 end
 
 type t = 

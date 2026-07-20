@@ -3,12 +3,28 @@ open! Core
 type t [@@deriving sexp_of]
 
 module Color: sig
-end
+type t = 
+  | Red
+  | Green
+  | Blue
+  | Yellow
+  | NoColor
+  [@@deriving enumerate]
+end  
+
 
 
 module Effect : sig
-  
-end
+  type t = 
+  | Skip
+  | Plus
+  | Reverse
+  | NoEffect
+  | Wild
+  | Wild4
+  [@@deriving enumerate]
+end   
+
 
 
 (* 
