@@ -14,6 +14,7 @@ type t =
 ; direction : Direction.t
 ; turn: int
 }
+<<<<<<< HEAD
 
 let create_card_queue (): Card.t Queue.t =
   let arr = 
@@ -23,3 +24,5 @@ let create_card_queue (): Card.t Queue.t =
   q
 ;;
 
+=======
+>>>>>>> 5f0c8ce3c8b6183c91808cbd32636b1997c8df41

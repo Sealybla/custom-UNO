@@ -27,4 +27,4 @@ type t =
 { 
   color:Color.t;
   effect: Effect.t
-}[@@deriving sexp_of]
+}
