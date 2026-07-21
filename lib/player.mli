@@ -1,4 +1,7 @@
 open! Core
 
-type t
-
+type t = 
+{ id : int
+; name : string
+; hand: Card.t list
+} [@@deriving sexp, compare, equal, bin_io]
