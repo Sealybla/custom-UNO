@@ -1,16 +1,28 @@
 open! Core
 
-type t 
-
-module Color: sig
+module Color : sig
+  type t =
+    | Red
+    | Green
+    | Blue
+    | Yellow
+    | NoColor
+  [@@deriving sexp, compare, equal, bin_io]
 end
-
 
 module Effect : sig
-  
+  type t =
+    | Skip
+    | Plus
+    | Reverse
+    | NoEffect
+    | Wild
+    | Wild4
+  [@@deriving sexp, compare, equal, bin_io]
 end
 
-
-(* 
-
-val color: t -> Color.t *)
+type t = {
+  color: Color.t;
+  effect: Effect.t;
+  id : Int.t;
+} [@@deriving sexp, compare, equal, bin_io]

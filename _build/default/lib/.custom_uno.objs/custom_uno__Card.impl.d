@@ -1,1 +1,1 @@
-lib/card.ml: Core
+lib/card.ml: Core Int

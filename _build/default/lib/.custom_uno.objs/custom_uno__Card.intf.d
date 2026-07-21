@@ -1,1 +1,1 @@
-lib/card.mli: Core
+lib/card.mli: Core Int
