@@ -23,7 +23,7 @@ let create_card_queue (): Card.t Queue.t =
     Int.incr i;
     let c2 = {color; effect; id = !i} in
     Int.incr i; 
-    arr := c1:: c2 :: !cards
+    cards := c1:: c2 :: !cards
   in
   List.iter Card.Color.all ~f:(fun col -> 
     List.iter Card.effect.all ~f:(fun eff -> 
