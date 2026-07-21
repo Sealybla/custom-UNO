@@ -1,14 +1,22 @@
-open !Core
-
+open! Core
 
 module Direction : sig
-  type t = 
-  | Clockwise
-  | Counter 
+  type t =
+    | Clockwise
+    | Counter
+  [@@deriving sexp, compare, equal, bin_io]
 end
 
-
-(*you win function*)
-
+(* you win function *)
 
 (**)
+type t =
+  { players : Player.t list
+  ; draw_pile : Card.t Queue.t (* played pile does not contain top card *)
+  ; played_pile : Card.t List.t
+  ; top_card : Card.t
+  ; current_color : Card.Color.t
+  ; direction : Direction.t
+  ; turn : int
+  }
+[@@deriving sexp, compare, equal, bin_io]

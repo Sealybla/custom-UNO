@@ -5,6 +5,7 @@ module Direction = struct
   type t =
     | Clockwise
     | Counter
+  [@@deriving sexp, compare, equal, bin_io]
 end
 
 (* maps id to card for easy search bc hands only keep track of id *)
@@ -13,6 +14,7 @@ module Card_registry = struct
     { mutable data : Card.t option Array.t
     ; mutable size : int
     }
+  [@@deriving sexp, compare, equal, bin_io]
 
   let create capacity = { data = Array.create ~len:capacity None; size = 0 }
 
@@ -27,12 +29,13 @@ end
 type t =
   { players : Player.t list
   ; draw_pile : Card.t Queue.t (* played pile does not contain top card *)
-  ; played_pile : Card.t Dynarray.t
+  ; played_pile : Card.t List.t
   ; top_card : Card.t
   ; current_color : Card.Color.t
   ; direction : Direction.t
   ; turn : int
   }
+[@@deriving sexp, compare, equal, bin_io]
 
 let create_card_array deck_size : Card.t Array.t =
   let cards = ref [] in
@@ -66,7 +69,7 @@ let reshuffle_add_to_draw t arr =
 ;;
 
 let play_to_draw_pile t : unit =
-  let arr = Dynarray.to_array t.played_pile in
+  let arr = List.to_array t.played_pile in
   reshuffle_add_to_draw t arr
 ;;
 
@@ -82,7 +85,7 @@ let draw_card t player_id : unit Or_error.t =
     match Queue.dequeue t.draw_pile with
     | Some c -> Ok c
     | None ->
-      (match Dynarray.is_empty t.played_pile with
+      (match List.is_empty t.played_pile with
        | true -> Or_error.error_string "No cards left to reshuffle with..."
        | false ->
          play_to_draw_pile t;

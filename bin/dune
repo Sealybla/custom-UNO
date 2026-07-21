@@ -1,4 +1,5 @@
 (executable
  (public_name custom-uno)
  (name main)
- (libraries custom_uno core))
+ (libraries custom_uno core async core_unix)
+ (preprocess (pps ppx_jane)))
