@@ -1,4 +1,0 @@
-(lang dune 3.22)
-(name custom-uno)
-(sections (lib .) (bin ../../bin) (doc ../../doc/custom-uno))
-(files (lib (META dune-package opam)) (bin (custom-uno)) (doc (README.md)))

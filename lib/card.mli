@@ -7,7 +7,7 @@ module Color : sig
     | Blue
     | Yellow
     | NoColor
-  [@@deriving sexp, compare, equal, bin_io]
+  [@@deriving enumerate, sexp, compare, equal, bin_io]
 end
 
 module Effect : sig
@@ -15,10 +15,18 @@ module Effect : sig
     | Skip
     | Plus
     | Reverse
-    | NoEffect
     | Wild
     | Wild4
-  [@@deriving sexp, compare, equal, bin_io]
+    | One
+    | Two
+    | Three
+    | Four
+    | Five
+    | Six
+    | Seven
+    | Eight
+    | Nine
+  [@@deriving enumerate, sexp, compare, equal, bin_io]
 end
 
 type t = {
