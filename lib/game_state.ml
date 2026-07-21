@@ -26,7 +26,7 @@ let create_card_queue (): Card.t Queue.t =
     cards := c1:: c2 :: !cards
   in
   List.iter Card.Color.all ~f:(fun col -> 
-    List.iter Card.effect.all ~f:(fun eff -> 
+    List.iter Card.Effect.all ~f:(fun eff -> 
       match col, eff with 
       | (Red | Green | Blue |Yellow), (Wild | Wild4) -> ()
       | (Red | Green | Blue | Yellow), _ -> add_cards col eff
