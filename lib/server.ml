@@ -40,6 +40,7 @@ let broadcast t event =
 (* engine action loop that pulls actions off the pipe *)
 let start_engine_loop t request_reader =
   don't_wait_for (Pipe.iter_without_pushback request_reader ~f:(fun { Queued_request.player_name; action; enqueued_at = _ } -> 
+    Core.print_s [%message "Processing Action" (player_name : string) (action : Action.Client_to_server.t)];
     match t.game_state with 
     | None -> () 
     | Some current_state -> 
@@ -68,6 +69,9 @@ let start_engine_loop t request_reader =
         }))))
 
 let start ~port () = 
+  Core.print_endline (Core.sprintf "\n>>> Booting Uno Server on port %d..." port);
+  Core.Out_channel.flush Core.stdout;
+
   let clients = String.Table.create () in 
   let request_reader, request_writer = Pipe.create () in 
   Pipe.set_size_budget request_writer request_queue_size_budget;
@@ -86,6 +90,7 @@ let start ~port () =
           return (Or_error.error_string "Username already taken in this session")
         else (
           state.player_name <- Some name;
+          Core.print_s [%message "Lobby Registration" (name : string)];
           broadcast t (Action.Server_to_client.Lobby_updated { players = Hashtbl.keys clients});
           return (Ok ())
         ));
@@ -123,6 +128,7 @@ let%map tcp_server = Rpc.Connection.serve ~implementations ~initial_connection_s
     | None -> Deferred.unit 
     | Some name -> 
       Hashtbl.remove clients name;
+      Core.print_s [%message "Player Disconnected" (name : string) ~active_lobby:(Hashtbl.keys clients : string list)];
       broadcast t (Action.Server_to_client.Lobby_updated { players = Hashtbl.keys clients});
       Deferred.unit
   );
@@ -130,4 +136,8 @@ let%map tcp_server = Rpc.Connection.serve ~implementations ~initial_connection_s
   ~where_to_listen:(Tcp.Where_to_listen.of_port port)
   ()
   in 
+
+  Core.print_endline ">>> SUCCESS: TCP socket listening. Ready for players.";
+  Core.Out_channel.flush Core.stdout;
+
   { t with tcp_server}
