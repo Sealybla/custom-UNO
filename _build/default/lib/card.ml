@@ -12,13 +12,21 @@ module Color = struct
 end
 
 module Effect = struct
-  type t = 
+   type t = 
   | Skip
   | Plus
   | Reverse
-  | NoEffect
   | Wild
   | Wild4
+  | One
+  | Two 
+  | Three
+  | Four 
+  | Five
+  | Six
+  | Seven
+  | Eight
+  | Nine 
   [@@deriving enumerate]
 
 end
@@ -26,5 +34,6 @@ end
 type t = 
 { 
   color:Color.t;
-  effect: Effect.t
-}
+  effect: Effect.t; 
+  id : int
+}[@@deriving sexp_of]

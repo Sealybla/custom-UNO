@@ -1,9 +1,9 @@
 open! Core
 
-type t 
+type t [@@deriving sexp_of]
 
 module Color: sig
-    type t = 
+type t = 
   | Red
   | Green
   | Blue
@@ -19,14 +19,18 @@ module Effect : sig
   | Skip
   | Plus
   | Reverse
-  | NoEffect
   | Wild
   | Wild4
+  | One
+  | Two 
+  | Three
+  | Four 
+  | Five
+  | Six
+  | Seven
+  | Eight
+  | Nine 
   [@@deriving enumerate]
 end   
 
 
-
-(* 
-
-val color: t -> Color.t *)

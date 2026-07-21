@@ -1,1 +1,1 @@
-lib/game_state.ml: Card Core Player Queue Stack
+lib/game_state.ml: Array Card Core Int List Player Queue Stack
