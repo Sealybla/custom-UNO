@@ -29,8 +29,11 @@ module Effect : sig
   [@@deriving enumerate, sexp, compare, equal, bin_io]
 end
 
-type t = {
-  color: Color.t;
-  effect: Effect.t;
-  id : Int.t;
-} [@@deriving sexp, compare, equal, bin_io]
+type t =
+  { color : Color.t
+  ; effect : Effect.t
+  ; id : Int.t
+  }
+[@@deriving sexp, compare, equal, bin_io]
+
+val get_id : t -> int

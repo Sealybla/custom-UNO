@@ -8,3 +8,4 @@ type t =
   | Uno 
   | Quit
 [@@deriving sexp, compare, equal, bin_io]
+

@@ -6,3 +6,9 @@ module Direction : sig
   | Clockwise
   | Counter 
 end
+
+
+(*you win function*)
+
+
+(**)

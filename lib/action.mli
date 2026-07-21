@@ -7,3 +7,5 @@ type t =
     | Draw                      (* Draws a card from the draw pile and places it in your hand *)
     | Uno                       (* Declares UNO *)
     | Quit                      (* Disconnects player from lobby *)
+
+
