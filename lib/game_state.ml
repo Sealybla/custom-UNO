@@ -47,7 +47,7 @@ let create_card_array deck_size : Card.t Array.t =
     Card_registry.add_card_exn card_registry c1;
     let c2 : Card.t = { color; effect; id = !i } in
     Int.incr i;
-    Card_registry.add_card_exn card_registry c1;
+    Card_registry.add_card_exn card_registry c2;
     cards := c1 :: c2 :: !cards
   in
   List.iter Card.Color.all ~f:(fun col ->
