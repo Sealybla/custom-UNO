@@ -7,21 +7,29 @@ module Direction : sig
   [@@deriving sexp, compare, equal, bin_io]
 end
 
-(* you win function *)
+module Card_registry : sig
+  type t = Card.t Int.Map.t [@@deriving sexp, compare, equal, bin_io]
 
-(**)
+  val of_cards : Card.t List.t -> t
+  val find : t -> int -> Card.t Or_error.t
+end
+
 type t =
   { players : Player.t list
-  ; draw_pile : Card.t Queue.t (* played pile does not contain top card *)
+  ; draw_pile : Card.t List.t 
   ; played_pile : Card.t List.t
   ; top_card : Card.t
   ; current_color : Card.Color.t
   ; direction : Direction.t
   ; turn : int
+  ; card_registry : Card_registry.t
   }
 [@@deriving sexp, compare, equal, bin_io]
 
-(* val create : unit -> t *)
-val draw_card_player : t -> int -> unit Or_error.t
-val draw_card_player_exn : t -> int -> unit
-val start_distribution : t -> int -> int -> t
+val create_card_deck : unit -> Card.t List.t
+val shuffle : Card.t List.t -> Card.t List.t
+val draw_card : t -> (Card.t * t) Or_error.t
+val update_player : t -> Player.t -> t
+val draw_card_player : t -> int -> t Or_error.t 
+val update_top_card : t -> Card.t -> t
+val create : player_names:string List.t -> hand_size:int -> t Or_error.t

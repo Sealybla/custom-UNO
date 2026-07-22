@@ -17,6 +17,7 @@ module Effect = struct
     | Reverse
     | Wild
     | Wild4
+    | Zero 
     | One
     | Two
     | Three

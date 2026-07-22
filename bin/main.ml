@@ -11,13 +11,16 @@ let handler _game ~body:_ _sock req =
   | _ -> Cohttp_async.Server.respond `Not_found
 
 let run_server port = 
-  let%bind game = Server.start ~port () in 
+  (* registers an accept loop with Async's scheduler and returns a Deferred.t *)
+  let%bind game = Server.start ~port () in
+  (* another register on same loop *) 
   let%bind _web =
     Cohttp_async.Server.create 
       ~on_handler_error:`Ignore
       (Tcp.Where_to_listen.of_port (port + 1))
       (handler game)
 in
+(* never resolves so keeps scheduler running *)
 Deferred.never()
 
 let command =

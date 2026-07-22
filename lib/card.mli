@@ -17,6 +17,7 @@ module Effect : sig
     | Reverse
     | Wild
     | Wild4
+    | Zero
     | One
     | Two
     | Three
