@@ -10,7 +10,7 @@ module Color : sig
   [@@deriving enumerate, sexp, compare, equal, bin_io]
 end
 
-module Effect : sig
+module Value : sig
   type t =
     | Skip
     | Plus
@@ -32,7 +32,7 @@ end
 
 type t =
   { color : Color.t
-  ; effect : Effect.t
+  ; value : Value.t
   ; id : Int.t
   }
 [@@deriving sexp, compare, equal, bin_io]

@@ -10,14 +10,14 @@ module Color = struct
   [@@deriving enumerate, sexp, compare, equal, bin_io]
 end
 
-module Effect = struct
+module Value = struct
   type t =
     | Skip
     | Plus
     | Reverse
     | Wild
     | Wild4
-    | Zero 
+    | Zero
     | One
     | Two
     | Three
@@ -32,7 +32,7 @@ end
 
 type t =
   { color : Color.t
-  ; effect : Effect.t
+  ; value : Value.t
   ; id : Int.t
   }
 [@@deriving sexp, compare, equal, bin_io]
