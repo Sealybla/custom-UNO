@@ -1,5 +1,6 @@
 (library
  (name custom_uno)
  (libraries core async bonsai_web)
+ (modules card action rpc_protocol player game_state server game_rules)
  (preprocess
   (pps ppx_jane)))

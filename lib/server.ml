@@ -19,6 +19,7 @@ module Client_connection = struct
   type t = {
     name : string;
     writer : Action.Server_to_client.t Pipe.Writer.t;
+    mutable is_bot : bool;
   }
 end
 
@@ -64,9 +65,33 @@ let start_engine_loop t request_reader =
             current_color = Card.Color.Red;
           });
           
+          let next_player_name = player_name in
           broadcast t (Action.Server_to_client.Turn_changed { 
-            current_player_name = player_name 
-        }))))
+            current_player_name = next_player_name;
+          }); 
+        (* END OF MOCK BLOCK *)
+        (* bot take-over automation timer *)
+        match Hashtbl.find t.clients next_player_name with 
+        | Some client when client.is_bot -> 
+          don't_wait_for (let%map () = Clock_ns.after (Time_ns.Span.of_sec 5.0) in
+          (* verify it is their turn after 5 seconds before acting *)
+          match t.game_state with 
+          | None -> ()
+          | Some verified_state -> 
+            let current_turn_name = next_player_name in
+            if String.equal current_turn_name next_player_name then (
+              Core.print_s [%message "Bot execution triggered" (next_player_name : string)];
+
+              let bot_action = {
+                Queued_request. 
+                player_name = next_player_name;
+                action = Action.Client_to_server.Draw;
+                enqueued_at = Time_ns.now ();
+              } in
+              Pipe.write_without_pushback t.request_writer bot_action
+            ))
+        | _ -> ()
+        )))
 
 let start ~port () = 
   Core.print_endline (Core.sprintf "\n>>> Booting Uno Server on port %d..." port);
@@ -81,7 +106,9 @@ let start ~port () =
 
   let implementations = Rpc.Implementations.create_exn ~implementations:[
     Rpc.Rpc.implement Rpc_protocol.join_lobby_rpc (fun state name -> 
-      if String.is_empty (String.strip name) then
+      if Option.is_some t.game_state then
+        return (Or_error.error_string "Cannot join lobby: A game is currently in progress!")
+      else if String.is_empty (String.strip name) then
         return (Or_error.error_string "Invalid name") 
       else match state.Connection_state.player_name with 
       | Some _ -> return (Or_error.error_string "Already registered on this connection")
@@ -96,14 +123,16 @@ let start ~port () =
         ));
 
     Rpc.Pipe_rpc.implement Rpc_protocol.game_stream_rpc (fun state () -> 
-      match state.Connection_state.player_name with 
+      if Option.is_some t.game_state then 
+        return (Error (Error.of_string "Access denied: Game is already in progress!"))
+      else match state.Connection_state.player_name with 
       | None -> return (Error (Error.of_string "Not logged into lobby yet"))
       | Some name ->
         let reader, writer = Pipe.create () in 
-        let connection = { Client_connection.name; writer } in
+        let connection = { Client_connection.name; writer; is_bot = false } in
         Hashtbl.set clients ~key:name ~data:connection;
 
-        (*sync up current lobby status*)
+        (* broadcasts to everyone that a new user is in the lobby*)
         broadcast t (Action.Server_to_client.Lobby_updated { players = Hashtbl.keys clients}); 
         return (Ok reader)) ;
      
@@ -127,9 +156,17 @@ let%map tcp_server = Rpc.Connection.serve ~implementations ~initial_connection_s
     match state.Connection_state.player_name with 
     | None -> Deferred.unit 
     | Some name -> 
-      Hashtbl.remove clients name;
-      Core.print_s [%message "Player Disconnected" (name : string) ~active_lobby:(Hashtbl.keys clients : string list)];
-      broadcast t (Action.Server_to_client.Lobby_updated { players = Hashtbl.keys clients});
+      if Option.is_some t.game_state then (
+        match Hashtbl.find t.clients name with 
+      | None -> ()
+      | Some client -> 
+        client.is_bot <- true;
+        Core.print_s [%message "Player dropped mid-game. Bot activated." (name : string)]
+      ) else (
+        Hashtbl.remove t.clients name;
+        Core.print_s [%message "Player left the lobby" (name : string)];
+        broadcast t (Action.Server_to_client.Lobby_updated { players = Hashtbl.keys t.clients})
+      );
       Deferred.unit
   );
   state)

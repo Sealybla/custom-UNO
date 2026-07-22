@@ -2,9 +2,23 @@ open! Core
 open! Async 
 open! Custom_uno
 
+let html_headers =
+  Cohttp.Header.of_list [ "Content-Type", "text/html; charset=utf-8" ]
+
+let handler _game ~body:_ _sock req =
+  match Uri.path (Cohttp.Request.uri req) with
+  | "/" -> Cohttp_async.Server.respond_string ~headers:html_headers Page.html
+  | _ -> Cohttp_async.Server.respond `Not_found
+
 let run_server port = 
-  let%bind _server = Server.start ~port () in 
-  Deferred.never ()
+  let%bind game = Server.start ~port () in 
+  let%bind _web =
+    Cohttp_async.Server.create 
+      ~on_handler_error:`Ignore
+      (Tcp.Where_to_listen.of_port (port + 1))
+      (handler game)
+in
+Deferred.never()
 
 let command =
   Command.async 
