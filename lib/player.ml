@@ -10,3 +10,4 @@ type t =
 let create id name max_hand_size = { id; name; hand = [] }
 let get_hand t = t.hand
 let add_card t card_id = t.hand <- card_id :: t.hand
+let get_id t = t.id

@@ -37,6 +37,18 @@ type t =
   }
 [@@deriving sexp, compare, equal, bin_io]
 
+(*= let create () =
+  { players = []
+  ; draw_pile = Queue.create ()
+  ; played_pile = []
+  ; top_card = None
+  ; current_color = Blue (* default, changes according to top card *)
+  ; direction = Clockwise
+  ; turn = 0
+  }
+;; *)
+
+(* helper function for start state *)
 let create_card_array deck_size : Card.t Array.t =
   let cards = ref [] in
   let i = ref 0 in
@@ -63,38 +75,70 @@ let create_card_array deck_size : Card.t Array.t =
   Array.of_list !cards
 ;;
 
-let reshuffle_add_to_draw t arr =
+(* helper function that takes ANY array of cards, shuffles, and adds to draw
+   pile *)
+let reshuffle_add_to_draw t arr : unit =
   Array.permute arr;
   Array.iter arr ~f:(fun card -> Queue.enqueue t.draw_pile card)
 ;;
 
+(* reshuffles play pile and adds to draw pile *)
 let play_to_draw_pile t : unit =
   let arr = List.to_array t.played_pile in
   reshuffle_add_to_draw t arr
 ;;
 
+(* helper function *)
+let draw_card t : Card.t Or_error.t =
+  match Queue.dequeue t.draw_pile with
+  | Some c -> Ok c
+  | None ->
+    (match List.is_empty t.played_pile with
+     | true -> Or_error.error_string "No cards left to reshuffle with..."
+     | false ->
+       play_to_draw_pile t;
+       Ok (Queue.dequeue_exn t.draw_pile))
+;;
+
+(* helper function *)
+let draw_card_exn t : Card.t = Queue.dequeue_exn t.draw_pile
+
 (* draws top card in draw pile, reshuffles card if no cards left in draw pile
-   return error if *)
-let draw_card t player_id : unit Or_error.t =
+   return error if no player exists or no playable cards *)
+let draw_card_player t player_id : unit Or_error.t =
   let%bind player =
     match List.nth t.players player_id with
     | Some p -> Ok p
     | None -> Or_error.error_string "Player ID NOT FOUND"
   in
-  let%bind top_card_id =
-    match Queue.dequeue t.draw_pile with
-    | Some c -> Ok c
-    | None ->
-      (match List.is_empty t.played_pile with
-       | true -> Or_error.error_string "No cards left to reshuffle with..."
-       | false ->
-         play_to_draw_pile t;
-         Ok (Queue.dequeue_exn t.draw_pile))
-  in
+  let%bind top_card_id = draw_card t in
   Ok (Player.add_card player (Card.get_id top_card_id))
 ;;
 
-(* distirbutes cards to player list and returns draw pile Assumes player list
-   is established with empty *)
-(* let start_distribution t deck_size:unit = let card_queue = reshuffle_pile
-   (create_card_queue deck_size) in () ;; *)
+(* same as draw_card_player without exception, used at start *)
+let draw_card_player_exn t player_id : unit =
+  let player = List.nth_exn t.players player_id in
+  let top_card_id = draw_card_exn t in
+  Player.add_card player (Card.get_id top_card_id)
+;;
+
+(* helper function *)
+let update_top_card (state : t) (new_card : Card.t) : t =
+  { state with top_card = new_card }
+;;
+
+(* Initializes card deck, adds to draw pile, distributes cards to player list
+   and returns new game state. Assumes player list is nonempty, with each
+   player having empty hands *)
+let start_distribution t hand_size deck_size : t =
+  let () = reshuffle_add_to_draw t (create_card_array deck_size) in
+  let () =
+    (* giving all players 7 cards at once is same as one at a time *)
+    List.iter t.players ~f:(fun player ->
+      for _ = 1 to hand_size do
+        draw_card_player_exn t (Player.get_id player)
+      done)
+  in
+  let top_card = draw_card_exn t in
+  update_top_card t top_card
+;;

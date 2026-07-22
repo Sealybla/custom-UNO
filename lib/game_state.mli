@@ -20,3 +20,8 @@ type t =
   ; turn : int
   }
 [@@deriving sexp, compare, equal, bin_io]
+
+(* val create : unit -> t *)
+val draw_card_player : t -> int -> unit Or_error.t
+val draw_card_player_exn : t -> int -> unit
+val start_distribution : t -> int -> int -> t
