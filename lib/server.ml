@@ -24,10 +24,9 @@ module Client_connection = struct
 end
 
 type t = {
-  mutable clients : Client_connection.t String.Table.t;
+  clients : Client_connection.t String.Table.t;
   mutable game_state : Game_state.t option;
   request_writer : Queued_request.t Pipe.Writer.t;
-  tcp_server : (Socket.Address.Inet.t, int) Tcp.Server.t;
 }
 
 let request_queue_size_budget = 1024
@@ -38,6 +37,54 @@ let broadcast t event =
     if not (Pipe.is_closed client.writer) then
       Pipe.write_without_pushback client.writer event)
 
+let player_id_of_name state name = 
+  List.find_map state.Game_state.players ~f:(fun p -> 
+    if String.equal (Player.get_name p) name then Some (Player.get_id p) else None)
+;;
+
+let name_of_player_id state id =
+  match List.nth state.Game_state.players id with 
+  | Some p -> Some (Player.get_name p)
+  | None -> None 
+;; 
+
+let send_hands t state = 
+  List.iter state.Game_state.players ~f:(fun player ->
+    match Hashtbl.find t.clients (Player.get_name player) with 
+    | None -> ()
+    | Some client -> 
+      let hand = List.filter_map (Player.get_hand player) ~f:(fun card_id ->
+        Game_state.Card_registry.find state.Game_state.card_registry card_id
+        |> Or_error.ok)
+      in 
+      if not (Pipe.is_closed client.writer) 
+      then 
+        Pipe.write_without_pushback client.writer (Action.Server_to_client.Hand_updated { your_hand = hand}))
+;;
+
+let maybe_schedule_bot t next_state current_player_name =
+  match Hashtbl.find t.clients current_player_name with
+  | Some client when client.is_bot ->
+    let bot_turn = next_state.Game_state.turn in
+    don't_wait_for
+      (let%map () = Clock_ns.after (Time_ns.Span.of_sec 5.0) in
+       match t.game_state with
+       | None -> ()
+       | Some verified_state ->
+         if Int.equal verified_state.Game_state.turn bot_turn
+            && Option.is_none verified_state.Game_state.winner
+         then (
+           Core.print_s
+             [%message "Bot execution triggered" (current_player_name : string)];
+           Pipe.write_without_pushback
+             t.request_writer
+             { Queued_request.player_name = current_player_name
+             ; action = Action.Client_to_server.Draw
+             ; enqueued_at = Time_ns.now ()
+             }))
+  | _ -> ()
+;;
+
 (* engine action loop that pulls actions off the pipe *)
 let start_engine_loop t request_reader =
   don't_wait_for (Pipe.iter_without_pushback request_reader ~f:(fun { Queued_request.player_name; action; enqueued_at = _ } -> 
@@ -45,53 +92,30 @@ let start_engine_loop t request_reader =
     match t.game_state with 
     | None -> () 
     | Some current_state -> 
-      (* --- TEMPORARY MOCK BLOCK START --- *)
-        (* This pattern replaces Game_state.apply_action until it is finished*)
-        let is_valid_placeholder = true in
-        if not is_valid_placeholder then ()
-        else (
-          let next_state = current_state in
-          t.game_state <- Some next_state;
-          
-          (* Hardcoded card and color payloads so the compiler avoids record field errors *)
-          let mock_top_card = { 
-            Card.color = Card.Color.Red; 
-            effect = Card.Effect.One; 
-            id = 999 
-          } in
-          
-          broadcast t (Action.Server_to_client.Pile_updated {
-            top_card = mock_top_card;
-            current_color = Card.Color.Red;
-          });
-          
-          let next_player_name = player_name in
-          broadcast t (Action.Server_to_client.Turn_changed { 
-            current_player_name = next_player_name;
+      (match player_id_of_name current_state player_name with 
+      | None -> () 
+      | Some player_id -> 
+        (match Game_state.apply_action current_state ~player_id ~action with 
+        | Error e -> Core.print_s [%message "Rejected action" (player_name : string) (e : Error.t)]
+        | Ok next_state -> 
+          t.game_state <- Some next_state; 
+          broadcast t (Action.Server_to_client.Pile_updated 
+          { top_card = next_state.top_card 
+           ; current_color = next_state.current_color
           }); 
-        (* END OF MOCK BLOCK *)
-        (* bot take-over automation timer *)
-        match Hashtbl.find t.clients next_player_name with 
-        | Some client when client.is_bot -> 
-          don't_wait_for (let%map () = Clock_ns.after (Time_ns.Span.of_sec 5.0) in
-          (* verify it is their turn after 5 seconds before acting *)
-          match t.game_state with 
-          | None -> ()
-          | Some verified_state -> 
-            let current_turn_name = next_player_name in
-            if String.equal current_turn_name next_player_name then (
-              Core.print_s [%message "Bot execution triggered" (next_player_name : string)];
-
-              let bot_action = {
-                Queued_request. 
-                player_name = next_player_name;
-                action = Action.Client_to_server.Draw;
-                enqueued_at = Time_ns.now ();
-              } in
-              Pipe.write_without_pushback t.request_writer bot_action
-            ))
-        | _ -> ()
-        )))
+           send_hands t next_state;
+           (match next_state.winner with 
+           | Some winner_id -> 
+            (match name_of_player_id next_state winner_id with 
+            | Some winner_name -> 
+              broadcast t (Action.Server_to_client.Game_over {winner_name}) 
+            | None -> ()) 
+          | None -> 
+            (match name_of_player_id next_state next_state.turn with 
+            | None -> ()
+            | Some current_player_name ->
+              broadcast t (Action.Server_to_client.Turn_changed { current_player_name }); 
+              maybe_schedule_bot t next_state current_player_name))))))
 
 let start ~port () = 
   Core.print_endline (Core.sprintf "\n>>> Booting Uno Server on port %d..." port);
@@ -101,7 +125,7 @@ let start ~port () =
   let request_reader, request_writer = Pipe.create () in 
   Pipe.set_size_budget request_writer request_queue_size_budget;
 
-  let t = { clients; game_state = None; request_writer; tcp_server = Obj.magic (); } in
+  let t = { clients; game_state = None; request_writer;} in
   start_engine_loop t request_reader;
 
   let implementations = Rpc.Implementations.create_exn ~implementations:[
@@ -176,5 +200,4 @@ let%map tcp_server = Rpc.Connection.serve ~implementations ~initial_connection_s
 
   Core.print_endline ">>> SUCCESS: TCP socket listening. Ready for players.";
   Core.Out_channel.flush Core.stdout;
-
-  { t with tcp_server}
+  tcp_server

@@ -16,28 +16,26 @@ let calculate_draw_penalty = function
   let get_next_turn ~current_turn ~player_count ~direction ~effect =
     let step =
       match direction with 
-      | Game_state.Direction.Clockwise -> 1
-      | Game_state.Direction.Counter -> -1
+      | Direction.Clockwise -> 1
+      | Direction.Counter -> -1
     in
     let multiplier = 
       match effect with 
       | Card.Effect.Skip -> 2
+      | Card.Effect.Reverse when Int.equal player_count 2 -> 2
       | _ -> 1
     in 
     let total_shift = step * multiplier in
 
-    Core.Int.rem (current_turn + total_shift + player_count) player_count
+    Core.Int.rem (current_turn + total_shift + ( player_count * 2)) player_count
 
 (*adjust this function to make it customizable*)
 let get_next_direction  ~player_count ~direction ~effect =
   match effect with 
   | Card.Effect.Reverse when player_count > 2 -> 
     (match direction with 
-    | Game_state.Direction.Clockwise -> Game_state.Direction.Counter
-    | Game_state.Direction.Counter -> Game_state.Direction.Clockwise)
+    | Direction.Clockwise -> Direction.Counter
+    | Direction.Counter -> Direction.Clockwise)
   | _ -> direction
-
-let is_vulnerable_to_uno_penalty ~hand_size ~declared_uno =
-  Int.equal hand_size 1 && not declared_uno
 
   
