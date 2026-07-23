@@ -67,9 +67,9 @@ let create_card_deck () : Card.t List.t =
 ;;
 
 (* shuffles deck of cards *)
-let shuffle cards =
+let shuffle ?random_state cards =
   let arr = List.to_array cards in
-  Array.permute arr;
+  Array.permute ?random_state arr;
   Array.to_list arr
 ;;
 
@@ -119,14 +119,14 @@ let update_top_card t (new_card : Card.t) : t =
    with id = -1 is a stand-in for the empty record field and is always
    overwritten by the final update_top_card. Errors if the deck runs out
    mid-deal. *)
-let create ~player_names ~hand_size : t Or_error.t =
+let create ?random_state ~player_names ~hand_size () : t Or_error.t =
   let deck = create_card_deck () in
   let players =
     List.mapi player_names ~f:(fun id name -> Player.create id name)
   in
   let t =
     { players
-    ; draw_pile = shuffle deck
+    ; draw_pile = shuffle ?random_state deck
     ; played_pile = []
     ; top_card = { color = NoColor; value = Zero; id = -1 }
     ; current_color = NoColor

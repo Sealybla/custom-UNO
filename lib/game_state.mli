@@ -35,10 +35,10 @@ type t =
 [@@deriving sexp, compare, equal, bin_io]
 
 val create_card_deck : unit -> Card.t List.t
-val shuffle : Card.t List.t -> Card.t List.t
+val shuffle : ?random_state:Random.State.t -> Card.t List.t -> Card.t List.t
 val draw_card : t -> (Card.t * t) Or_error.t
 val update_player : t -> Player.t -> t
 val draw_card_player : t -> int -> t Or_error.t
 val update_top_card : t -> Card.t -> t
-val create : player_names:string List.t -> hand_size:int -> t Or_error.t
+val create : ?random_state:Random.State.t -> player_names:string List.t -> hand_size:int -> unit -> t Or_error.t
 val apply_action :  t -> player_id:int -> action:Action.Client_to_server.t -> t Or_error.t

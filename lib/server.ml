@@ -232,7 +232,7 @@ let start ~port () =
               if List.length player_names < 2
               then return (Or_error.error_string "Need at least 2 players")
               else (
-                match Game_state.create ~player_names ~hand_size:7 with
+                match Game_state.create ~player_names ~hand_size:7 () with
                 | Error e -> return (Error e)
                 | Ok initial_state ->
                   t.game_state <- Some initial_state;
