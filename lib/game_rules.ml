@@ -24,8 +24,8 @@ let calculate_draw_penalty = function
     in
     let multiplier = 
       match effect with 
-      | Card.Effect.Skip -> 2
-      | Card.Effect.Reverse when Int.equal player_count 2 -> 2
+      | Card.Value.Skip -> 2
+      | Card.Value.Reverse when Int.equal player_count 2 -> 2
       | _ -> 1
     in 
     let total_shift = step * multiplier in
@@ -35,7 +35,7 @@ let calculate_draw_penalty = function
 (*adjust this function to make it customizable*)
 let get_next_direction  ~player_count ~direction ~effect =
   match effect with 
-  | Card.Effect.Reverse when player_count > 2 -> 
+  | Card.Value.Reverse when player_count > 2 -> 
     (match direction with 
     | Direction.Clockwise -> Direction.Counter
     | Direction.Counter -> Direction.Clockwise)

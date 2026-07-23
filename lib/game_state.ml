@@ -162,7 +162,7 @@ let apply_action t ~player_id ~(action : Action.Client_to_server.t) : t Or_error
   match action with 
   | Draw -> 
     let%map t = draw_card_player t player_id in 
-    { t with turn = Game_rules.get_next_turn ~current_turn:t.turn ~player_count ~direction:t.direction ~effect:Card.Effect.Zero}
+    { t with turn = Game_rules.get_next_turn ~current_turn:t.turn ~player_count ~direction:t.direction ~effect:Card.Value.Zero}
   | Play {card_id; declared_color} -> 
     let%bind player = 
       match List.nth t.players player_id with 
@@ -181,19 +181,19 @@ let apply_action t ~player_id ~(action : Action.Client_to_server.t) : t Or_error
     let t = update_top_card t card in 
 
     let%bind t = 
-      match card.effect, declared_color with 
+      match card.value, declared_color with 
       | (Wild | Wild4), Some color -> Ok {t with current_color = color}
       | (Wild | Wild4), None -> Or_error.error_string "Wild requires a declared color"
       | _,_ -> Ok t 
     in 
 
-    let direction = Game_rules.get_next_direction ~player_count ~direction:t.direction ~effect:card.effect in 
-    let next_turn = Game_rules.get_next_turn ~current_turn:t.turn ~player_count ~direction ~effect:card.effect in 
+    let direction = Game_rules.get_next_direction ~player_count ~direction:t.direction ~effect:card.value in 
+    let next_turn = Game_rules.get_next_turn ~current_turn:t.turn ~player_count ~direction ~effect:card.value in 
     let%map t = 
-      match Game_rules.calculate_draw_penalty card.effect with 
+      match Game_rules.calculate_draw_penalty card.value with 
       | 0 -> Ok t 
       | n -> 
-        let penalized = Game_rules.get_next_turn ~current_turn:t.turn ~player_count ~direction ~effect:Card.Effect.Zero in 
+        let penalized = Game_rules.get_next_turn ~current_turn:t.turn ~player_count ~direction ~effect:Card.Value.Zero in 
         List.fold_result (List.init n ~f:Fn.id) ~init:t ~f:(fun t _ -> draw_card_player t penalized) 
       in
       let winner = if List.is_empty (Player.get_hand player) then Some player_id else None in
@@ -201,5 +201,4 @@ let apply_action t ~player_id ~(action : Action.Client_to_server.t) : t Or_error
   | Join_lobby _ | Start_game | Quit ->
     Or_error.error_s
       [%message "Action not handled by game state" (action : Action.Client_to_server.t)]
-  update_top_card t card
 ;;

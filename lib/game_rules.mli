@@ -16,7 +16,7 @@ val calculate_draw_penalty : Card.Value.t -> int
 val get_next_turn
   :  current_turn:int
   -> player_count:int
-  -> direction:Game_state.Direction.t
+  -> direction:Direction.t
   -> effect:Card.Value.t
   -> int
 
