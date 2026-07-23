@@ -43,3 +43,9 @@ let get_next_direction  ~player_count ~direction ~effect =
 ;;
 
   
+(* picks first playable card in hand or None if nothing is playable *)
+  (* for bots*) 
+let choose_card ~hand ~top_card ~current_color = 
+  List.find hand ~f:(fun card -> 
+    is_valid_play ~top_card ~played_card:card ~current_color)
+;;

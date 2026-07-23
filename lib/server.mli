@@ -16,3 +16,5 @@ val player_id_of_name : Game_state.t -> string -> int option
 val name_of_player_id : Game_state.t -> int -> string option
 
 val maybe_schedule_bot : t -> Game_state.t -> string -> unit
+
+val bot_action : Game_state.t -> string -> Action.Client_to_server.t

@@ -86,6 +86,43 @@ let broadcast_game_started t state =
              }))
 ;;
 
+(* Chooses an action for a bot-controlled player: plays the first valid card
+   in hand, declaring a real color for wilds, or draws if nothing is playable. *)
+let bot_action state player_name =
+  let fallback = Action.Client_to_server.Draw in
+  match player_id_of_name state player_name with
+  | None -> fallback
+  | Some player_id ->
+    (match List.nth state.Game_state.players player_id with
+     | None -> fallback
+     | Some player ->
+       let hand = hand_of_player state player in
+       (match
+          Game_rules.choose_card
+            ~hand
+            ~top_card:state.Game_state.top_card
+            ~current_color:state.Game_state.current_color
+        with
+        | None -> fallback
+        | Some card ->
+          let declared_color =
+            match card.Card.value with
+            | Wild | Wild4 ->
+              (* a wild's own color is NoColor, so declare a real one from hand *)
+              let color =
+                List.find_map hand ~f:(fun c ->
+                  match c.Card.color with
+                  | NoColor -> None
+                  | color -> Some color)
+                |> Option.value ~default:Card.Color.Red
+              in
+              Some color
+            | _ -> None
+          in
+          Action.Client_to_server.Play
+            { card_id = Card.get_id card; declared_color }))
+;;
+
 let maybe_schedule_bot t next_state current_player_name =
   match Hashtbl.find t.clients current_player_name with
   | Some client when client.is_bot ->
@@ -103,7 +140,7 @@ let maybe_schedule_bot t next_state current_player_name =
            Pipe.write_without_pushback
              t.request_writer
              { Queued_request.player_name = current_player_name
-             ; action = Action.Client_to_server.Draw
+             ; action = bot_action verified_state current_player_name
              ; enqueued_at = Time_ns.now ()
              }))
   | _ -> ()
