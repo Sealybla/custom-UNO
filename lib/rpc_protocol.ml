@@ -33,3 +33,13 @@ let take_action_rpc =
   ~bin_response:[%bin_type_class: unit Or_error.t]
   ~include_in_error_count:Only_on_exn
 ;;
+
+(* starts uno game *)
+let start_game_rpc =
+  Rpc.Rpc.create
+    ~name:"start-game"
+    ~version:1
+    ~bin_query:Unit.bin_t
+    ~bin_response:[%bin_type_class: unit Or_error.t]
+    ~include_in_error_count:Only_on_exn
+;;

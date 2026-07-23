@@ -11,3 +11,5 @@ val join_lobby_rpc : (String.t, unit Or_error.t) Rpc.Rpc.t
 
 (* forward players moves to game engine *) 
 val take_action_rpc : (Action.Client_to_server.t, unit Or_error.t) Rpc.Rpc.t
+
+val start_game_rpc : (Unit.t, unit Or_error.t) Rpc.Rpc.t

@@ -198,7 +198,7 @@ let apply_action t ~player_id ~(action : Action.Client_to_server.t) : t Or_error
       in
       let winner = if List.is_empty (Player.get_hand player) then Some player_id else None in
       {t with direction; turn = next_turn; winner} 
-  | Join_lobby _ | Start_game | Quit ->
+  | Join_lobby _ | Quit ->
     Or_error.error_s
       [%message "Action not handled by game state" (action : Action.Client_to_server.t)]
 ;;

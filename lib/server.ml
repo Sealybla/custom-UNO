@@ -47,18 +47,43 @@ let name_of_player_id state id =
   | None -> None 
 ;; 
 
+let hand_of_player state player =
+  List.filter_map (Player.get_hand player) ~f:(fun card_id ->
+    Game_state.Card_registry.find state.Game_state.card_registry card_id
+    |> Or_error.ok)
+;;
+
 let send_hands t state = 
   List.iter state.Game_state.players ~f:(fun player ->
     match Hashtbl.find t.clients (Player.get_name player) with 
     | None -> ()
     | Some client -> 
-      let hand = List.filter_map (Player.get_hand player) ~f:(fun card_id ->
-        Game_state.Card_registry.find state.Game_state.card_registry card_id
-        |> Or_error.ok)
-      in 
+      let hand = hand_of_player state player in
       if not (Pipe.is_closed client.writer) 
       then 
         Pipe.write_without_pushback client.writer (Action.Server_to_client.Hand_updated { your_hand = hand}))
+;;
+
+let broadcast_game_started t state =
+  let player_names = List.map state.Game_state.players ~f:Player.get_name in
+  let current_player_name =
+    Option.value (name_of_player_id state state.Game_state.turn) ~default:""
+  in
+  List.iter state.Game_state.players ~f:(fun player ->
+    match Hashtbl.find t.clients (Player.get_name player) with
+    | None -> ()
+    | Some client ->
+      if not (Pipe.is_closed client.writer)
+      then
+        Pipe.write_without_pushback
+          client.writer
+          (Action.Server_to_client.Game_started
+             { your_hand = hand_of_player state player
+             ; top_card = state.Game_state.top_card
+             ; current_color = state.Game_state.current_color
+             ; player_names
+             ; current_player_name
+             }))
 ;;
 
 let maybe_schedule_bot t next_state current_player_name =
@@ -196,6 +221,23 @@ let start ~port () =
               in
               let%map () = Pipe.write_if_open request_writer queued in
               Ok ())
+        ; Rpc.Rpc.implement Rpc_protocol.start_game_rpc (fun state () ->
+          match state.Connection_state.player_name with
+          | None -> return (Or_error.error_string "Not logged into lobby yet")
+          | Some _ ->
+            if Option.is_some t.game_state
+            then return (Or_error.error_string "Game already in progress")
+            else (
+              let player_names = Hashtbl.keys t.clients in
+              if List.length player_names < 2
+              then return (Or_error.error_string "Need at least 2 players")
+              else (
+                match Game_state.create ~player_names ~hand_size:7 with
+                | Error e -> return (Error e)
+                | Ok initial_state ->
+                  t.game_state <- Some initial_state;
+                  broadcast_game_started t initial_state;
+                  return (Ok ()))))
         ]
       ~on_unknown_rpc:`Close_connection
       ~on_exception:Log_on_background_exn

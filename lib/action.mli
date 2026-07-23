@@ -3,7 +3,6 @@ open! Core
 module Client_to_server : sig
   type t =
     | Join_lobby of { player_name : String.t }
-    | Start_game
     | Play of { card_id : Int.t;
                 declared_color : Card.Color.t Option.t }
     | Draw
