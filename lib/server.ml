@@ -298,7 +298,11 @@ let start ~port () =
                  Core.print_s
                    [%message
                      "Player dropped mid-game. Bot activated."
-                       (name : string)])
+                       (name : string)];
+                  (match t.game_state with 
+                  | Some state when Option.equal String.equal (name_of_player_id state state.Game_state.turn) (Some name) -> 
+                    maybe_schedule_bot t state name 
+                  |_ -> ()))
              else (
                Hashtbl.remove t.clients name;
                Core.print_s
