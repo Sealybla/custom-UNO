@@ -1,16 +1,19 @@
-open! Core 
+open! Core
 
 let is_valid_play ~top_card ~played_card ~current_color =
-  match played_card.Card.effect with
-  | Card.Effect.Wild |Card.Effect.Wild4 -> true
-  | _ -> 
-    Card.Color.equal played_card.color current_color || Card.Effect.equal played_card.effect top_card.Card.effect 
+  match played_card.Card.value with
+  | Card.Value.Wild | Card.Value.Wild4 -> true
+  | _ ->
+    Card.Color.equal played_card.color current_color
+    || Card.Value.equal played_card.value top_card.Card.value
+;;
 
-(* adjust this function late on to make it customizable for custom rules*)
+(* adjust this function late on to make it customizable for custom rules *)
 let calculate_draw_penalty = function
-  | Card.Effect.Plus -> 2
-  | Card.Effect.Wild4 -> 4
+  | Card.Value.Plus -> 2
+  | Card.Value.Wild4 -> 4
   | _ -> 0
+;;
 
   (* adjust this funcetion later to make it customizable*)
   let get_next_turn ~current_turn ~player_count ~direction ~effect =
@@ -37,5 +40,6 @@ let get_next_direction  ~player_count ~direction ~effect =
     | Direction.Clockwise -> Direction.Counter
     | Direction.Counter -> Direction.Clockwise)
   | _ -> direction
+;;
 
   

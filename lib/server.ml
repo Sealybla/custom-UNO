@@ -1,26 +1,24 @@
-open! Core 
+open! Core
 open! Async
 
 module Queued_request = struct
-  type t = {
-    player_name : string;
-    action : Action.Client_to_server.t;
-    enqueued_at : Time_ns.t;
-  }
+  type t =
+    { player_name : string
+    ; action : Action.Client_to_server.t
+    ; enqueued_at : Time_ns.t
+    }
 end
 
 module Connection_state = struct
-  type t = {
-    mutable player_name : string option;
-  }
+  type t = { mutable player_name : string option }
 end
 
 module Client_connection = struct
-  type t = {
-    name : string;
-    writer : Action.Server_to_client.t Pipe.Writer.t;
-    mutable is_bot : bool;
-  }
+  type t =
+    { name : string
+    ; writer : Action.Server_to_client.t Pipe.Writer.t
+    ; mutable is_bot : bool
+    }
 end
 
 type t = {
@@ -32,10 +30,11 @@ type t = {
 let request_queue_size_budget = 1024
 
 (* global broadcast loop *)
-let broadcast t event = 
-  Hashtbl.iter t.clients ~f:(fun client -> 
-    if not (Pipe.is_closed client.writer) then
-      Pipe.write_without_pushback client.writer event)
+let broadcast t event =
+  Hashtbl.iter t.clients ~f:(fun client ->
+    if not (Pipe.is_closed client.writer)
+    then Pipe.write_without_pushback client.writer event)
+;;
 
 let player_id_of_name state name = 
   List.find_map state.Game_state.players ~f:(fun p -> 
@@ -120,84 +119,120 @@ let start_engine_loop t request_reader =
 let start ~port () = 
   Core.print_endline (Core.sprintf "\n>>> Booting Uno Server on port %d..." port);
   Core.Out_channel.flush Core.stdout;
-
-  let clients = String.Table.create () in 
-  let request_reader, request_writer = Pipe.create () in 
+  let clients = String.Table.create () in
+  let request_reader, request_writer = Pipe.create () in
   Pipe.set_size_budget request_writer request_queue_size_budget;
 
   let t = { clients; game_state = None; request_writer;} in
   start_engine_loop t request_reader;
-
-  let implementations = Rpc.Implementations.create_exn ~implementations:[
-    Rpc.Rpc.implement Rpc_protocol.join_lobby_rpc (fun state name -> 
-      if Option.is_some t.game_state then
-        return (Or_error.error_string "Cannot join lobby: A game is currently in progress!")
-      else if String.is_empty (String.strip name) then
-        return (Or_error.error_string "Invalid name") 
-      else match state.Connection_state.player_name with 
-      | Some _ -> return (Or_error.error_string "Already registered on this connection")
-      | None -> 
-        if Hashtbl.mem clients name then
-          return (Or_error.error_string "Username already taken in this session")
-        else (
-          state.player_name <- Some name;
-          Core.print_s [%message "Lobby Registration" (name : string)];
-          broadcast t (Action.Server_to_client.Lobby_updated { players = Hashtbl.keys clients});
-          return (Ok ())
-        ));
-
-    Rpc.Pipe_rpc.implement Rpc_protocol.game_stream_rpc (fun state () -> 
-      if Option.is_some t.game_state then 
-        return (Error (Error.of_string "Access denied: Game is already in progress!"))
-      else match state.Connection_state.player_name with 
-      | None -> return (Error (Error.of_string "Not logged into lobby yet"))
-      | Some name ->
-        let reader, writer = Pipe.create () in 
-        let connection = { Client_connection.name; writer; is_bot = false } in
-        Hashtbl.set clients ~key:name ~data:connection;
-
-        (* broadcasts to everyone that a new user is in the lobby*)
-        broadcast t (Action.Server_to_client.Lobby_updated { players = Hashtbl.keys clients}); 
-        return (Ok reader)) ;
-     
-    Rpc.Rpc.implement Rpc_protocol.take_action_rpc (fun state action -> 
-      match state.Connection_state.player_name with 
-      | None -> return (Or_error.error_string "Unauthorized session execution")
-      | Some player_name ->
-        let queued = { Queued_request.player_name; action; enqueued_at = Time_ns.now() } in
-        let%map () = Pipe.write_if_open request_writer queued in
-        Ok ()) ;
-  ]
-  ~on_unknown_rpc:`Close_connection
-  ~on_exception:Log_on_background_exn 
-in
-
-let%map tcp_server = Rpc.Connection.serve ~implementations ~initial_connection_state:(fun _addr _conn -> 
-  let state = { Connection_state.player_name = None } in 
-  
-  don't_wait_for (
-    let%bind () = Rpc.Connection.close_finished _conn in 
-    match state.Connection_state.player_name with 
-    | None -> Deferred.unit 
-    | Some name -> 
-      if Option.is_some t.game_state then (
-        match Hashtbl.find t.clients name with 
-      | None -> ()
-      | Some client -> 
-        client.is_bot <- true;
-        Core.print_s [%message "Player dropped mid-game. Bot activated." (name : string)]
-      ) else (
-        Hashtbl.remove t.clients name;
-        Core.print_s [%message "Player left the lobby" (name : string)];
-        broadcast t (Action.Server_to_client.Lobby_updated { players = Hashtbl.keys t.clients})
-      );
-      Deferred.unit
-  );
-  state)
-  ~where_to_listen:(Tcp.Where_to_listen.of_port port)
-  ()
-  in 
-
+  let implementations =
+    Rpc.Implementations.create_exn
+      ~implementations:
+        [ Rpc.Rpc.implement Rpc_protocol.join_lobby_rpc (fun state name ->
+            if Option.is_some t.game_state
+            then
+              return
+                (Or_error.error_string
+                   "Cannot join lobby: A game is currently in progress!")
+            else if String.is_empty (String.strip name)
+            then return (Or_error.error_string "Invalid name")
+            else (
+              match state.Connection_state.player_name with
+              | Some _ ->
+                return
+                  (Or_error.error_string
+                     "Already registered on this connection")
+              | None ->
+                if Hashtbl.mem clients name
+                then
+                  return
+                    (Or_error.error_string
+                       "Username already taken in this session")
+                else (
+                  state.player_name <- Some name;
+                  Core.print_s
+                    [%message "Lobby Registration" (name : string)];
+                  broadcast
+                    t
+                    (Action.Server_to_client.Lobby_updated
+                       { players = Hashtbl.keys clients });
+                  return (Ok ()))))
+        ; Rpc.Pipe_rpc.implement
+            Rpc_protocol.game_stream_rpc
+            (fun state () ->
+               if Option.is_some t.game_state
+               then
+                 return
+                   (Error
+                      (Error.of_string
+                         "Access denied: Game is already in progress!"))
+               else (
+                 match state.Connection_state.player_name with
+                 | None ->
+                   return
+                     (Error (Error.of_string "Not logged into lobby yet"))
+                 | Some name ->
+                   let reader, writer = Pipe.create () in
+                   let connection =
+                     { Client_connection.name; writer; is_bot = false }
+                   in
+                   Hashtbl.set clients ~key:name ~data:connection;
+                   (* broadcasts to everyone that a new user is in the lobby *)
+                   broadcast
+                     t
+                     (Action.Server_to_client.Lobby_updated
+                        { players = Hashtbl.keys clients });
+                   return (Ok reader)))
+        ; Rpc.Rpc.implement Rpc_protocol.take_action_rpc (fun state action ->
+            match state.Connection_state.player_name with
+            | None ->
+              return (Or_error.error_string "Unauthorized session execution")
+            | Some player_name ->
+              let queued =
+                { Queued_request.player_name
+                ; action
+                ; enqueued_at = Time_ns.now ()
+                }
+              in
+              let%map () = Pipe.write_if_open request_writer queued in
+              Ok ())
+        ]
+      ~on_unknown_rpc:`Close_connection
+      ~on_exception:Log_on_background_exn
+  in
+  let%map tcp_server =
+    Rpc.Connection.serve
+      ~implementations
+      ~initial_connection_state:(fun _addr _conn ->
+        let state = { Connection_state.player_name = None } in
+        don't_wait_for
+          (let%bind () = Rpc.Connection.close_finished _conn in
+           match state.Connection_state.player_name with
+           | None -> Deferred.unit
+           | Some name ->
+             if Option.is_some t.game_state
+             then (
+               match Hashtbl.find t.clients name with
+               | None -> ()
+               | Some client ->
+                 client.is_bot <- true;
+                 Core.print_s
+                   [%message
+                     "Player dropped mid-game. Bot activated."
+                       (name : string)])
+             else (
+               Hashtbl.remove t.clients name;
+               Core.print_s
+                 [%message "Player left the lobby" (name : string)];
+               broadcast
+                 t
+                 (Action.Server_to_client.Lobby_updated
+                    { players = Hashtbl.keys t.clients }));
+             Deferred.unit);
+        state)
+      ~where_to_listen:(Tcp.Where_to_listen.of_port port)
+      ()
+  in
   Core.print_endline ">>> SUCCESS: TCP socket listening. Ready for players.";
   Core.Out_channel.flush Core.stdout;
   tcp_server
