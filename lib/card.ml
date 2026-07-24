@@ -38,3 +38,5 @@ type t =
 [@@deriving sexp, compare, equal, bin_io]
 
 let get_id t = t.id
+let get_color t = t.color
+let get_value t = t.value

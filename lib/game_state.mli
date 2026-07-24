@@ -13,11 +13,16 @@ module Effect : sig
     | SetActiveColor of Card.Color.t
     | AddPendingDraws of int
     | ExecuteDraw of
-        { player : Player.t
+        { player_id : int
         ; count : int
+        }
+    | RemoveCardFromHand of
+        { player_id : int
+        ; card_id : int
         }
     | ReverseDirection
     | AdvanceTurn
+    | CheckWinner of { player_id : int }
   [@@deriving sexp, compare, equal, bin_io]
 end
 
@@ -28,6 +33,7 @@ type t =
   ; top_card : Card.t
   ; current_color : Card.Color.t
   ; direction : Direction.t
+  ; pending_draws : int
   ; turn : int
   ; card_registry : Card_registry.t
   ; winner : int option
@@ -41,4 +47,9 @@ val update_player : t -> Player.t -> t
 val draw_card_player : t -> int -> t Or_error.t
 val update_top_card : t -> Card.t -> t
 val create : player_names:string List.t -> hand_size:int -> t Or_error.t
-val apply_action :  t -> player_id:int -> action:Action.Client_to_server.t -> t Or_error.t
+val apply_effect : t -> Effect.t -> t Or_error.t
+(*= val apply_action
+  :  t
+  -> player_id:int
+  -> action:Action.Client_to_server.t
+  -> t Or_error.t *)

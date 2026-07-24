@@ -38,3 +38,5 @@ type t =
 [@@deriving sexp, compare, equal, bin_io]
 
 val get_id : t -> int
+val get_color : t -> Color.t
+val get_value : t -> Value.t

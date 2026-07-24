@@ -1,10 +1,11 @@
 open! Core
+open Or_error.Let_syntax
 
 (* basically player actions but for only during the game *)
 type t =
   | CardPlayed of
       { player : Player.t
-      ; card_id : int
+      ; card : Card.t
       ; declared_color : Card.Color.t Option.t
       }
   | DrawRequested of { player : Player.t }
@@ -19,7 +20,10 @@ let of_client_action
   =
   match action with
   | Play { card_id; declared_color } ->
-    Ok (CardPlayed { player; card_id; declared_color })
+    let%map card =
+      Game_state.Card_registry.find state.card_registry card_id
+    in
+    CardPlayed { player; card; declared_color }
   | Draw -> Ok (DrawRequested { player })
   | Join_lobby _ | Quit ->
     Or_error.error_s

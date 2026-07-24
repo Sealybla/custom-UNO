@@ -20,6 +20,8 @@ val get_next_turn
   -> effect:Card.Value.t
   -> int
 
-val get_next_direction :  player_count:int -> direction:Direction.t -> effect:Card.Value.t -> Direction.t
-
-
+val get_next_direction
+  :  player_count:int
+  -> direction:Direction.t
+  -> effect:Card.Value.t
+  -> Direction.t
