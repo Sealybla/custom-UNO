@@ -1,5 +1,5 @@
-(executable
- (public_name custom-uno)
- (name main)
+(executables
+ (public_names custom-uno uno-client)
+ (names main client)
  (libraries custom_uno core async core_unix cohttp-async)
  (preprocess (pps ppx_jane)))

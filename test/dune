@@ -1,3 +1,5 @@
-(test
+(library
  (name test_custom_uno)
- (libraries custom_uno))
+ (inline_tests)
+ (libraries core custom_uno)
+ (preprocess (pps ppx_jane)))

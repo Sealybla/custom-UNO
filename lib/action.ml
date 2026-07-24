@@ -28,5 +28,6 @@ module Server_to_client = struct
     | Turn_changed of { current_player_name : String.t }
     | Hand_counts of { counts : (String.t * Int.t) List.t }
     | Game_over of { winner_name : String.t }
+    | Uno_called of { player_name : String.t }
   [@@deriving sexp, compare, equal, bin_io]
 end

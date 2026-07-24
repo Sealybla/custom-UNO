@@ -25,3 +25,9 @@ val get_next_direction
   -> direction:Direction.t
   -> effect:Card.Value.t
   -> Direction.t
+
+val choose_card
+  :  hand:Card.t list
+  -> top_card:Card.t
+  -> current_color:Card.Color.t
+  -> Card.t option

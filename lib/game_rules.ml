@@ -26,6 +26,8 @@ let calculate_draw_penalty = function
       match effect with 
       | Card.Value.Skip -> 2
       | Card.Value.Reverse when Int.equal player_count 2 -> 2
+      | Card.Value.Plus -> 2 
+      | Card.Value.Wild4 -> 2
       | _ -> 1
     in 
     let total_shift = step * multiplier in
@@ -43,3 +45,9 @@ let get_next_direction  ~player_count ~direction ~effect =
 ;;
 
   
+(* picks first playable card in hand or None if nothing is playable *)
+  (* for bots*) 
+let choose_card ~hand ~top_card ~current_color = 
+  List.find hand ~f:(fun card -> 
+    is_valid_play ~top_card ~played_card:card ~current_color)
+;;

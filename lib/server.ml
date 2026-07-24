@@ -86,6 +86,43 @@ let broadcast_game_started t state =
              }))
 ;;
 
+(* Chooses an action for a bot-controlled player: plays the first valid card
+   in hand, declaring a real color for wilds, or draws if nothing is playable. *)
+let bot_action state player_name =
+  let fallback = Action.Client_to_server.Draw in
+  match player_id_of_name state player_name with
+  | None -> fallback
+  | Some player_id ->
+    (match List.nth state.Game_state.players player_id with
+     | None -> fallback
+     | Some player ->
+       let hand = hand_of_player state player in
+       (match
+          Game_rules.choose_card
+            ~hand
+            ~top_card:state.Game_state.top_card
+            ~current_color:state.Game_state.current_color
+        with
+        | None -> fallback
+        | Some card ->
+          let declared_color =
+            match card.Card.value with
+            | Wild | Wild4 ->
+              (* a wild's own color is NoColor, so declare a real one from hand *)
+              let color =
+                List.find_map hand ~f:(fun c ->
+                  match c.Card.color with
+                  | NoColor -> None
+                  | color -> Some color)
+                |> Option.value ~default:Card.Color.Red
+              in
+              Some color
+            | _ -> None
+          in
+          Action.Client_to_server.Play
+            { card_id = Card.get_id card; declared_color }))
+;;
+
 let maybe_schedule_bot t next_state current_player_name =
   match Hashtbl.find t.clients current_player_name with
   | Some client when client.is_bot ->
@@ -103,7 +140,7 @@ let maybe_schedule_bot t next_state current_player_name =
            Pipe.write_without_pushback
              t.request_writer
              { Queued_request.player_name = current_player_name
-             ; action = Action.Client_to_server.Draw
+             ; action = bot_action verified_state current_player_name
              ; enqueued_at = Time_ns.now ()
              }))
   | _ -> ()
@@ -128,11 +165,20 @@ let start_engine_loop t request_reader =
            ; current_color = next_state.current_color
           }); 
            send_hands t next_state;
+           (match List.nth next_state.players player_id with 
+           | Some p when Int.equal (List.length (Player.get_hand p)) 1 -> 
+              broadcast t (Action.Server_to_client.Uno_called 
+              {player_name = Player.get_name p}) 
+            | _ -> ());
            (match next_state.winner with 
            | Some winner_id -> 
             (match name_of_player_id next_state winner_id with 
             | Some winner_name -> 
-              broadcast t (Action.Server_to_client.Game_over {winner_name}) 
+              broadcast t (Action.Server_to_client.Game_over {winner_name}); 
+              t.game_state <- None;
+              Hashtbl.filter_inplace t.clients ~f:(fun client -> not client.is_bot);
+              broadcast t (Action.Server_to_client.Lobby_updated
+              {players = Hashtbl.keys t.clients })
             | None -> ()) 
           | None -> 
             (match name_of_player_id next_state next_state.turn with 
@@ -232,7 +278,7 @@ let start ~port () =
               if List.length player_names < 2
               then return (Or_error.error_string "Need at least 2 players")
               else (
-                match Game_state.create ~player_names ~hand_size:7 with
+                match Game_state.create ~player_names ~hand_size:7 () with
                 | Error e -> return (Error e)
                 | Ok initial_state ->
                   t.game_state <- Some initial_state;
@@ -261,7 +307,11 @@ let start ~port () =
                  Core.print_s
                    [%message
                      "Player dropped mid-game. Bot activated."
-                       (name : string)])
+                       (name : string)];
+                  (match t.game_state with 
+                  | Some state when Option.equal String.equal (name_of_player_id state state.Game_state.turn) (Some name) -> 
+                    maybe_schedule_bot t state name 
+                  |_ -> ()))
              else (
                Hashtbl.remove t.clients name;
                Core.print_s
