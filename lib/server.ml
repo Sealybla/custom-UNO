@@ -165,11 +165,20 @@ let start_engine_loop t request_reader =
            ; current_color = next_state.current_color
           }); 
            send_hands t next_state;
+           (match List.nth next_state.players player_id with 
+           | Some p when Int.equal (List.length (Player.get_hand p)) 1 -> 
+              broadcast t (Action.Server_to_client.Uno_called 
+              {player_name = Player.get_name p}) 
+            | _ -> ());
            (match next_state.winner with 
            | Some winner_id -> 
             (match name_of_player_id next_state winner_id with 
             | Some winner_name -> 
-              broadcast t (Action.Server_to_client.Game_over {winner_name}) 
+              broadcast t (Action.Server_to_client.Game_over {winner_name}); 
+              t.game_state <- None;
+              Hashtbl.filter_inplace t.clients ~f:(fun client -> not client.is_bot);
+              broadcast t (Action.Server_to_client.Lobby_updated
+              {players = Hashtbl.keys t.clients })
             | None -> ()) 
           | None -> 
             (match name_of_player_id next_state next_state.turn with 

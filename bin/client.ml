@@ -22,6 +22,8 @@ let print_event (event : Action.Server_to_client.t) =
     print_s [%message "GAME OVER" (winner_name : string)]
   | Hand_counts { counts } ->
     print_s [%message "hand counts" (counts : (string * int) list)]
+  | Uno_called { player_name } ->
+    print_s [%message "UNO!" (player_name : string)]
 ;;
 
 let color_of_string = function

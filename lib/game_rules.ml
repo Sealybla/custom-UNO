@@ -26,6 +26,8 @@ let calculate_draw_penalty = function
       match effect with 
       | Card.Value.Skip -> 2
       | Card.Value.Reverse when Int.equal player_count 2 -> 2
+      | Card.Value.Plus -> 2 
+      | Card.Value.Wild4 -> 2
       | _ -> 1
     in 
     let total_shift = step * multiplier in

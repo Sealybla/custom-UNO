@@ -81,3 +81,10 @@ let%expect_test "shuffle is seeded" =
   print_s [%message (List.equal Card.equal a b : bool)];
   [%expect {| ("List.equal Card.equal a b" true) |}]
 ;;
+
+let%expect_test "draw pile is shuffled" =
+  let t = make_state () in
+  let first_ten = List.take (List.map t.draw_pile ~f:Card.get_id) 10 in
+  print_s [%message (first_ten : int list)];
+  [%expect {| |}]
+;;
