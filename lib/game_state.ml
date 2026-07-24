@@ -42,6 +42,7 @@ type t =
   ; turn : int
   ; card_registry : Card_registry.t
   ; winner : int Option.t
+  ; has_drawn : bool
   }
 [@@deriving sexp, compare, equal, bin_io]
 
@@ -134,6 +135,7 @@ let create ?random_state ~player_names ~hand_size () : t Or_error.t =
     ; turn = 0
     ; card_registry = Card_registry.of_cards deck
     ; winner = None
+    ; has_drawn = false
     }
   in
   let%bind t =
@@ -161,8 +163,29 @@ let apply_action t ~player_id ~(action : Action.Client_to_server.t) : t Or_error
   let player_count = List.length t.players in
   match action with 
   | Draw -> 
-    let%map t = draw_card_player t player_id in 
-    { t with turn = Game_rules.get_next_turn ~current_turn:t.turn ~player_count ~direction:t.direction ~effect:Card.Value.Zero}
+    let%bind () = 
+      if t.has_drawn then Or_error.error_string "Already drew this turn - play or pass"
+      else Ok () 
+    in 
+
+    let%bind player = 
+      match List.nth t.players player_id with 
+      | Some p -> Ok p 
+      | None -> Or_error.error_s [%message "Player ID not found" (player_id : int)]
+    in 
+    
+    let%map card, t = draw_card t in 
+    let t = update_player t (Player.add_card player (Card.get_id card)) in 
+    if Game_rules.is_valid_play ~top_card:t.top_card ~played_card:card ~current_color:t.current_color then 
+      { t with has_drawn = true }
+    else {
+      t with has_drawn = false; 
+      turn = Game_rules.get_next_turn ~current_turn:t.turn ~player_count ~direction:t.direction ~effect:Card.Value.Zero
+    } 
+  | Pass -> 
+    if not t.has_drawn then Or_error.error_string "Can only pass after drawing"
+    else Ok { t with has_drawn = false 
+              ; turn = Game_rules.get_next_turn ~current_turn:t.turn ~player_count ~direction:t.direction ~effect:Card.Value.Zero}
   | Play {card_id; declared_color} -> 
     let%bind player = 
       match List.nth t.players player_id with 
@@ -197,7 +220,7 @@ let apply_action t ~player_id ~(action : Action.Client_to_server.t) : t Or_error
         List.fold_result (List.init n ~f:Fn.id) ~init:t ~f:(fun t _ -> draw_card_player t penalized) 
       in
       let winner = if List.is_empty (Player.get_hand player) then Some player_id else None in
-      {t with direction; turn = next_turn; winner} 
+      {t with direction; turn = next_turn; winner; has_drawn = false} 
   | Join_lobby _ | Quit ->
     Or_error.error_s
       [%message "Action not handled by game state" (action : Action.Client_to_server.t)]

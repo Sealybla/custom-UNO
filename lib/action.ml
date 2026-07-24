@@ -7,6 +7,7 @@ module Client_to_server = struct
     | Play of { card_id : Int.t;
                 declared_color : Card.Color.t Option.t }
     | Draw
+    | Pass 
     | Quit
   [@@deriving sexp, compare, equal, bin_io]
 end

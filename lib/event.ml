@@ -8,6 +8,7 @@ type t =
       ; declared_color : Card.Color.t Option.t
       }
   | DrawRequested of { player : Player.t }
+  | PassRequested of { player : Player.t }
 [@@deriving sexp, compare, equal, bin_io]
 
 (* Convert network wire format into engine event format *)
@@ -21,6 +22,7 @@ let of_client_action
   | Play { card_id; declared_color } ->
     Ok (CardPlayed { player; card_id; declared_color })
   | Draw -> Ok (DrawRequested { player })
+  | Pass -> Ok (PassRequested { player })
   | Join_lobby _ | Quit ->
     Or_error.error_s
       [%message "Non-gameplay action" (action : Action.Client_to_server.t)]

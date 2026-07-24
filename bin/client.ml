@@ -48,6 +48,13 @@ let handle_line conn line =
     (match result with
      | Ok () -> ()
      | Error e -> print_s [%message "error" (e : Error.t)])
+  | [ "pass"] ->
+    let%map result = 
+      Rpc.Rpc.dispatch_exn Rpc_protocol.take_action_rpc conn Action.Client_to_server.Pass 
+    in
+    (match result with 
+    | Ok () -> () 
+    | Error e -> print_s [%message "error" (e : Error.t)])
   | "play" :: id :: rest ->
     (match Int.of_string_opt id with
      | None ->
@@ -70,7 +77,7 @@ let handle_line conn line =
         | Error e -> print_s [%message "error" (e : Error.t)]))
   | [ "" ] -> Deferred.unit
   | _ ->
-    print_endline "commands: start | draw | play <card_id> [red|green|blue|yellow]";
+    print_endline "commands: start | draw | pass | play <card_id> [red|green|blue|yellow]";
     Deferred.unit
 ;;
 
@@ -85,7 +92,7 @@ let run ~host ~port ~name =
     Rpc.Pipe_rpc.dispatch_exn Rpc_protocol.game_stream_rpc conn ()
   in
   don't_wait_for (Pipe.iter_without_pushback reader ~f:print_event);
-  print_endline "commands: start | draw | play <card_id> [color]";
+  print_endline "commands: start | draw | pass | play <card_id> [color]";
   Pipe.iter (Reader.lines (Lazy.force Reader.stdin)) ~f:(handle_line conn)
 ;;
 

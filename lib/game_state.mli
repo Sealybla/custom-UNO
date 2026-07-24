@@ -31,6 +31,7 @@ type t =
   ; turn : int
   ; card_registry : Card_registry.t
   ; winner : int option
+  ; has_drawn : bool
   }
 [@@deriving sexp, compare, equal, bin_io]
 

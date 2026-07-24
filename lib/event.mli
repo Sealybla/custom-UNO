@@ -8,4 +8,5 @@ type t =
       ; declared_color : Card.Color.t Option.t
       }
   | DrawRequested of { player : Player.t }
+  | PassRequested of {player : Player.t }
 [@@deriving sexp, compare, equal, bin_io]

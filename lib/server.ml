@@ -89,7 +89,11 @@ let broadcast_game_started t state =
 (* Chooses an action for a bot-controlled player: plays the first valid card
    in hand, declaring a real color for wilds, or draws if nothing is playable. *)
 let bot_action state player_name =
-  let fallback = Action.Client_to_server.Draw in
+  let fallback = 
+    if state.Game_state.has_drawn then Action.Client_to_server.Pass 
+    else Action.Client_to_server.Draw 
+  in 
+  
   match player_id_of_name state player_name with
   | None -> fallback
   | Some player_id ->
@@ -184,8 +188,11 @@ let start_engine_loop t request_reader =
             (match name_of_player_id next_state next_state.turn with 
             | None -> ()
             | Some current_player_name ->
-              broadcast t (Action.Server_to_client.Turn_changed { current_player_name }); 
-              maybe_schedule_bot t next_state current_player_name))))))
+              if Int.equal next_state.turn current_state.turn then 
+                maybe_schedule_bot t next_state current_player_name
+              else ( 
+                broadcast t (Action.Server_to_client.Turn_changed { current_player_name }); 
+                maybe_schedule_bot t next_state current_player_name)))))))
 
 let start ~port () = 
   Core.print_endline (Core.sprintf "\n>>> Booting Uno Server on port %d..." port);
