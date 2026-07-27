@@ -9,22 +9,11 @@ module Ruleset = struct
       { id = 1
       ; priority = 1
       ; condition = And (MatchesTopColor, IsPlayerTurn)
-      ; actions = [ Mutate RemoveCardFromHand; Mutate SetTopCard ]
-      }
-    ; (* play matching value *)
-      { id = 2
-      ; priority = 2
-      ; condition = And (MatchesTopColor, IsPlayerTurn)
-      ; actions = [ Mutate RemoveCardFromHand; Mutate SetTopCard ]
-      }
-    ; (* play wild card *)
-      { id = 3
-      ; priority = 3
-      ; condition = And (IsWildCard, IsPlayerTurn)
-      ; actions = [ Mutate RemoveCardFromHand; Mutate SetTopCard ]
+      ; actions =
+          [ Sequence [ Mutate RemoveCardFromHand; Mutate SetTopCard ] ]
       }
     ; (* draw when forced *)
-      { id = 4
+      { id = 2
       ; priority = 4
       ; condition =
           And (And (Not MatchesTopColor, Not MatchesTopValue), IsPlayerTurn)

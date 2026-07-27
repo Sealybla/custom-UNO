@@ -225,7 +225,7 @@ let start_engine_loop t request_reader =
                        maybe_schedule_bot t next_state current_player_name))))))
 ;;
 
-let start ?(ruleset = Default_rules.t) ~port () =
+let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
   Core.print_endline
     (Core.sprintf "\n>>> Booting Uno Server on port %d..." port);
   Core.Out_channel.flush Core.stdout;
