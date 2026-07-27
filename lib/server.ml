@@ -21,11 +21,12 @@ module Client_connection = struct
     }
 end
 
-type t = {
-  clients : Client_connection.t String.Table.t;
-  mutable game_state : Game_state.t option;
-  request_writer : Queued_request.t Pipe.Writer.t;
-}
+type t =
+  { clients : Client_connection.t String.Table.t
+  ; mutable game_state : Game_state.t option
+  ; request_writer : Queued_request.t Pipe.Writer.t
+  ; ruleset : Rule_engine.Ruleset.t
+  }
 
 let request_queue_size_budget = 1024
 
@@ -36,16 +37,18 @@ let broadcast t event =
     then Pipe.write_without_pushback client.writer event)
 ;;
 
-let player_id_of_name state name = 
-  List.find_map state.Game_state.players ~f:(fun p -> 
-    if String.equal (Player.get_name p) name then Some (Player.get_id p) else None)
+let player_id_of_name state name =
+  List.find_map state.Game_state.players ~f:(fun p ->
+    if String.equal (Player.get_name p) name
+    then Some (Player.get_id p)
+    else None)
 ;;
 
 let name_of_player_id state id =
-  match List.nth state.Game_state.players id with 
+  match List.nth state.Game_state.players id with
   | Some p -> Some (Player.get_name p)
-  | None -> None 
-;; 
+  | None -> None
+;;
 
 let hand_of_player state player =
   List.filter_map (Player.get_hand player) ~f:(fun card_id ->
@@ -53,15 +56,17 @@ let hand_of_player state player =
     |> Or_error.ok)
 ;;
 
-let send_hands t state = 
+let send_hands t state =
   List.iter state.Game_state.players ~f:(fun player ->
-    match Hashtbl.find t.clients (Player.get_name player) with 
+    match Hashtbl.find t.clients (Player.get_name player) with
     | None -> ()
-    | Some client -> 
+    | Some client ->
       let hand = hand_of_player state player in
-      if not (Pipe.is_closed client.writer) 
-      then 
-        Pipe.write_without_pushback client.writer (Action.Server_to_client.Hand_updated { your_hand = hand}))
+      if not (Pipe.is_closed client.writer)
+      then
+        Pipe.write_without_pushback
+          client.writer
+          (Action.Server_to_client.Hand_updated { your_hand = hand }))
 ;;
 
 let broadcast_game_started t state =
@@ -87,7 +92,8 @@ let broadcast_game_started t state =
 ;;
 
 (* Chooses an action for a bot-controlled player: plays the first valid card
-   in hand, declaring a real color for wilds, or draws if nothing is playable. *)
+   in hand, declaring a real color for wilds, or draws if nothing is
+   playable. *)
 let bot_action state player_name =
   let fallback = Action.Client_to_server.Draw in
   match player_id_of_name state player_name with
@@ -108,7 +114,8 @@ let bot_action state player_name =
           let declared_color =
             match card.Card.value with
             | Wild | Wild4 ->
-              (* a wild's own color is NoColor, so declare a real one from hand *)
+              (* a wild's own color is NoColor, so declare a real one from
+                 hand *)
               let color =
                 List.find_map hand ~f:(fun c ->
                   match c.Card.color with
@@ -136,7 +143,8 @@ let maybe_schedule_bot t next_state current_player_name =
             && Option.is_none verified_state.Game_state.winner
          then (
            Core.print_s
-             [%message "Bot execution triggered" (current_player_name : string)];
+             [%message
+               "Bot execution triggered" (current_player_name : string)];
            Pipe.write_without_pushback
              t.request_writer
              { Queued_request.player_name = current_player_name
@@ -148,53 +156,83 @@ let maybe_schedule_bot t next_state current_player_name =
 
 (* engine action loop that pulls actions off the pipe *)
 let start_engine_loop t request_reader =
-  don't_wait_for (Pipe.iter_without_pushback request_reader ~f:(fun { Queued_request.player_name; action; enqueued_at = _ } -> 
-    Core.print_s [%message "Processing Action" (player_name : string) (action : Action.Client_to_server.t)];
-    match t.game_state with 
-    | None -> () 
-    | Some current_state -> 
-      (match player_id_of_name current_state player_name with 
-      | None -> () 
-      | Some player_id -> 
-        (match Game_state.apply_action current_state ~player_id ~action with 
-        | Error e -> Core.print_s [%message "Rejected action" (player_name : string) (e : Error.t)]
-        | Ok next_state -> 
-          t.game_state <- Some next_state; 
-          broadcast t (Action.Server_to_client.Pile_updated 
-          { top_card = next_state.top_card 
-           ; current_color = next_state.current_color
-          }); 
-           send_hands t next_state;
-           (match List.nth next_state.players player_id with 
-           | Some p when Int.equal (List.length (Player.get_hand p)) 1 -> 
-              broadcast t (Action.Server_to_client.Uno_called 
-              {player_name = Player.get_name p}) 
-            | _ -> ());
-           (match next_state.winner with 
-           | Some winner_id -> 
-            (match name_of_player_id next_state winner_id with 
-            | Some winner_name -> 
-              broadcast t (Action.Server_to_client.Game_over {winner_name}); 
-              t.game_state <- None;
-              Hashtbl.filter_inplace t.clients ~f:(fun client -> not client.is_bot);
-              broadcast t (Action.Server_to_client.Lobby_updated
-              {players = Hashtbl.keys t.clients })
-            | None -> ()) 
-          | None -> 
-            (match name_of_player_id next_state next_state.turn with 
+  don't_wait_for
+    (Pipe.iter_without_pushback
+       request_reader
+       ~f:(fun { Queued_request.player_name; action; enqueued_at = _ } ->
+         Core.print_s
+           [%message
+             "Processing Action"
+               (player_name : string)
+               (action : Action.Client_to_server.t)];
+         match t.game_state with
+         | None -> ()
+         | Some current_state ->
+           (match player_id_of_name current_state player_name with
             | None -> ()
-            | Some current_player_name ->
-              broadcast t (Action.Server_to_client.Turn_changed { current_player_name }); 
-              maybe_schedule_bot t next_state current_player_name))))))
+            | Some player_id ->
+              (match
+                 Rule_engine.apply_action
+                   t.ruleset
+                   current_state
+                   ~player_id
+                   ~action
+               with
+               | Error e ->
+                 Core.print_s
+                   [%message
+                     "Rejected action" (player_name : string) (e : Error.t)]
+               | Ok next_state ->
+                 t.game_state <- Some next_state;
+                 broadcast
+                   t
+                   (Action.Server_to_client.Pile_updated
+                      { top_card = next_state.top_card
+                      ; current_color = next_state.current_color
+                      });
+                 send_hands t next_state;
+                 (match List.nth next_state.players player_id with
+                  | Some p when Int.equal (List.length (Player.get_hand p)) 1
+                    ->
+                    broadcast
+                      t
+                      (Action.Server_to_client.Uno_called
+                         { player_name = Player.get_name p })
+                  | _ -> ());
+                 (match next_state.winner with
+                  | Some winner_id ->
+                    (match name_of_player_id next_state winner_id with
+                     | Some winner_name ->
+                       broadcast
+                         t
+                         (Action.Server_to_client.Game_over { winner_name });
+                       t.game_state <- None;
+                       Hashtbl.filter_inplace t.clients ~f:(fun client ->
+                         not client.is_bot);
+                       broadcast
+                         t
+                         (Action.Server_to_client.Lobby_updated
+                            { players = Hashtbl.keys t.clients })
+                     | None -> ())
+                  | None ->
+                    (match name_of_player_id next_state next_state.turn with
+                     | None -> ()
+                     | Some current_player_name ->
+                       broadcast
+                         t
+                         (Action.Server_to_client.Turn_changed
+                            { current_player_name });
+                       maybe_schedule_bot t next_state current_player_name))))))
+;;
 
-let start ~port () = 
-  Core.print_endline (Core.sprintf "\n>>> Booting Uno Server on port %d..." port);
+let start ?(ruleset = Default_rules.t) ~port () =
+  Core.print_endline
+    (Core.sprintf "\n>>> Booting Uno Server on port %d..." port);
   Core.Out_channel.flush Core.stdout;
   let clients = String.Table.create () in
   let request_reader, request_writer = Pipe.create () in
   Pipe.set_size_budget request_writer request_queue_size_budget;
-
-  let t = { clients; game_state = None; request_writer;} in
+  let t = { clients; ruleset; game_state = None; request_writer } in
   start_engine_loop t request_reader;
   let implementations =
     Rpc.Implementations.create_exn
@@ -268,22 +306,23 @@ let start ~port () =
               let%map () = Pipe.write_if_open request_writer queued in
               Ok ())
         ; Rpc.Rpc.implement Rpc_protocol.start_game_rpc (fun state () ->
-          match state.Connection_state.player_name with
-          | None -> return (Or_error.error_string "Not logged into lobby yet")
-          | Some _ ->
-            if Option.is_some t.game_state
-            then return (Or_error.error_string "Game already in progress")
-            else (
-              let player_names = Hashtbl.keys t.clients in
-              if List.length player_names < 2
-              then return (Or_error.error_string "Need at least 2 players")
+            match state.Connection_state.player_name with
+            | None ->
+              return (Or_error.error_string "Not logged into lobby yet")
+            | Some _ ->
+              if Option.is_some t.game_state
+              then return (Or_error.error_string "Game already in progress")
               else (
-                match Game_state.create ~player_names ~hand_size:7 () with
-                | Error e -> return (Error e)
-                | Ok initial_state ->
-                  t.game_state <- Some initial_state;
-                  broadcast_game_started t initial_state;
-                  return (Ok ()))))
+                let player_names = Hashtbl.keys t.clients in
+                if List.length player_names < 2
+                then return (Or_error.error_string "Need at least 2 players")
+                else (
+                  match Game_state.create ~player_names ~hand_size:7 () with
+                  | Error e -> return (Error e)
+                  | Ok initial_state ->
+                    t.game_state <- Some initial_state;
+                    broadcast_game_started t initial_state;
+                    return (Ok ()))))
         ]
       ~on_unknown_rpc:`Close_connection
       ~on_exception:Log_on_background_exn
@@ -308,10 +347,14 @@ let start ~port () =
                    [%message
                      "Player dropped mid-game. Bot activated."
                        (name : string)];
-                  (match t.game_state with 
-                  | Some state when Option.equal String.equal (name_of_player_id state state.Game_state.turn) (Some name) -> 
-                    maybe_schedule_bot t state name 
-                  |_ -> ()))
+                 (match t.game_state with
+                  | Some state
+                    when Option.equal
+                           String.equal
+                           (name_of_player_id state state.Game_state.turn)
+                           (Some name) ->
+                    maybe_schedule_bot t state name
+                  | _ -> ()))
              else (
                Hashtbl.remove t.clients name;
                Core.print_s
@@ -328,3 +371,4 @@ let start ~port () =
   Core.print_endline ">>> SUCCESS: TCP socket listening. Ready for players.";
   Core.Out_channel.flush Core.stdout;
   tcp_server
+;;

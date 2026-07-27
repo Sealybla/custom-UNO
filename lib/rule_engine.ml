@@ -3,6 +3,35 @@ open Or_error.Let_syntax
 
 module Ruleset = struct
   type t = Rule.t list [@@deriving sexp, compare, equal, bin_io]
+
+  let default : t =
+    [ (* play matching color *)
+      { id = 1
+      ; priority = 1
+      ; condition = And (MatchesTopColor, IsPlayerTurn)
+      ; actions = [ Mutate RemoveCardFromHand; Mutate SetTopCard ]
+      }
+    ; (* play matching value *)
+      { id = 2
+      ; priority = 2
+      ; condition = And (MatchesTopColor, IsPlayerTurn)
+      ; actions = [ Mutate RemoveCardFromHand; Mutate SetTopCard ]
+      }
+    ; (* play wild card *)
+      { id = 3
+      ; priority = 3
+      ; condition = And (IsWildCard, IsPlayerTurn)
+      ; actions = [ Mutate RemoveCardFromHand; Mutate SetTopCard ]
+      }
+    ; (* draw when forced *)
+      { id = 4
+      ; priority = 4
+      ; condition =
+          And (And (Not MatchesTopColor, Not MatchesTopValue), IsPlayerTurn)
+      ; actions = [ Mutate ExecuteDraw ]
+      }
+    ]
+  ;;
 end
 
 let rec eval_condition
