@@ -23,6 +23,8 @@ end
 module Action_AST = struct
   type t =
     | Mutate of Game_state.Effect.t
+    | PlayCard
+    | ExecuteDraw
     | Chain_event of Event.t
     | Sequence of t list
   [@@deriving sexp, compare, equal, bin_io]

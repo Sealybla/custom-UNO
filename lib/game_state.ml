@@ -152,6 +152,21 @@ let create ?random_state ~player_names ~hand_size () : t Or_error.t =
   update_top_card t card
 ;;
 
+let play_card t card player : t Or_error.t =
+  match Player.remove_card player (Card.get_id card) with
+  | Ok updated_player ->
+    Ok
+      { t with
+        current_color = Card.get_color card
+      ; players =
+          List.map t.players ~f:(fun p ->
+            if Int.equal (Player.get_id p) (Player.get_id updated_player)
+            then updated_player
+            else p)
+      }
+  | _ -> Or_error.error_s [%message "bad player"]
+;;
+
 (* apply an effect to game state t *)
 let apply_effect t (eff : Effect.t) : t Or_error.t =
   match eff with

@@ -54,6 +54,7 @@ val create
   -> unit
   -> t Or_error.t
 
+val play_card : t -> Card.t -> Player.t -> t Or_error.t
 val apply_effect : t -> Effect.t -> t Or_error.t
 (*= val apply_action
   :  t

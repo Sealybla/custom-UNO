@@ -2,6 +2,8 @@ open! Core
 
 module Ruleset : sig
   type t = Rule.t list [@@deriving sexp, compare, equal, bin_io]
+
+  val default : t
 end
 
 (* returns true if event holds given current rule_condition. false if doesn't
