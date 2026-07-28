@@ -80,7 +80,13 @@ let rec eval_action
         | Ok new_state -> Ok (new_state, [])
         | _ -> Or_error.error_s [%message "Card played did NOT work"])
      | _ -> Or_error.error_s [%message "must be card played"])
-  | ExecuteDraw -> Ok (state, [])
+  | ExecuteDraw ->
+    (match evt with
+     | DrawRequested { player } ->
+       (match Game_state.draw_card_player state (Player.get_id player) with
+        | Ok new_state -> Ok (new_state, [])
+        | _ -> Or_error.error_s [%message "Draw requested did NOT work"])
+     | _ -> Or_error.error_s [%message "must be draw requested played"])
 ;;
 
 let rec process_event
@@ -109,7 +115,9 @@ let rec process_event
   | false ->
     let actions = List.concat_map matching_rules ~f:(fun r -> r.actions) in
     List.fold_result actions ~init:state ~f:(fun curr_state act ->
-      let%bind next_state, chained_events = eval_action curr_state act evt in
+      let%bind next_state, chained_events =
+        eval_action curr_state act ~evt
+      in
       List.fold_result
         chained_events
         ~init:next_state

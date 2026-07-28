@@ -14,6 +14,7 @@ val eval_condition : Game_state.t -> Event.t -> Rule.Condition.t -> bool
 val eval_action
   :  Game_state.t
   -> Rule.Action_AST.t
+  -> evt:Event.t
   -> (Game_state.t * Event.t List.t) Or_error.t
 
 (* given an event and a ruleset ,change the gamestate *)
