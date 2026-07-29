@@ -201,6 +201,15 @@ come back over the wire for the rule editor to render, and successful
 updates broadcast `Rules_updated` to everyone. The terminal client submits
 with `rules <file>`.
 
-Next step: the web UI in `bin/page.ml` — clickable cards (color picker on
-wilds, draw pile, pass button) and the rule-editor textarea backed by
-`submit_rules_rpc`.
+The web UI (served at `http://localhost:<port+1>/`) is click-only
+gameplay: clickable hand, draw pile, pass button, and a color picker for
+wilds. The lobby's house-rules editor is the one typing surface — it
+starts from the standard-rules template and submits to `/api/rules`,
+rendering parse errors inline. Browsers reach the game through the HTTP
+→ RPC bridge in `bin/web.ml` (per-player RPC connection + polled JSON
+event queue). Illegal actions come back to the acting player as an
+`Action_rejected` event and show as a toast.
+
+Known v1 UI gaps: a page reload mid-game re-attaches but shows no state
+until the next event (needs a state-snapshot endpoint); opponents' hand
+counts aren't shown (`Hand_counts` is never broadcast by the server).

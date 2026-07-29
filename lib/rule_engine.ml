@@ -271,8 +271,8 @@ let rec process_event
   in
   match matching_rules with
     | [] ->
-      Or_error.error_s
-        [%message "Illegal move: no matching rules" (evt : Event.t)]
+      (* short and clean: this text is shown to the player who acted *)
+      Or_error.error_string "Illegal move: no rule allows that right now"
     | rule :: _ ->
       List.fold_result rule.actions ~init:state ~f:(fun curr_state act ->
         let%bind next_state, chained_events = eval_action curr_state act ~evt in

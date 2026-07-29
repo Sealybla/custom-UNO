@@ -181,7 +181,15 @@ let start_engine_loop t request_reader =
                | Error e ->
                  Core.print_s
                    [%message
-                     "Rejected action" (player_name : string) (e : Error.t)]
+                     "Rejected action" (player_name : string) (e : Error.t)];
+                 (* tell the player who clicked; nobody else needs to know *)
+                 (match Hashtbl.find t.clients player_name with
+                  | Some client when not (Pipe.is_closed client.writer) ->
+                    Pipe.write_without_pushback
+                      client.writer
+                      (Action.Server_to_client.Action_rejected
+                         { reason = Error.to_string_hum e })
+                  | _ -> ())
                | Ok next_state ->
                  t.game_state <- Some next_state;
                  broadcast

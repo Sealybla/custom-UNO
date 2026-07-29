@@ -29,5 +29,6 @@ module Server_to_client : sig
     | Game_over of { winner_name : String.t }
     | Uno_called of { player_name : String.t }
     | Rules_updated of { player_name : String.t; num_rules : Int.t }
+    | Action_rejected of { reason : String.t }
   [@@deriving sexp, compare, equal, bin_io]
 end

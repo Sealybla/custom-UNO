@@ -5,10 +5,13 @@ open! Custom_uno
 let html_headers =
   Cohttp.Header.of_list [ "Content-Type", "text/html; charset=utf-8" ]
 
-let handler _game ~body:_ _sock req =
-  match Uri.path (Cohttp.Request.uri req) with
-  | "/" -> Cohttp_async.Server.respond_string ~headers:html_headers Page.html
-  | _ -> Cohttp_async.Server.respond `Not_found
+let handler bridge ~body _sock req =
+  let path = Uri.path (Cohttp.Request.uri req) in
+  if String.equal path "/"
+  then Cohttp_async.Server.respond_string ~headers:html_headers Page.html
+  else if String.is_prefix path ~prefix:"/api/"
+  then Web.handle bridge ~body req
+  else Cohttp_async.Server.respond `Not_found
 
 (* no rules file means the built-in standard ruleset; a file that can't be
    read or parsed is fatal — better to die at boot than run the wrong rules *)
@@ -42,16 +45,20 @@ let load_ruleset rules_file =
 let run_server port rules_file =
   let%bind ruleset = load_ruleset rules_file in
   (* registers an accept loop with Async's scheduler and returns a Deferred.t *)
-  let%bind game = Server.start ~ruleset ~port () in
-  (* another register on same loop *) 
+  let%bind _game = Server.start ~ruleset ~port () in
+  (* the web ui talks to the game as an rpc client on localhost *)
+  let bridge = Web.create ~rpc_port:port in
+  (* another register on same loop *)
   let%bind _web =
-    Cohttp_async.Server.create 
+    Cohttp_async.Server.create
       ~on_handler_error:`Ignore
       (Tcp.Where_to_listen.of_port (port + 1))
-      (handler game)
-in
-(* never resolves so keeps scheduler running *)
-Deferred.never()
+      (handler bridge)
+  in
+  Core.printf ">>> Web UI on http://localhost:%d\n" (port + 1);
+  Core.Out_channel.flush Core.stdout;
+  (* never resolves so keeps scheduler running *)
+  Deferred.never ()
 
 let command =
   Command.async 

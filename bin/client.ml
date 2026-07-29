@@ -26,6 +26,7 @@ let print_event (event : Action.Server_to_client.t) =
     print_s [%message "UNO!" (player_name : string)]
   | Rules_updated { player_name; num_rules } ->
     print_s [%message "rules updated" (player_name : string) (num_rules : int)]
+  | Action_rejected { reason } -> print_s [%message "rejected" (reason : string)]
 ;;
 
 let color_of_string = function
