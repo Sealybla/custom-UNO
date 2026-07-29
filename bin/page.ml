@@ -42,6 +42,11 @@ let html =
   #players-bar { display:flex; gap:.75rem; justify-content:center; flex-wrap:wrap; margin-bottom:1rem; }
   .player { padding:.35rem .8rem; border-radius:999px; background:rgba(0,0,0,.35); }
   .player.turn { background:#fbbf24; color:#1a1a1a; font-weight:700; }
+  .player .count { display:inline-block; margin-left:.45rem; min-width:1.4rem;
+                   text-align:center; background:rgba(255,255,255,.25);
+                   border-radius:999px; padding:0 .35rem; font-size:.8rem; }
+  .player.turn .count { background:rgba(0,0,0,.2); }
+  .player .count.uno { background:#d92b2b; color:#fff; font-weight:800; }
   #table { display:flex; align-items:center; justify-content:center; gap:1.25rem; margin:1rem 0; }
   #color-dot { width:28px; height:28px; border-radius:50%; border:3px solid #fff; }
   #hand { text-align:center; padding:.5rem; background:rgba(0,0,0,.25);
@@ -150,7 +155,8 @@ rule "draw a card" priority 1:
 `;
 
 let name = null;
-let state = { players:[], hand:[], top:null, color:null, current:null, inGame:false };
+let state = { players:[], hand:[], top:null, color:null, current:null,
+              counts:{}, inGame:false };
 let pendingWild = null;
 
 const $ = id => document.getElementById(id);
@@ -186,10 +192,11 @@ function apply(ev){
     case 'game_started':
       state.inGame = true; state.hand = ev.hand; state.top = ev.top_card;
       state.color = ev.current_color; state.players = ev.players;
-      state.current = ev.current_player;
+      state.current = ev.current_player; state.counts = {};
       $('log').innerHTML = ''; setView('game');
       break;
     case 'hand': state.hand = ev.hand; break;
+    case 'hand_counts': state.counts = Object.fromEntries(ev.counts); break;
     case 'pile': state.top = ev.top_card; state.color = ev.current_color; break;
     case 'turn': state.current = ev.player; break;
     case 'uno': logLine('UNO! ' + ev.player + ' has one card left'); break;
@@ -221,6 +228,13 @@ function render(){
     const d = document.createElement('div');
     d.className = 'player' + (p === state.current ? ' turn' : '');
     d.textContent = p === name ? p + ' (you)' : p;
+    const n = state.counts[p];
+    if (n !== undefined){
+      const b = document.createElement('span');
+      b.className = 'count' + (n === 1 ? ' uno' : '');
+      b.textContent = n === 1 ? 'UNO!' : n;
+      d.append(b);
+    }
     bar.append(d);
   }
   if (state.top){

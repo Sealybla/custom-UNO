@@ -56,6 +56,14 @@ let hand_of_player state player =
     |> Or_error.ok)
 ;;
 
+let hand_counts_event (state : Game_state.t) =
+  Action.Server_to_client.Hand_counts
+    { counts =
+        List.map state.players ~f:(fun p ->
+          Player.get_name p, List.length (Player.get_hand p))
+    }
+;;
+
 let send_hands t state =
   List.iter state.Game_state.players ~f:(fun player ->
     match Hashtbl.find t.clients (Player.get_name player) with
@@ -88,7 +96,8 @@ let broadcast_game_started t state =
              ; current_color = state.Game_state.current_color
              ; player_names
              ; current_player_name
-             }))
+             }));
+  broadcast t (hand_counts_event state)
 ;;
 
 (* Chooses an action for a bot-controlled player: plays the first valid card
@@ -199,6 +208,7 @@ let start_engine_loop t request_reader =
                       ; current_color = next_state.current_color
                       });
                  send_hands t next_state;
+                 broadcast t (hand_counts_event next_state);
                  (match List.nth next_state.players player_id with
                   | Some p when Int.equal (List.length (Player.get_hand p)) 1
                     ->
@@ -346,6 +356,7 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                                  List.map game.Game_state.players ~f:Player.get_name
                              ; current_player_name
                              }
+                         ; hand_counts_event game
                          ]))))
         ; Rpc.Rpc.implement Rpc_protocol.submit_rules_rpc
             (fun state rules_text ->

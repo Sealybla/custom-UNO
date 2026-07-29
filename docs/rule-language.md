@@ -212,7 +212,6 @@ event queue). Illegal actions come back to the acting player as an
 
 A page reload rejoins automatically (the tab remembers its player name)
 and restores the table via `get_state_rpc`, which returns a snapshot of
-the current lobby/game as a replayable event list.
-
-Known v1 UI gap: opponents' hand counts aren't shown (`Hand_counts` is
-never broadcast by the server).
+the current lobby/game as a replayable event list. The server broadcasts
+`Hand_counts` after every action, shown as count badges on the player
+chips (a red "UNO!" badge at one card).
