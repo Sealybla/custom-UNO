@@ -210,6 +210,9 @@ rendering parse errors inline. Browsers reach the game through the HTTP
 event queue). Illegal actions come back to the acting player as an
 `Action_rejected` event and show as a toast.
 
-Known v1 UI gaps: a page reload mid-game re-attaches but shows no state
-until the next event (needs a state-snapshot endpoint); opponents' hand
-counts aren't shown (`Hand_counts` is never broadcast by the server).
+A page reload rejoins automatically (the tab remembers its player name)
+and restores the table via `get_state_rpc`, which returns a snapshot of
+the current lobby/game as a replayable event list.
+
+Known v1 UI gap: opponents' hand counts aren't shown (`Hand_counts` is
+never broadcast by the server).

@@ -276,16 +276,32 @@ $('rules-btn').onclick = async () => {
   else { s.textContent = r.error; s.className = 'err'; }
 };
 
-$('join-btn').onclick = async () => {
-  const v = $('name-input').value.trim();
-  if (!v) return;
+// snapshot of the current lobby/game, replayed through the normal event path
+async function refreshState(){
+  const r = await api('/api/state');
+  if (r.ok){ r.events.forEach(apply); render(); }
+}
+
+async function joinAs(v){
   name = v;
   try {
     const r = await api('/api/join', {method:'POST'});
-    if (!r.ok){ $('join-err').textContent = r.error; name = null; return; }
+    if (!r.ok){
+      $('join-err').textContent = r.error;
+      name = null;
+      sessionStorage.removeItem('uno-name');
+      return;
+    }
+    sessionStorage.setItem('uno-name', v);
     setView('lobby');
+    await refreshState();
     startPolling();
   } catch (e){ $('join-err').textContent = 'server unreachable'; name = null; }
+}
+
+$('join-btn').onclick = () => {
+  const v = $('name-input').value.trim();
+  if (v) joinAs(v);
 };
 $('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('join-btn').click(); });
 
@@ -301,6 +317,14 @@ function startPolling(){
 }
 
 $('rules-text').value = RULES_TEMPLATE;
+
+// reload lands back at the table: sessionStorage is per-tab, so two tabs
+// can still be two different players
+const savedName = sessionStorage.getItem('uno-name');
+if (savedName){
+  $('name-input').value = savedName;
+  joinAs(savedName);
+}
 </script>
 </body>
 </html>

@@ -12,6 +12,11 @@ val join_lobby_rpc : (String.t, unit Or_error.t) Rpc.Rpc.t
 (* forward players moves to game engine *) 
 val take_action_rpc : (Action.Client_to_server.t, unit Or_error.t) Rpc.Rpc.t
 
+(* personalized snapshot of the current lobby/game as a replayable event
+   list, for clients that (re)connect mid-session *)
+val get_state_rpc
+  : (Unit.t, Action.Server_to_client.t List.t Or_error.t) Rpc.Rpc.t
+
 (* replace the lobby's ruleset with parsed rule text before a game starts *)
 val submit_rules_rpc : (String.t, unit Or_error.t) Rpc.Rpc.t
 

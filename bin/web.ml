@@ -178,6 +178,15 @@ let poll t ~name =
     return (Ok events))
 ;;
 
+(* fresh snapshot from the server; queued events predate it, so drop them *)
+let get_state t ~name =
+  with_session t ~name ~f:(fun session ->
+    Queue.clear session.events;
+    match%map Rpc.Rpc.dispatch Rpc_protocol.get_state_rpc session.conn () with
+    | Error err | Ok (Error err) -> Error err
+    | Ok (Ok events) -> Ok (List.map events ~f:event_json))
+;;
+
 let json_headers = Cohttp.Header.of_list [ "Content-Type", "application/json" ]
 
 let respond_json ?(status = `OK) body =
@@ -214,6 +223,12 @@ let handle t ~body req =
   | "/api/poll" ->
     with_name (fun name ->
       match%bind poll t ~name with
+      | Error err -> respond_json (error_body err)
+      | Ok events ->
+        respond_json (sprintf {|{"ok":true,"events":%s}|} (jlist events)))
+  | "/api/state" ->
+    with_name (fun name ->
+      match%bind get_state t ~name with
       | Error err -> respond_json (error_body err)
       | Ok events ->
         respond_json (sprintf {|{"ok":true,"events":%s}|} (jlist events)))

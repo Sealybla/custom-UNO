@@ -34,6 +34,17 @@ let take_action_rpc =
   ~include_in_error_count:Only_on_exn
 ;;
 
+(* personalized snapshot of the current lobby/game as a replayable event
+   list, for clients that (re)connect mid-session *)
+let get_state_rpc =
+  Rpc.Rpc.create
+    ~name:"get-state"
+    ~version:1
+    ~bin_query:Unit.bin_t
+    ~bin_response:[%bin_type_class: Action.Server_to_client.t List.t Or_error.t]
+    ~include_in_error_count:Only_on_exn
+;;
+
 (* replace the lobby's ruleset with parsed rule text before a game starts *)
 let submit_rules_rpc =
   Rpc.Rpc.create

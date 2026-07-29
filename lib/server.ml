@@ -313,6 +313,40 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
               in
               let%map () = Pipe.write_if_open request_writer queued in
               Ok ())
+        ; Rpc.Rpc.implement Rpc_protocol.get_state_rpc (fun state () ->
+            match state.Connection_state.player_name with
+            | None -> return (Or_error.error_string "Not logged into lobby yet")
+            | Some name ->
+              let lobby_snapshot () =
+                [ Action.Server_to_client.Lobby_updated
+                    { players = Hashtbl.keys t.clients }
+                ]
+              in
+              (match t.game_state with
+               | None -> return (Ok (lobby_snapshot ()))
+               | Some game ->
+                 (match
+                    List.find game.Game_state.players ~f:(fun p ->
+                      String.equal (Player.get_name p) name)
+                  with
+                  | None -> return (Ok (lobby_snapshot ()))
+                  | Some player ->
+                    let current_player_name =
+                      Option.value
+                        (name_of_player_id game game.Game_state.turn)
+                        ~default:""
+                    in
+                    return
+                      (Ok
+                         [ Action.Server_to_client.Game_started
+                             { your_hand = hand_of_player game player
+                             ; top_card = game.Game_state.top_card
+                             ; current_color = game.Game_state.current_color
+                             ; player_names =
+                                 List.map game.Game_state.players ~f:Player.get_name
+                             ; current_player_name
+                             }
+                         ]))))
         ; Rpc.Rpc.implement Rpc_protocol.submit_rules_rpc
             (fun state rules_text ->
                match state.Connection_state.player_name with
