@@ -345,6 +345,34 @@ let%expect_test "MatchesTopColor is false for wilds but wilds still play" =
     |}]
 ;;
 
+(* regression: action cards (skip/reverse/+2) used to be playable on ANY color
+   because their rules only checked the card type, not a color/value match *)
+let%expect_test "skip/reverse must match color or value" =
+  let red_skip = { Card.color = Red; value = Skip; id = 620 } in
+  let blue_top = { Card.color = Blue; value = Five; id = 621 } in
+  let try_play card ~top =
+    let t =
+      Game_state.for_testing
+        ~player_hands:[ "a", [ card ]; "b", [] ]
+        ~top_card:top
+        ~draw_pile:(Game_state.create_card_deck ())
+        ~pending_draws:0
+        ~turn:0
+    in
+    Rule_engine.apply_action Rule_engine.Ruleset.default t
+      ~player_id:0
+      ~action:(Play { card_id = Card.get_id card; declared_color = None })
+    |> Or_error.is_ok
+  in
+  let on_wrong_color = try_play red_skip ~top:blue_top in
+  let on_matching_color = try_play red_skip ~top:{ Card.color = Red; value = Five; id = 622 } in
+  let on_matching_value = try_play red_skip ~top:{ Card.color = Blue; value = Skip; id = 623 } in
+  print_s
+    [%message (on_wrong_color : bool) (on_matching_color : bool) (on_matching_value : bool)];
+  [%expect
+    {| ((on_wrong_color false) (on_matching_color true) (on_matching_value true)) |}]
+;;
+
 (* ---------- rule parser: round-trips against the hand-coded rulesets ---------- *)
 
 (* shared by every variant: wild, skip, reverse — same order as
@@ -356,11 +384,11 @@ rule "play wild" priority 100:
   do play the card, set color to declared, advance turn
 
 rule "play skip" priority 100:
-  when card is skip and your turn
+  when card is skip and (card matches color or card matches value) and your turn
   do play the card, set color from card, skip next player
 
 rule "play reverse" priority 100:
-  when card is reverse and your turn
+  when card is reverse and (card matches color or card matches value) and your turn
   do play the card, set color from card, reverse direction, advance turn
 |}
 ;;
@@ -369,7 +397,7 @@ rule "play reverse" priority 100:
 let immediate_draw_text =
   {|
 rule "play plus two" priority 100:
-  when card is plus two and your turn
+  when card is plus two and (card matches color or card matches value) and your turn
   do play the card, set color from card, next player draws 2 cards, skip next player
 
 rule "play plus four" priority 110:
@@ -382,7 +410,7 @@ rule "play plus four" priority 110:
 let deferred_draw_text =
   {|
 rule "play plus two" priority 100:
-  when card is plus two and your turn
+  when card is plus two and (card matches color or card matches value) and your turn
   do play the card, set color from card, add 2 pending draws, advance turn
 
 rule "play plus four" priority 110:

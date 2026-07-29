@@ -6,15 +6,15 @@ rule "play wild" priority 100:
   do play the card, set color to declared, advance turn
 
 rule "play plus two" priority 100:
-  when card is plus two and your turn
+  when card is plus two and (card matches color or card matches value) and your turn
   do play the card, set color from card, next player draws 2 cards, skip next player
 
 rule "play skip" priority 100:
-  when card is skip and your turn
+  when card is skip and (card matches color or card matches value) and your turn
   do play the card, set color from card, skip next player
 
 rule "play reverse" priority 100:
-  when card is reverse and your turn
+  when card is reverse and (card matches color or card matches value) and your turn
   do play the card, set color from card, reverse direction, advance turn
 
 rule "play plus four" priority 110:

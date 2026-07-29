@@ -21,7 +21,8 @@ module Ruleset = struct
       }
     ; { id = 3
       ; priority = 100
-      ; condition = And (IsSkip, IsPlayerTurn)
+      ; condition =
+          And (IsSkip, And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn))
       ; actions =
           [ Mutate PlayTriggeringCard
           ; Mutate CheckWinner
@@ -32,7 +33,8 @@ module Ruleset = struct
       }
     ; { id = 4
       ; priority = 100
-      ; condition = And (IsReverse, IsPlayerTurn)
+      ; condition =
+          And (IsReverse, And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn))
       ; actions =
           [ Mutate PlayTriggeringCard
           ; Mutate CheckWinner
@@ -49,7 +51,8 @@ module Ruleset = struct
   let immediate_draw_rules : t =
     [ { id = 2
       ; priority = 100
-      ; condition = And (IsPlusTwo, IsPlayerTurn)
+      ; condition =
+          And (IsPlusTwo, And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn))
       ; actions =
           [ Mutate PlayTriggeringCard
           ; Mutate CheckWinner
@@ -80,7 +83,8 @@ module Ruleset = struct
   let deferred_draw_rules : t =
     [ { id = 2
       ; priority = 100
-      ; condition = And (IsPlusTwo, IsPlayerTurn)
+      ; condition =
+          And (IsPlusTwo, And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn))
       ; actions =
           [ Mutate PlayTriggeringCard
           ; Mutate CheckWinner

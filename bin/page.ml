@@ -162,6 +162,9 @@ let html =
     box-shadow:0 0 0 5px var(--cur,#333), 0 0 26px var(--cur,transparent);
     transition:box-shadow .35s; }
   #discard .card { transform:rotate(var(--tilt,0deg)); }
+  .pile-wrap { display:flex; flex-direction:column; align-items:center; gap:.45rem; }
+  .pile-label { font-size:.6rem; font-weight:900; font-style:italic; letter-spacing:.14em;
+    text-transform:uppercase; color:rgba(255,255,255,.82); text-shadow:0 1px 2px rgba(0,0,0,.6); }
   #seats { position:absolute; inset:0; z-index:3; pointer-events:none; }
   .seat { position:absolute; transform:translate(-50%,-50%); text-align:center; }
   .seat .fan { display:flex; justify-content:center; align-items:flex-end;
@@ -386,8 +389,14 @@ let html =
   <div id="table-oval"></div>
   <div id="seats"></div>
   <div class="table-center">
-    <div id="draw-pile" class="pile" title="draw a card"></div>
-    <div id="discard" class="pile"></div>
+    <div class="pile-wrap">
+      <div id="draw-pile" class="pile" title="click to draw a card"></div>
+      <span class="pile-label">Draw Pile</span>
+    </div>
+    <div class="pile-wrap">
+      <div id="discard" class="pile"></div>
+      <span class="pile-label">Discard</span>
+    </div>
   </div>
   <div id="turn-banner" hidden>YOUR TURN</div>
   <div id="hand-area">
@@ -425,24 +434,20 @@ rule "play wild" priority 100:
   do play the card, set color to declared, advance turn
 
 rule "play plus two" priority 100:
-  when card is plus two and your turn
-  do play the card, set color from card, add 2 pending draws, advance turn
+  when card is plus two and (card matches color or card matches value) and your turn
+  do play the card, set color from card, next player draws 2 cards, skip next player
 
 rule "play skip" priority 100:
-  when card is skip and your turn
+  when card is skip and (card matches color or card matches value) and your turn
   do play the card, set color from card, skip next player
 
 rule "play reverse" priority 100:
-  when card is reverse and your turn
+  when card is reverse and (card matches color or card matches value) and your turn
   do play the card, set color from card, reverse direction, advance turn
-
-rule "take penalty" priority 90:
-  when pending draws > 0 and your turn
-  do apply pending draws, advance turn
 
 rule "play plus four" priority 110:
   when card is plus four and your turn
-  do play the card, set color to declared, add 4 pending draws, advance turn
+  do play the card, set color to declared, next player draws 4 cards, skip next player
 
 rule "play matching card" priority 10:
   when (card matches color or card matches value) and your turn
@@ -453,10 +458,36 @@ rule "draw a card" priority 1:
   do draw 1 card, advance turn
 `;
 
-const SPECIALS = RULES_TEMPLATE.split('rule "play matching card"')[0];
+// Stacking keeps the DEFERRED +2/+4 model (a shared pending counter the victim
+// can add to), unlike the standard template's immediate draw-and-skip — so it
+// is spelled out in full rather than derived from RULES_TEMPLATE.
+const STACKING_TEMPLATE = `# Stacking variant: chain same-value cards in one turn, pass to end it.
 
-const STACKING_TEMPLATE = (SPECIALS +
-`rule "open stack" priority 10:
+rule "play wild" priority 100:
+  when card is wild and your turn
+  do play the card, set color to declared, advance turn
+
+rule "play plus two" priority 100:
+  when card is plus two and (card matches color or card matches value) and your turn
+  do play the card, set color from card, add 2 pending draws, advance turn
+
+rule "play skip" priority 100:
+  when card is skip and (card matches color or card matches value) and your turn
+  do play the card, set color from card, skip next player
+
+rule "play reverse" priority 100:
+  when card is reverse and (card matches color or card matches value) and your turn
+  do play the card, set color from card, reverse direction, advance turn
+
+rule "take penalty" priority 90:
+  when pending draws > 0 and your turn
+  do apply pending draws, advance turn
+
+rule "play plus four" priority 110:
+  when card is plus four and your turn
+  do play the card, set color to declared, add 4 pending draws, advance turn
+
+rule "open stack" priority 10:
   when (card matches color or card matches value) and your turn
   do play the card, set color from card, open stack
 
@@ -471,8 +502,7 @@ rule "pass on stack" priority 120:
 rule "draw a card" priority 1:
   when player draws and your turn
   do draw 1 card, advance turn
-`).replace('# Standard Uno. Edit these rules to make your own variant.',
-           '# Stacking variant: chain same-value cards in one turn, pass to end it.');
+`;
 
 const DRAWUNTIL_TEMPLATE = RULES_TEMPLATE.replace(
 `rule "draw a card" priority 1:
@@ -507,6 +537,7 @@ const EFF_OPTIONS = [
   ['set color to declared', 'set color to the declared color (wilds)'],
   ['set color to C', 'set color to a specific color'],
   ['draw N cards', 'draw some cards'],
+  ['next player draws N cards', 'make the next player draw'],
   ['add N pending draws', 'add penalty draws'],
   ['apply pending draws', 'apply the pending penalty'],
   ['draw until playable', 'keep drawing until playable'],
@@ -750,6 +781,12 @@ function renderPile(){
     d.append(el);
   }
   d.style.setProperty('--cur', COLOR_CSS[state.color] || '#333');
+  // give the draw pile a visible face-down stack (3 backs = what the CSS
+  // nth-child rules style). Build once; rebuilding each pile update would
+  // interrupt the hover-lift animation.
+  const dp = $('draw-pile');
+  if (!dp.children.length)
+    for (let i = 0; i < 3; i++) dp.append(cardBackEl());
 }
 
 function makeSlot(card){
