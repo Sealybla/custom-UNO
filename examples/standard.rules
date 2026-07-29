@@ -7,7 +7,7 @@ rule "play wild" priority 100:
 
 rule "play plus two" priority 100:
   when card is plus two and (card matches color or card matches value) and your turn
-  do play the card, set color from card, add 2 pending draws, advance turn
+  do play the card, set color from card, next player draws 2 cards, skip next player
 
 rule "play skip" priority 100:
   when card is skip and (card matches color or card matches value) and your turn
@@ -17,13 +17,9 @@ rule "play reverse" priority 100:
   when card is reverse and (card matches color or card matches value) and your turn
   do play the card, set color from card, reverse direction, advance turn
 
-rule "take penalty" priority 105:
-  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
-  do apply pending draws, advance turn
-
 rule "play plus four" priority 110:
   when card is plus four and your turn
-  do play the card, set color to declared, add 4 pending draws, advance turn
+  do play the card, set color to declared, next player draws 4 cards, skip next player
 
 rule "play matching card" priority 10:
   when (card matches color or card matches value) and your turn

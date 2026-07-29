@@ -365,6 +365,7 @@ let html =
             <code>set color to declared</code>
             <code>set color to red</code>
             <code>draw 2 cards</code>
+            <code>next player draws 2 cards</code>
             <code>add 2 pending draws</code>
             <code>apply pending draws</code>
             <code>draw until playable</code>
@@ -424,15 +425,12 @@ const VALUE_LABEL = {Zero:'0',One:'1',Two:'2',Three:'3',Four:'4',Five:'5',Six:'6
   Seven:'7',Eight:'8',Nine:'9',Skip:'⊘',Reverse:'⇄',Plus:'+2',Wild:'W',Wild4:'+4'};
 const COLOR_CSS = {Red:'#e0332c',Green:'#18a850',Blue:'#0a6bbd',Yellow:'#ffce00',NoColor:'#333'};
 
-const RULES_TEMPLATE = `# Standard Uno. Edit these rules to make your own variant.
-
-rule "play wild" priority 100:
+// shared building blocks: wild/skip/reverse are the same in every variant,
+// but +2/+4 differ (standard = victim draws immediately and is skipped;
+// stacking = a pending counter the victim can stack onto or cash out)
+const BASE_SPECIALS = `rule "play wild" priority 100:
   when card is wild and your turn
   do play the card, set color to declared, advance turn
-
-rule "play plus two" priority 100:
-  when card is plus two and (card matches color or card matches value) and your turn
-  do play the card, set color from card, add 2 pending draws, advance turn
 
 rule "play skip" priority 100:
   when card is skip and (card matches color or card matches value) and your turn
@@ -441,27 +439,47 @@ rule "play skip" priority 100:
 rule "play reverse" priority 100:
   when card is reverse and (card matches color or card matches value) and your turn
   do play the card, set color from card, reverse direction, advance turn
+`;
 
-rule "take penalty" priority 105:
-  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
-  do apply pending draws, advance turn
+const IMMEDIATE_DRAWS = `rule "play plus two" priority 100:
+  when card is plus two and (card matches color or card matches value) and your turn
+  do play the card, set color from card, next player draws 2 cards, skip next player
+
+rule "play plus four" priority 110:
+  when card is plus four and your turn
+  do play the card, set color to declared, next player draws 4 cards, skip next player
+`;
+
+const DEFERRED_DRAWS = `rule "play plus two" priority 100:
+  when card is plus two and (card matches color or card matches value) and your turn
+  do play the card, set color from card, add 2 pending draws, advance turn
 
 rule "play plus four" priority 110:
   when card is plus four and your turn
   do play the card, set color to declared, add 4 pending draws, advance turn
 
-rule "play matching card" priority 10:
-  when (card matches color or card matches value) and your turn
-  do play the card, set color from card, advance turn
+rule "take penalty" priority 105:
+  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
+  do apply pending draws, advance turn
+`;
 
-rule "draw a card" priority 1:
+const DRAW_ONE = `rule "draw a card" priority 1:
   when player draws and your turn
   do draw 1 card, advance turn
 `;
 
-const SPECIALS = RULES_TEMPLATE.split('rule "play matching card"')[0];
+const RULES_TEMPLATE =
+  '# Standard Uno. Edit these rules to make your own variant.\n\n' +
+  BASE_SPECIALS + '\n' + IMMEDIATE_DRAWS + '\n' +
+`rule "play matching card" priority 10:
+  when (card matches color or card matches value) and your turn
+  do play the card, set color from card, advance turn
 
-const STACKING_TEMPLATE = (SPECIALS +
+` + DRAW_ONE;
+
+const STACKING_TEMPLATE =
+  '# Stacking variant: chain same-value cards in one turn, pass to end it.\n\n' +
+  BASE_SPECIALS + '\n' + DEFERRED_DRAWS + '\n' +
 `rule "open stack" priority 10:
   when (card matches color or card matches value) and your turn
   do play the card, set color from card, open stack
@@ -474,17 +492,9 @@ rule "pass on stack" priority 120:
   when player passes and your turn
   do clear stack, advance turn
 
-rule "draw a card" priority 1:
-  when player draws and your turn
-  do draw 1 card, advance turn
-`).replace('# Standard Uno. Edit these rules to make your own variant.',
-           '# Stacking variant: chain same-value cards in one turn, pass to end it.');
+` + DRAW_ONE;
 
-const DRAWUNTIL_TEMPLATE = RULES_TEMPLATE.replace(
-`rule "draw a card" priority 1:
-  when player draws and your turn
-  do draw 1 card, advance turn
-`,
+const DRAWUNTIL_TEMPLATE = RULES_TEMPLATE.replace(DRAW_ONE,
 `rule "draw until playable" priority 1:
   when player draws and your turn
   do draw until playable
@@ -513,7 +523,8 @@ const EFF_OPTIONS = [
   ['set color to declared', 'set color to the declared color (wilds)'],
   ['set color to C', 'set color to a specific color'],
   ['draw N cards', 'draw some cards'],
-  ['add N pending draws', 'add penalty draws'],
+  ['next player draws N cards', 'next player draws cards now'],
+  ['add N pending draws', 'add penalty draws (stackable)'],
   ['apply pending draws', 'apply the pending penalty'],
   ['draw until playable', 'keep drawing until playable'],
   ['reverse direction', 'reverse direction'],
@@ -1067,6 +1078,15 @@ function startPolling(){
     } catch (e){ /* transient */ }
   }, 700);
 }
+
+// tell the server we're gone the instant the tab closes, so a bot can take
+// over immediately instead of waiting for the poll-silence timeout. sendBeacon
+// survives page unload where a normal fetch would be cancelled.
+window.addEventListener('pagehide', () => {
+  if (name && code)
+    navigator.sendBeacon(
+      '/api/leave?name=' + encodeURIComponent(name) + '&code=' + encodeURIComponent(code));
+});
 
 let resizeT = null;
 window.addEventListener('resize', () => {

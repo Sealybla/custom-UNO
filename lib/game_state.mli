@@ -16,6 +16,7 @@ module Effect : sig
     | AddPendingDraws of int 
     | ApplyPendingDraws 
     | ExecuteDraw of int
+    | DrawForNextPlayer of int
     | DrawUntilPlayable
     | ReverseDirection
     | SetStackingValue 

@@ -2,10 +2,10 @@ open! Core
 open! Async
 open Custom_uno
 
-(* Bridges browser HTTP requests onto the game's Async-RPC protocol.
-   Browsers can't speak bin_prot over TCP, so each joined browser player
-   gets a dedicated RPC connection held here, and game events are queued
-   as JSON until the page's /api/poll loop drains them. *)
+(* Bridges browser HTTP requests onto the game's Async-RPC protocol. Browsers
+   can't speak bin_prot over TCP, so each joined browser player gets a
+   dedicated RPC connection held here, and game events are queued as JSON
+   until the page's /api/poll loop drains them. *)
 
 module Session = struct
   type t =
@@ -20,18 +20,20 @@ type t =
   ; rpc_port : int
   }
 
-let session_expiry = Time_ns.Span.of_sec 60.
+let session_expiry = Time_ns.Span.of_sec 8.
 
 (* a browser that stops polling counts as disconnected: closing its RPC
    connection triggers the game server's usual dropout handling *)
 let create ~rpc_port =
   let t = { sessions = String.Table.create (); rpc_port } in
-  Clock_ns.every (Time_ns.Span.of_sec 15.) (fun () ->
+  Clock_ns.every (Time_ns.Span.of_sec 3.) (fun () ->
     let now = Time_ns.now () in
     Hashtbl.filter_inplace t.sessions ~f:(fun (session : Session.t) ->
       let alive =
         (not (Rpc.Connection.is_closed session.conn))
-        && Time_ns.Span.( < ) (Time_ns.diff now session.last_poll) session_expiry
+        && Time_ns.Span.( < )
+             (Time_ns.diff now session.last_poll)
+             session_expiry
       in
       if not alive then don't_wait_for (Rpc.Connection.close session.conn);
       alive));
@@ -65,7 +67,9 @@ let card_json (card : Card.t) =
 let event_json (event : Action.Server_to_client.t) =
   match event with
   | Lobby_updated { players } ->
-    sprintf {|{"type":"lobby","players":%s}|} (jlist (List.map players ~f:jstr))
+    sprintf
+      {|{"type":"lobby","players":%s}|}
+      (jlist (List.map players ~f:jstr))
   | Game_started
       { your_hand
       ; top_card
@@ -95,7 +99,9 @@ let event_json (event : Action.Server_to_client.t) =
   | Hand_counts { counts } ->
     sprintf
       {|{"type":"hand_counts","counts":%s}|}
-      (jlist (List.map counts ~f:(fun (name, n) -> sprintf "[%s,%d]" (jstr name) n)))
+      (jlist
+         (List.map counts ~f:(fun (name, n) ->
+            sprintf "[%s,%d]" (jstr name) n)))
   | Game_over { winner_name } ->
     sprintf {|{"type":"game_over","winner":%s}|} (jstr winner_name)
   | Uno_called { player_name } ->
@@ -144,13 +150,18 @@ let join t ~code ~name =
          let%map () = Rpc.Connection.close conn in
          Error err
        | Ok (Ok ()) ->
-         (match%bind Rpc.Pipe_rpc.dispatch Rpc_protocol.game_stream_rpc conn () with
+         (match%bind
+            Rpc.Pipe_rpc.dispatch Rpc_protocol.game_stream_rpc conn ()
+          with
           | Error err | Ok (Error err) ->
             let%map () = Rpc.Connection.close conn in
             Error err
           | Ok (Ok (reader, _metadata)) ->
             let session =
-              { Session.conn; events = Queue.create (); last_poll = Time_ns.now () }
+              { Session.conn
+              ; events = Queue.create ()
+              ; last_poll = Time_ns.now ()
+              }
             in
             Hashtbl.set t.sessions ~key ~data:session;
             don't_wait_for
@@ -184,6 +195,20 @@ let rpc_result deferred =
   match%map deferred with
   | Error err | Ok (Error err) -> Error err
   | Ok (Ok ()) -> Ok ()
+;;
+
+(* an explicit "leaving" signal from the page's unload beacon: drop the session
+   and close its RPC connection right away so the game server converts the
+   player to a bot immediately, instead of waiting out the poll-silence
+   timeout. Always Ok — a beacon fires with no one listening for the reply. *)
+let leave t ~code ~name =
+  let key = session_key ~code ~name in
+  (match Hashtbl.find t.sessions key with
+   | None -> ()
+   | Some session ->
+     Hashtbl.remove t.sessions key;
+     don't_wait_for (Rpc.Connection.close session.conn));
+  return (Ok ())
 ;;
 
 let take_action t ~code ~name ~action =
@@ -224,7 +249,10 @@ let respond_json ?(status = `OK) body =
 ;;
 
 let ok_body = {|{"ok":true}|}
-let error_body err = sprintf {|{"ok":false,"error":%s}|} (jstr (Error.to_string_hum err))
+
+let error_body err =
+  sprintf {|{"ok":false,"error":%s}|} (jstr (Error.to_string_hum err))
+;;
 
 let respond_result result =
   match%bind result with
@@ -265,6 +293,7 @@ let handle t ~body req =
      | Error err -> respond_json (error_body err)
      | Ok code -> respond_json (sprintf {|{"ok":true,"code":%s}|} (jstr code)))
   | "/api/join" -> with_ident (fun ~code ~name -> respond_result (join t ~code ~name))
+  | "/api/leave" -> with_ident (fun ~code ~name -> respond_result (leave t ~code ~name))
   | "/api/poll" ->
     with_ident (fun ~code ~name ->
       match%bind poll t ~code ~name with
@@ -301,7 +330,8 @@ let handle t ~body req =
              t
              ~code
              ~name
-             ~action:(Action.Client_to_server.Play { card_id; declared_color })))
+             ~action:
+               (Action.Client_to_server.Play { card_id; declared_color })))
   | "/api/rules" ->
     with_ident (fun ~code ~name ->
       let%bind text = Cohttp_async.Body.to_string body in

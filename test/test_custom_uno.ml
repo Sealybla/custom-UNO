@@ -145,7 +145,7 @@ let%expect_test "full game plays to completion" =
          | Error e -> print_s [%message "stuck" (e : Error.t) (moves : int)]))
   in
   play (make_state ()) 0;
-  [%expect {| (winner (id 1) (moves 33)) |}]
+  [%expect {| (winner (id 1) (moves 31)) |}]
 ;;
 
 
@@ -165,7 +165,7 @@ let%expect_test "plus2 stacks then cashes out" =
   in
   (* player 1 stacks their Plus2 — pending should go 2 -> 4, turn 1 -> 2 *)
   let t =
-    Rule_engine.apply_action Rule_engine.Ruleset.default t
+    Rule_engine.apply_action Rule_engine.Ruleset.stacking_variant t
       ~player_id:1 ~action:(Play { card_id = 201; declared_color = None })
     |> Or_error.ok_exn
   in
@@ -173,7 +173,7 @@ let%expect_test "plus2 stacks then cashes out" =
   (* player 2 can't stack — draws the pending 4, pending resets to 0 *)
   let before = List.length (Player.get_hand (List.nth_exn t.players 2)) in
   let t =
-    Rule_engine.apply_action Rule_engine.Ruleset.default t
+    Rule_engine.apply_action Rule_engine.Ruleset.stacking_variant t
       ~player_id:2 ~action:Draw
     |> Or_error.ok_exn
   in
@@ -200,7 +200,7 @@ let%expect_test "plus4 stacks then cashes out" =
   in
   (* player 1 stacks a Plus4 onto a pending 2 — pending 2 -> 6 *)
   let t =
-    Rule_engine.apply_action Rule_engine.Ruleset.default t
+    Rule_engine.apply_action Rule_engine.Ruleset.stacking_variant t
       ~player_id:1 ~action:(Play { card_id = 300; declared_color = Some Red })
     |> Or_error.ok_exn
   in
@@ -208,7 +208,7 @@ let%expect_test "plus4 stacks then cashes out" =
   (* player 2 can't continue — draws all 6, pending resets *)
   let before = List.length (Player.get_hand (List.nth_exn t.players 2)) in
   let t =
-    Rule_engine.apply_action Rule_engine.Ruleset.default t
+    Rule_engine.apply_action Rule_engine.Ruleset.stacking_variant t
       ~player_id:2 ~action:Draw
     |> Or_error.ok_exn
   in
@@ -391,12 +391,14 @@ let%expect_test "matching special cards still play" =
       ~player_id:0 ~action:(Play { card_id = 810; declared_color = None })
     |> Or_error.ok_exn
   in
-  print_s [%message (t.pending_draws : int) (t.turn : int)];
-  [%expect {| ((t.pending_draws 2) (t.turn 1)) |}]
+  (* immediate semantics: the victim draws 2 on the spot and is skipped *)
+  let victim_hand = List.length (Player.get_hand (List.nth_exn t.players 1)) in
+  print_s [%message (t.pending_draws : int) (t.turn : int) (victim_hand : int)];
+  [%expect {| ((t.pending_draws 0) (t.turn 2) (victim_hand 2)) |}]
 ;;
 
-(* regression: a wild (or any non-stacking card) cannot dodge a pending
-   penalty - the penalty rule outranks the specials *)
+(* regression: in the stacking variant a wild (or any non-stacking card)
+   cannot dodge a pending penalty - the penalty rule outranks the specials *)
 let%expect_test "wild cannot dodge pending draws" =
   let w = { Card.color = NoColor; value = Wild; id = 820 } in
   let f = { Card.color = Red; value = Zero; id = 821 } in
@@ -410,7 +412,7 @@ let%expect_test "wild cannot dodge pending draws" =
       ~turn:0
   in
   let t =
-    Rule_engine.apply_action Rule_engine.Ruleset.default t
+    Rule_engine.apply_action Rule_engine.Ruleset.stacking_variant t
       ~player_id:0 ~action:(Play { card_id = 820; declared_color = Some Red })
     |> Or_error.ok_exn
   in
@@ -427,16 +429,13 @@ let%expect_test "wild cannot dodge pending draws" =
 
 (* ---------- rule parser: round-trips against the hand-coded rulesets ---------- *)
 
-let special_cards_text =
+(* shared by every variant: wild, skip, reverse — same order as
+   Ruleset.base_special_rules *)
+let base_special_text =
   {|
-# special cards - shared by every variant
 rule "play wild" priority 100:
   when card is wild and your turn
   do play the card, set color to declared, advance turn
-
-rule "play plus two" priority 100:
-  when card is plus two and (card matches color or card matches value) and your turn
-  do play the card, set color from card, add 2 pending draws, advance turn
 
 rule "play skip" priority 100:
   when card is skip and (card matches color or card matches value) and your turn
@@ -445,14 +444,36 @@ rule "play skip" priority 100:
 rule "play reverse" priority 100:
   when card is reverse and (card matches color or card matches value) and your turn
   do play the card, set color from card, reverse direction, advance turn
+|}
+;;
 
-rule "take penalty" priority 105:
-  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
-  do apply pending draws, advance turn
+(* standard +2/+4: the next player draws immediately and is skipped *)
+let immediate_draw_text =
+  {|
+rule "play plus two" priority 100:
+  when card is plus two and (card matches color or card matches value) and your turn
+  do play the card, set color from card, next player draws 2 cards, skip next player
+
+rule "play plus four" priority 110:
+  when card is plus four and your turn
+  do play the card, set color to declared, next player draws 4 cards, skip next player
+|}
+;;
+
+(* stacking +2/+4: bump a shared counter, cashed out later by "take penalty" *)
+let deferred_draw_text =
+  {|
+rule "play plus two" priority 100:
+  when card is plus two and (card matches color or card matches value) and your turn
+  do play the card, set color from card, add 2 pending draws, advance turn
 
 rule "play plus four" priority 110:
   when card is plus four and your turn
   do play the card, set color to declared, add 4 pending draws, advance turn
+
+rule "take penalty" priority 105:
+  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
+  do apply pending draws, advance turn
 |}
 ;;
 
@@ -514,28 +535,28 @@ let check_against_hand_coded text expected =
 
 let%expect_test "parsed default ruleset equals hand-coded default" =
   check_against_hand_coded
-    (special_cards_text ^ generic_play_text ^ draw_one_text)
+    (base_special_text ^ immediate_draw_text ^ generic_play_text ^ draw_one_text)
     Rule_engine.Ruleset.default;
   [%expect {| parsed rules match the hand-coded ruleset |}]
 ;;
 
 let%expect_test "parsed draw-until ruleset equals hand-coded variant" =
   check_against_hand_coded
-    (special_cards_text ^ generic_play_text ^ draw_until_text)
+    (base_special_text ^ immediate_draw_text ^ generic_play_text ^ draw_until_text)
     Rule_engine.Ruleset.draw_until_variant;
   [%expect {| parsed rules match the hand-coded ruleset |}]
 ;;
 
 let%expect_test "parsed stacking ruleset equals hand-coded variant" =
   check_against_hand_coded
-    (special_cards_text ^ stacking_text ^ draw_one_text)
+    (base_special_text ^ deferred_draw_text ^ stacking_text ^ draw_one_text)
     Rule_engine.Ruleset.stacking_variant;
   [%expect {| parsed rules match the hand-coded ruleset |}]
 ;;
 
 let%expect_test "parsed stacking ruleset plays a real stacking turn" =
   let rules =
-    Rule_parser.parse_ruleset (special_cards_text ^ stacking_text ^ draw_one_text)
+    Rule_parser.parse_ruleset (base_special_text ^ deferred_draw_text ^ stacking_text ^ draw_one_text)
     |> Or_error.ok_exn
   in
   let s1 = { Card.color = Red; value = Seven; id = 700 } in

@@ -54,6 +54,7 @@ Parentheses override.
 | `add N pending draws` | `AddPendingDraws N` |
 | `apply pending draws` | `ApplyPendingDraws` |
 | `draw N` / `draw N cards` | `ExecuteDraw N` |
+| `next player draws N cards` | `DrawForNextPlayer N` (turn unchanged) |
 | `draw until playable` | `DrawUntilPlayable` |
 | `reverse direction` | `ReverseDirection` |
 | `open stack` | `SetStackingValue` |
@@ -90,16 +91,13 @@ phrases by peeking ahead (e.g. `card` `is` `plus` `two` is one atom).
 
 ## Validation: the current rulesets, rewritten
 
-Shared special-card rules (`Ruleset.play_rules`):
+Shared special-card rules (`Ruleset.base_special_rules`; wild is always
+playable, skip/reverse must match like any other card):
 
 ```
 rule "play wild" priority 100:
   when card is wild and your turn
   do play the card, set color to declared, advance turn
-
-rule "play plus two" priority 100:
-  when card is plus two and (card matches color or card matches value) and your turn
-  do play the card, set color from card, add 2 pending draws, advance turn
 
 rule "play skip" priority 100:
   when card is skip and (card matches color or card matches value) and your turn
@@ -108,14 +106,38 @@ rule "play skip" priority 100:
 rule "play reverse" priority 100:
   when card is reverse and (card matches color or card matches value) and your turn
   do play the card, set color from card, reverse direction, advance turn
+```
 
-rule "take penalty" priority 105:
-  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
-  do apply pending draws, advance turn
+The +2/+4 rules differ per variant. Standard (and draw-until) use the
+immediate form (`Ruleset.immediate_draw_rules`) — the victim draws on the
+spot and is skipped:
+
+```
+rule "play plus two" priority 100:
+  when card is plus two and (card matches color or card matches value) and your turn
+  do play the card, set color from card, next player draws 2 cards, skip next player
+
+rule "play plus four" priority 110:
+  when card is plus four and your turn
+  do play the card, set color to declared, next player draws 4 cards, skip next player
+```
+
+The stacking variant uses the deferred form
+(`Ruleset.deferred_draw_rules`) — a pending counter the victim can stack
+onto, with the penalty rule outranking everything except another +2/+4:
+
+```
+rule "play plus two" priority 100:
+  when card is plus two and (card matches color or card matches value) and your turn
+  do play the card, set color from card, add 2 pending draws, advance turn
 
 rule "play plus four" priority 110:
   when card is plus four and your turn
   do play the card, set color to declared, add 4 pending draws, advance turn
+
+rule "take penalty" priority 105:
+  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
+  do apply pending draws, advance turn
 ```
 
 Default variant adds:
