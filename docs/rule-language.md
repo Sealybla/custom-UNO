@@ -215,3 +215,10 @@ and restores the table via `get_state_rpc`, which returns a snapshot of
 the current lobby/game as a replayable event list. The server broadcasts
 `Hand_counts` after every action, shown as count badges on the player
 chips (a red "UNO!" badge at one card).
+
+The rules editor is beginner-friendly: preset buttons load the Standard
+/ Stacking / Draw-until-playable templates; a "build a rule without
+typing" form (dropdown condition + effect chips + priority) generates
+rule text into the editor; a cheat sheet lists every condition/effect
+phrase with click-to-insert; and the editor live-validates as you type
+via `POST /api/check-rules` (parse-only dry run, no session needed).

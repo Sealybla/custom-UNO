@@ -219,6 +219,13 @@ let handle t ~body req =
     | Some name -> f name
   in
   match Uri.path uri with
+  | "/api/check-rules" ->
+    (* parse-only dry run for live editor feedback; no session needed *)
+    let%bind text = Cohttp_async.Body.to_string body in
+    (match Rule_parser.parse_ruleset text with
+     | Ok rules ->
+       respond_json (sprintf {|{"ok":true,"num_rules":%d}|} (List.length rules))
+     | Error err -> respond_json (error_body err))
   | "/api/join" -> with_name (fun name -> respond_result (join t ~name))
   | "/api/poll" ->
     with_name (fun name ->

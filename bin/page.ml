@@ -105,6 +105,36 @@ let html =
     flex-wrap:wrap; gap:.5rem; }
   ul#lobby-players li { background:rgba(255,255,255,.14); border-radius:999px;
     padding:.35rem .9rem; font-weight:700; }
+  /* rules editor helpers */
+  .preset-row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.5rem; }
+  button.preset, button.small { padding:.3rem .8rem; font-size:.82rem;
+    background:rgba(255,255,255,.92); box-shadow:0 2px 0 rgba(0,0,0,.3); }
+  #check-status { font-size:.83rem; margin:.25rem 0 .35rem; min-height:1.1rem;
+    font-family:ui-monospace,monospace; white-space:pre-wrap; }
+  #check-status.ok { color:#8fe3a8; } #check-status.err { color:#ffb0b0; }
+  .panel details { margin:.7rem 0 0; background:rgba(0,0,0,.28); border-radius:12px;
+    padding:.55rem .9rem; }
+  .panel summary { cursor:pointer; font-weight:800; }
+  .b-row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin:.6rem 0; }
+  .b-row > label:first-child { font-weight:800; font-style:italic; width:3.4rem; }
+  .b-row select, .b-row input[type=number], .b-row input[type=text],
+  .b-row input:not([type]) { border-radius:8px; padding:.35rem .5rem; font-size:.88rem; }
+  .b-row input[type=number] { width:4.2rem; }
+  .b-check { font-size:.85rem; display:inline-flex; gap:.3rem; align-items:center; }
+  #b-name { flex:1; min-width:8rem; }
+  .chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:.2rem 0 .2rem 3.9rem; }
+  .chips:empty { display:none; }
+  .chips span { background:var(--c-yellow); color:var(--ink); font-weight:700;
+    font-size:.78rem; border-radius:999px; padding:.2rem .6rem; cursor:pointer; }
+  .chips span::after { content:' ✕'; opacity:.6; }
+  .cheat { display:grid; grid-template-columns:1fr 1fr; gap:.8rem; font-size:.83rem;
+    margin-top:.5rem; }
+  .cheat h4 { margin:.2rem 0 .3rem; }
+  .cheat code { display:block; cursor:pointer; padding:.14rem .45rem; border-radius:6px;
+    background:rgba(255,255,255,.1); margin:.18rem 0; }
+  .cheat code:hover { background:rgba(255,206,0,.35); }
+  .cheat-shape { background:rgba(255,255,255,.08); border-radius:8px; padding:.5rem .7rem;
+    font-size:.8rem; margin:.5rem 0 0; }
   @media (min-width:1000px){
     .lobby-grid { display:grid; grid-template-columns:1fr 1fr; gap:1.2rem;
       width:min(1060px,96vw); align-items:start; }
@@ -249,8 +279,85 @@ let html =
     </div>
     <div class="panel">
       <h2>House rules</h2>
-      <p style="opacity:.8; margin-top:0">Edit the ruleset and submit it before starting a game.</p>
-      <textarea id="rules-text" rows="14" spellcheck="false"></textarea>
+      <div class="preset-row">
+        <span style="opacity:.8">Start from:</span>
+        <button class="preset" data-preset="standard">Standard</button>
+        <button class="preset" data-preset="stacking">Stacking</button>
+        <button class="preset" data-preset="drawuntil">Draw until playable</button>
+      </div>
+      <div id="check-status"></div>
+      <textarea id="rules-text" rows="12" spellcheck="false"></textarea>
+
+      <details id="builder">
+        <summary>🛠 Build a rule without typing</summary>
+        <div class="b-row"><label>When</label>
+          <select id="b-when"></select>
+          <input id="b-when-n" type="number" value="0" min="0" hidden>
+          <label class="b-check"><input id="b-turn" type="checkbox" checked> only on your turn</label>
+        </div>
+        <div class="b-row"><label>Then</label>
+          <select id="b-eff"></select>
+          <input id="b-eff-n" type="number" value="2" min="1" hidden>
+          <select id="b-eff-color" hidden>
+            <option>red</option><option>yellow</option>
+            <option>green</option><option>blue</option>
+          </select>
+          <button id="b-add-eff" class="small">+ add effect</button>
+        </div>
+        <div id="b-effs" class="chips"></div>
+        <div class="b-row"><label>Extras</label>
+          <select id="b-prio">
+            <option value="50" selected>normal priority</option>
+            <option value="115">high — beats the special cards</option>
+            <option value="5">low — a fallback rule</option>
+          </select>
+          <input id="b-name" placeholder="rule name (optional)">
+          <button id="b-append">Add to ruleset</button>
+        </div>
+      </details>
+
+      <details>
+        <summary>📖 Cheat sheet</summary>
+        <pre class="cheat-shape">rule "name" priority 100:
+  when &lt;condition&gt;
+  do &lt;effect&gt;, &lt;effect&gt;</pre>
+        <div class="cheat">
+          <div>
+            <h4>Conditions (click to insert)</h4>
+            <code>card matches color</code>
+            <code>card matches value</code>
+            <code>card is wild</code>
+            <code>card is skip</code>
+            <code>card is reverse</code>
+            <code>card is plus two</code>
+            <code>card is plus four</code>
+            <code>player draws</code>
+            <code>player passes</code>
+            <code>continues stack</code>
+            <code>pending draws > 0</code>
+            <code>your turn</code>
+            <code>always</code>
+          </div>
+          <div>
+            <h4>Effects (click to insert)</h4>
+            <code>play the card</code>
+            <code>set color from card</code>
+            <code>set color to declared</code>
+            <code>set color to red</code>
+            <code>draw 2 cards</code>
+            <code>add 2 pending draws</code>
+            <code>apply pending draws</code>
+            <code>draw until playable</code>
+            <code>reverse direction</code>
+            <code>skip next player</code>
+            <code>open stack</code>
+            <code>clear stack</code>
+            <code>advance turn</code>
+          </div>
+        </div>
+        <p style="opacity:.75; font-size:.82rem">Join conditions with <b>and</b> / <b>or</b> / <b>not</b>, parentheses to group. Higher priority wins when several rules match.</p>
+      </details>
+
       <p style="margin:.7rem 0 0"><button id="rules-btn">Submit rules</button></p>
       <pre id="rules-status"></pre>
     </div>
@@ -328,6 +435,69 @@ rule "draw a card" priority 1:
   when player draws and your turn
   do draw 1 card, advance turn
 `;
+
+const SPECIALS = RULES_TEMPLATE.split('rule "play matching card"')[0];
+
+const STACKING_TEMPLATE = (SPECIALS +
+`rule "open stack" priority 10:
+  when (card matches color or card matches value) and your turn
+  do play the card, set color from card, open stack
+
+rule "continue stack" priority 120:
+  when continues stack and your turn
+  do play the card, set color from card
+
+rule "pass on stack" priority 120:
+  when player passes and your turn
+  do clear stack, advance turn
+
+rule "draw a card" priority 1:
+  when player draws and your turn
+  do draw 1 card, advance turn
+`).replace('# Standard Uno. Edit these rules to make your own variant.',
+           '# Stacking variant: chain same-value cards in one turn, pass to end it.');
+
+const DRAWUNTIL_TEMPLATE = RULES_TEMPLATE.replace(
+`rule "draw a card" priority 1:
+  when player draws and your turn
+  do draw 1 card, advance turn
+`,
+`rule "draw until playable" priority 1:
+  when player draws and your turn
+  do draw until playable
+`);
+
+const TEMPLATES = { standard: RULES_TEMPLATE, stacking: STACKING_TEMPLATE,
+                    drawuntil: DRAWUNTIL_TEMPLATE };
+
+const WHEN_OPTIONS = [
+  ['card matches color or card matches value', 'a matching card is played'],
+  ['card is plus two', 'a +2 is played'],
+  ['card is plus four', 'a +4 is played'],
+  ['card is skip', 'a skip is played'],
+  ['card is reverse', 'a reverse is played'],
+  ['card is wild', 'a wild is played'],
+  ['player draws', 'the player clicks draw'],
+  ['player passes', 'the player clicks pass'],
+  ['continues stack', 'a card continues the stack'],
+  ['pending draws > N', 'penalty draws are pending'],
+  ['always', 'always (any action)'],
+];
+const EFF_OPTIONS = [
+  ['play the card', 'play the card'],
+  ['advance turn', 'end the turn'],
+  ['set color from card', 'set color from the card'],
+  ['set color to declared', 'set color to the declared color (wilds)'],
+  ['set color to C', 'set color to a specific color'],
+  ['draw N cards', 'draw some cards'],
+  ['add N pending draws', 'add penalty draws'],
+  ['apply pending draws', 'apply the pending penalty'],
+  ['draw until playable', 'keep drawing until playable'],
+  ['reverse direction', 'reverse direction'],
+  ['skip next player', 'skip the next player'],
+  ['open stack', 'open a stack'],
+  ['clear stack', 'clear the stack'],
+];
 
 let name = null;
 let state = { players:[], hand:[], top:null, color:null, current:null,
@@ -709,6 +879,95 @@ $('rules-btn').onclick = async () => {
   else { s.textContent = r.error; s.className = 'err'; }
 };
 
+/* ---------- rules editor helpers ---------- */
+let lastLoaded = RULES_TEMPLATE;
+let checkT = null;
+
+async function checkRules(){
+  const text = $('rules-text').value;
+  const st = $('check-status');
+  if (!text.trim()){ st.textContent = ''; return; }
+  try {
+    const r = await api('/api/check-rules', {method:'POST', body:text});
+    if (r.ok){ st.textContent = '✓ ' + r.num_rules + ' rules ready'; st.className = 'ok'; }
+    else { st.textContent = '✗ ' + r.error; st.className = 'err'; }
+  } catch (e){ st.textContent = ''; }
+}
+function scheduleCheck(){ clearTimeout(checkT); checkT = setTimeout(checkRules, 600); }
+$('rules-text').addEventListener('input', scheduleCheck);
+
+document.querySelectorAll('button.preset').forEach(b => b.onclick = () => {
+  const ta = $('rules-text');
+  if (ta.value.trim() !== lastLoaded.trim() &&
+      !confirm('Replace the current rule text?')) return;
+  ta.value = TEMPLATES[b.dataset.preset];
+  lastLoaded = ta.value;
+  checkRules();
+});
+
+document.querySelectorAll('.cheat code').forEach(c => c.onclick = () => {
+  const ta = $('rules-text');
+  ta.setRangeText(c.textContent, ta.selectionStart, ta.selectionEnd, 'end');
+  ta.focus();
+  scheduleCheck();
+});
+
+/* rule builder */
+let builderEffs = [];
+let customRuleN = 0;
+
+function fillSelect(sel, options){
+  options.forEach(([, label], i) => {
+    const o = document.createElement('option');
+    o.value = i; o.textContent = label;
+    sel.append(o);
+  });
+}
+fillSelect($('b-when'), WHEN_OPTIONS);
+fillSelect($('b-eff'), EFF_OPTIONS);
+
+function syncBuilderInputs(){
+  $('b-when-n').hidden = !WHEN_OPTIONS[$('b-when').value][0].includes('N');
+  const eff = EFF_OPTIONS[$('b-eff').value][0];
+  $('b-eff-n').hidden = !eff.includes('N');
+  $('b-eff-color').hidden = !eff.includes('C');
+}
+$('b-when').onchange = syncBuilderInputs;
+$('b-eff').onchange = syncBuilderInputs;
+syncBuilderInputs();
+
+function renderChips(){
+  const box = $('b-effs'); box.innerHTML = '';
+  builderEffs.forEach((t, i) => {
+    const s = document.createElement('span');
+    s.textContent = t;
+    s.title = 'remove';
+    s.onclick = () => { builderEffs.splice(i, 1); renderChips(); };
+    box.append(s);
+  });
+}
+$('b-add-eff').onclick = () => {
+  let t = EFF_OPTIONS[$('b-eff').value][0];
+  t = t.replace('N', $('b-eff-n').value || '1').replace('C', $('b-eff-color').value);
+  builderEffs.push(t);
+  renderChips();
+};
+$('b-append').onclick = () => {
+  if (!builderEffs.length){ toast('Add at least one effect first'); return; }
+  let cond = WHEN_OPTIONS[$('b-when').value][0].replace('N', $('b-when-n').value || '0');
+  if ($('b-turn').checked)
+    cond = (cond.includes(' or ') ? '(' + cond + ')' : cond) + ' and your turn';
+  const rname = $('b-name').value.trim() || 'my rule ' + (++customRuleN);
+  const text = 'rule "' + rname + '" priority ' + $('b-prio').value + ':\n' +
+               '  when ' + cond + '\n' +
+               '  do ' + builderEffs.join(', ') + '\n';
+  const ta = $('rules-text');
+  ta.value = ta.value.replace(/\s*$/, '\n\n') + text;
+  ta.scrollTop = ta.scrollHeight;
+  builderEffs = []; renderChips(); $('b-name').value = '';
+  checkRules();
+};
+
 /* ---------- join / snapshot / polling ---------- */
 async function refreshState(){
   const r = await api('/api/state');
@@ -756,6 +1015,7 @@ window.addEventListener('resize', () => {
 });
 
 $('rules-text').value = RULES_TEMPLATE;
+checkRules();
 
 const savedName = sessionStorage.getItem('uno-name');
 if (savedName){
