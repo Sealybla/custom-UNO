@@ -4,23 +4,167 @@ open Or_error.Let_syntax
 module Ruleset = struct
   type t = Rule.t list [@@deriving sexp, compare, equal, bin_io]
 
-  let default : t =
-    [ (* play matching color *)
-      { id = 1
-      ; priority = 1
-      ; condition = And (MatchesTopColor, IsPlayerTurn)
-      ; actions = [ PlayCard ]
+  (* special-card rules shared by every variant — no generic play, no stacking *)
+  let play_rules : t =
+    [ { id = 1
+      ; priority = 100
+      ; condition = And (IsWildCard, IsPlayerTurn)
+      ; actions =
+          [ Mutate PlayTriggeringCard
+          ; Mutate CheckWinner
+          ; Mutate SetDeclaredColor
+          ; Mutate AdvanceTurn
+          ]
       }
-    ; (* draw when forced *)
-      { id = 2
-      ; priority = 4
-      ; condition =
-          And (And (Not MatchesTopColor, Not MatchesTopValue), IsPlayerTurn)
-      ; actions = [ ExecuteDraw ]
+    ; { id = 2
+      ; priority = 100
+      ; condition = And (IsPlusTwo, IsPlayerTurn)
+      ; actions =
+          [ Mutate PlayTriggeringCard
+          ; Mutate CheckWinner
+          ; Mutate SetColorFromTriggeringCard
+          ; Mutate (AddPendingDraws 2)
+          ; Mutate AdvanceTurn
+          ]
+      }
+    ; { id = 3
+      ; priority = 100
+      ; condition = And (IsSkip, IsPlayerTurn)
+      ; actions =
+          [ Mutate PlayTriggeringCard
+          ; Mutate CheckWinner
+          ; Mutate SetColorFromTriggeringCard
+          ; Mutate AdvanceTurn
+          ; Mutate AdvanceTurn
+          ]
+      }
+    ; { id = 4
+      ; priority = 100
+      ; condition = And (IsReverse, IsPlayerTurn)
+      ; actions =
+          [ Mutate PlayTriggeringCard
+          ; Mutate CheckWinner
+          ; Mutate SetColorFromTriggeringCard
+          ; Mutate ReverseDirection
+          ; Mutate AdvanceTurn
+          ]
+      }
+    ; { id = 5
+      ; priority = 90
+      ; condition = And (PendingDrawsGreaterThan 0, IsPlayerTurn)
+      ; actions = [ Mutate ApplyPendingDraws; Mutate AdvanceTurn ]
+      }
+    ; { id = 8
+      ; priority = 110
+      ; condition = And (IsPlusFour, IsPlayerTurn)
+      ; actions =
+          [ Mutate PlayTriggeringCard
+          ; Mutate CheckWinner
+          ; Mutate SetDeclaredColor
+          ; Mutate (AddPendingDraws 4)
+          ; Mutate AdvanceTurn
+          ]
       }
     ]
   ;;
+
+  (* generic play: number card matches, play it and advance (standard) *)
+  let generic_play_rule : Rule.t =
+    { id = 6
+    ; priority = 10
+    ; condition = And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn)
+    ; actions =
+        [ Mutate PlayTriggeringCard
+        ; Mutate CheckWinner
+        ; Mutate SetColorFromTriggeringCard
+        ; Mutate AdvanceTurn
+        ]
+    }
+  ;;
+
+  (* stacking: playing a card opens a same-value stack, turn stays open *)
+  let stack_open_rule : Rule.t =
+    { id = 6
+    ; priority = 10
+    ; condition = And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn)
+    ; actions =
+        [ Mutate PlayTriggeringCard
+        ; Mutate CheckWinner
+        ; Mutate SetColorFromTriggeringCard
+        ; Mutate SetStackingValue
+          (* no AdvanceTurn — opens a stack; player passes to end turn *)
+        ]
+    }
+  ;;
+
+  (* continue an open stack — same value, stay on turn *)
+  let stack_continue_rule : Rule.t =
+    { id = 20
+    ; priority = 120
+    ; condition = And (ContinuesStack, IsPlayerTurn)
+    ; actions =
+        [ Mutate PlayTriggeringCard
+        ; Mutate CheckWinner
+        ; Mutate SetColorFromTriggeringCard
+          (* no AdvanceTurn — stack stays open *)
+        ]
+    }
+  ;;
+
+  (* pass while stacking — clear the stack and end the turn *)
+  let stack_pass_rule : Rule.t =
+    { id = 21
+    ; priority = 120
+    ; condition = And (IsPassAction, IsPlayerTurn)
+    ; actions = [ Mutate ClearStackingValue; Mutate AdvanceTurn ]
+    }
+  ;;
+
+  (* draw one card and pass — standard Uno *)
+  let draw_one_rule : Rule.t =
+    { id = 7
+    ; priority = 1
+    ; condition = And (IsDrawAction, IsPlayerTurn)
+    ; actions = [ Mutate (ExecuteDraw 1); Mutate AdvanceTurn ]
+    }
+  ;;
+
+  (* keep drawing until a playable card appears, then stop (turn stays) *)
+  let draw_until_rule : Rule.t =
+    { id = 7
+    ; priority = 1
+    ; condition = And (IsDrawAction, IsPlayerTurn)
+    ; actions = [ Mutate DrawUntilPlayable ]
+    }
+  ;;
+
+  let default : t = play_rules @ [ generic_play_rule; draw_one_rule ]
+  let draw_until_variant : t = play_rules @ [ generic_play_rule; draw_until_rule ]
+
+  let stacking_variant : t =
+    play_rules @ [ stack_open_rule; stack_continue_rule; stack_pass_rule; draw_one_rule ]
+  ;;
 end
+
+(* Convert network wire format into engine event format *)
+let event_of_client_action
+  (state : Game_state.t)
+  ~player
+  ~(action : Action.Client_to_server.t)
+  : Event.t Or_error.t
+  =
+  match action with
+  | Play { card_id; declared_color } ->
+    let%map card =
+      Game_state.Card_registry.find state.card_registry card_id
+    in
+    Event.CardPlayed { player; card; declared_color }
+  | Draw -> Ok (DrawRequested { player })
+  | Pass -> Ok (Event.PassRequested { player })
+  | Join_lobby _ | Quit ->
+    Or_error.error_s
+      [%message "Non-gameplay action" (action : Action.Client_to_server.t)]
+;;
 
 let rec eval_condition
   (state : Game_state.t)
@@ -34,7 +178,6 @@ let rec eval_condition
     (match evt with
      | CardPlayed { card; _ } ->
        Card.Color.equal (Card.get_color card) state.current_color
-       || Card.Color.equal (Card.get_color card) NoColor
      | _ -> false)
   | MatchesTopValue ->
     (match evt with
@@ -47,7 +190,39 @@ let rec eval_condition
        (match Card.get_value card with Wild | Wild4 -> true | _ -> false)
      | _ -> false)
   | PendingDrawsGreaterThan n -> state.pending_draws > n
-  | IsPlayerTurn -> true
+  | IsPlayerTurn -> 
+    (match evt with 
+    | CardPlayed { player; _} | DrawRequested { player } | PassRequested { player } -> 
+      Int.equal (Player.get_id player) state.turn)
+  | IsSkip -> 
+    (match evt with 
+    | CardPlayed {card; _ } -> Card.Value.equal (Card.get_value card) Skip
+    | _ -> false)
+  | IsReverse -> 
+    (match evt with 
+    | CardPlayed { card; _} -> Card.Value.equal (Card.get_value card) Reverse 
+    | _ -> false)
+  | IsDrawAction -> 
+    (match evt with 
+    | DrawRequested _ -> true 
+    | _ -> false )
+  | IsPlusTwo -> 
+    (match evt with 
+    | CardPlayed { card; _ } -> Card.Value.equal (Card.get_value card) Plus 
+    | _ -> false)
+  | IsPlusFour -> 
+    (match evt with 
+    | CardPlayed {card; _} -> Card.Value.equal (Card.get_value card) Wild4 
+    | _ -> false)
+  | ContinuesStack -> 
+    (match evt with 
+    | CardPlayed {card ; _} -> 
+      (match state.stacking_value with 
+      | Some v -> Card.Value.equal (Card.get_value card) v 
+      | None -> false) 
+    | _ -> false)
+  | IsPassAction -> 
+    (match evt with PassRequested _ -> true | _ -> false)
   | And (c1, c2) ->
     eval_condition state evt c1 && eval_condition state evt c2
   | Or (c1, c2) -> eval_condition state evt c1 || eval_condition state evt c2
@@ -63,7 +238,7 @@ let rec eval_action
   match act with
   | Mutate eff ->
     (* apply effect implemented soon *)
-    let%map next_state = Game_state.apply_effect state eff in
+    let%map next_state = Game_state.apply_effect state ~event:evt eff in
     next_state, []
   | Chain_event evt -> Ok (state, [ evt ])
   | Sequence actions ->
@@ -73,20 +248,6 @@ let rec eval_action
       ~f:(fun (curr_state, curr_evts) a ->
         let%map next_state, new_evts = eval_action curr_state ~evt a in
         next_state, curr_evts @ new_evts)
-  | PlayCard ->
-    (match evt with
-     | CardPlayed { player; card; declared_color } ->
-       (match Game_state.play_card state card player with
-        | Ok new_state -> Ok (new_state, [])
-        | _ -> Or_error.error_s [%message "Card played did NOT work"])
-     | _ -> Or_error.error_s [%message "must be card played"])
-  | ExecuteDraw ->
-    (match evt with
-     | DrawRequested { player } ->
-       (match Game_state.draw_card_player state (Player.get_id player) with
-        | Ok new_state -> Ok (new_state, [])
-        | _ -> Or_error.error_s [%message "Draw requested did NOT work"])
-     | _ -> Or_error.error_s [%message "must be draw requested played"])
 ;;
 
 let rec process_event
@@ -108,20 +269,14 @@ let rec process_event
     List.filter sorted_rules ~f:(fun rule ->
       eval_condition state evt rule.condition)
   in
-  match List.is_empty matching_rules with
-  | true ->
-    Or_error.error_s
-      [%message "Illegal move: no matching rules" (evt : Event.t)]
-  | false ->
-    let actions = List.concat_map matching_rules ~f:(fun r -> r.actions) in
-    List.fold_result actions ~init:state ~f:(fun curr_state act ->
-      let%bind next_state, chained_events =
-        eval_action curr_state act ~evt
-      in
-      List.fold_result
-        chained_events
-        ~init:next_state
-        ~f:(process_event rules))
+  match matching_rules with
+    | [] ->
+      Or_error.error_s
+        [%message "Illegal move: no matching rules" (evt : Event.t)]
+    | rule :: _ ->
+      List.fold_result rule.actions ~init:state ~f:(fun curr_state act ->
+        let%bind next_state, chained_events = eval_action curr_state act ~evt in
+        List.fold_result chained_events ~init:next_state ~f:(process_event rules))
 ;;
 
 let apply_action
@@ -137,6 +292,6 @@ let apply_action
     | None ->
       Or_error.error_s [%message "Player ID not found" (player_id : int)]
   in
-  let%bind evt = Event.of_client_action state ~player ~action in
+  let%bind evt = event_of_client_action state ~player ~action in
   process_event rules state evt
 ;;

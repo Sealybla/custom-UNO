@@ -14,6 +14,13 @@ module Condition : sig
     | IsWildCard
     | PendingDrawsGreaterThan of int
     | IsPlayerTurn
+    | IsSkip 
+    | IsReverse 
+    | IsDrawAction 
+    | IsPlusTwo 
+    | IsPlusFour
+    | ContinuesStack
+    | IsPassAction
     | And of t * t
     | Or of t * t
     | Not of t
@@ -23,8 +30,6 @@ end
 module Action_AST : sig
   type t =
     | Mutate of Game_state.Effect.t
-    | PlayCard
-    | ExecuteDraw
     | Chain_event of Event.t
     | Sequence of t list
   [@@deriving sexp, compare, equal, bin_io]

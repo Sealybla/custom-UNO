@@ -19,20 +19,19 @@ end
 
 module Effect = struct
   type t =
-    | SetTopCard of Card.t
+    | PlayTriggeringCard
     | SetActiveColor of Card.Color.t
+    | SetColorFromTriggeringCard
+    | SetDeclaredColor
     | AddPendingDraws of int
-    | ExecuteDraw of
-        { player_id : int
-        ; count : int
-        }
-    | RemoveCardFromHand of
-        { player_id : int
-        ; card_id : int
-        }
+    | ApplyPendingDraws
+    | ExecuteDraw of int
+    | DrawUntilPlayable
     | ReverseDirection
+    | SetStackingValue
+    | ClearStackingValue
     | AdvanceTurn
-    | CheckWinner of { player_id : int }
+    | CheckWinner
   [@@deriving sexp, compare, equal, bin_io]
 end
 
@@ -43,6 +42,7 @@ type t =
   ; played_pile : Card.t List.t
   ; top_card : Card.t
   ; current_color : Card.Color.t
+  ; stacking_value : Card.Value.t option
   ; direction : Direction.t
   ; pending_draws : int
   ; turn : int
@@ -50,6 +50,30 @@ type t =
   ; winner : int Option.t
   }
 [@@deriving sexp, compare, equal, bin_io]
+
+let for_testing ~player_hands ~top_card ~draw_pile ~pending_draws ~turn =
+  (* player_hands : (string * Card.t list) list *)
+  let all_cards =
+    top_card :: draw_pile @ List.concat_map player_hands ~f:snd
+  in
+  let players =
+    List.mapi player_hands ~f:(fun id (name, cards) ->
+      List.fold cards ~init:(Player.create id name) ~f:(fun p c ->
+        Player.add_card p (Card.get_id c)))
+  in
+  { players
+  ; draw_pile
+  ; played_pile = []
+  ; top_card
+  ; current_color = Card.get_color top_card
+  ; stacking_value = None
+  ; direction = Direction.Clockwise
+  ; pending_draws
+  ; turn
+  ; card_registry = Card_registry.of_cards all_cards
+  ; winner = None
+  }
+;;
 
 (* creates the initial deck of cards *)
 let create_card_deck () : Card.t List.t =
@@ -119,6 +143,19 @@ let update_top_card t (new_card : Card.t) : t =
   { t with top_card = new_card; current_color = new_card.color }
 ;;
 
+let card_of_event (event : Event.t) =
+  match event with
+  | CardPlayed { card; _ } -> Ok card
+  | _ -> Or_error.error_s [%message "effect needs a played card" (event : Event.t)]
+;;
+
+let player_of_event (event : Event.t) =
+  match event with
+  | CardPlayed { player; _ } -> Ok player
+  | DrawRequested { player } -> Ok player
+  | PassRequested {player} -> Ok player
+;;
+
 (* Builds the initial game state: creates and shuffles a full deck, makes one
    player per name (id = position in the list), deals [hand_size] cards to
    each player in order, then flips the top card. The placeholder top_card
@@ -137,6 +174,8 @@ let create ?random_state ~player_names ~hand_size () : t Or_error.t =
     ; top_card = { color = NoColor; value = Zero; id = -1 }
     ; current_color = NoColor
     ; direction = Direction.Clockwise
+    ; stacking_value = None
+    
     ; pending_draws = 0
     ; turn = 0
     ; card_registry = Card_registry.of_cards deck
@@ -152,40 +191,56 @@ let create ?random_state ~player_names ~hand_size () : t Or_error.t =
   update_top_card t card
 ;;
 
-let play_card t card player : t Or_error.t =
-  match Player.remove_card player (Card.get_id card) with
-  | Ok updated_player ->
-    Ok
-      { t with
-        current_color = Card.get_color card
-      ; players =
-          List.map t.players ~f:(fun p ->
-            if Int.equal (Player.get_id p) (Player.get_id updated_player)
-            then updated_player
-            else p)
-      }
-  | _ -> Or_error.error_s [%message "bad player"]
-;;
-
 (* apply an effect to game state t *)
-let apply_effect t (eff : Effect.t) : t Or_error.t =
+let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
   match eff with
-  | SetTopCard card ->
-    Ok { t with top_card = card; played_pile = t.top_card :: t.played_pile }
+  | PlayTriggeringCard -> 
+    let%bind player = player_of_event event in 
+    let%bind card = card_of_event event in 
+    let%map updated = Player.remove_card player (Card.get_id card) in 
+    let t = update_player t updated in 
+    { t with top_card = card; played_pile = t.top_card :: t.played_pile }
   | SetActiveColor color -> Ok { t with current_color = color }
+  | SetColorFromTriggeringCard ->
+    let%map card = card_of_event event in 
+    { t with current_color = Card.get_color card }
+  | SetDeclaredColor -> 
+    (match event with 
+    | CardPlayed { declared_color = Some color; _}  ->
+      Ok {t with current_color = color} 
+    | CardPlayed { declared_color = None; _ } -> 
+      Or_error.error_string "Wild requires a declared color"
+    | _ -> Or_error.error_s [%message "SetDeclaredColor needs a card play" (event : Event.t)])
   | AddPendingDraws n -> Ok { t with pending_draws = t.pending_draws + n }
-  | ExecuteDraw { player_id; count } ->
-    List.fold_result (List.init count ~f:Fn.id) ~init:t ~f:(fun state _ ->
-      draw_card_player state player_id)
-  | RemoveCardFromHand { player_id; card_id } ->
-    let%bind player =
-      match List.nth t.players player_id with
-      | Some p -> Ok p
-      | None ->
-        Or_error.error_s [%message "Player ID not found" (player_id : int)]
+  | ApplyPendingDraws -> 
+    let%bind player = player_of_event event in 
+    let n = t.pending_draws in 
+    let%map t = 
+      List.fold_result (List.init n ~f:Fn.id) ~init:t ~f:(fun s _ -> 
+        draw_card_player s (Player.get_id player))
     in
-    let%map updated_player = Player.remove_card player card_id in
-    update_player t updated_player
+    {t with pending_draws = 0 } 
+  | ExecuteDraw n ->
+    let%bind player = player_of_event event in 
+    List.fold_result (List.init n ~f:Fn.id) ~init:t ~f:(fun s _ -> 
+      draw_card_player s (Player.get_id player))
+  | DrawUntilPlayable -> 
+    let%bind player = player_of_event event in 
+    let player_id = Player.get_id player in 
+    let rec loop t drawn = 
+      if drawn >= 108 then Ok t 
+      else 
+        let%bind t = draw_card_player t player_id in 
+        let hand_ids = Player.get_hand (List.nth_exn t.players player_id) in 
+        (match hand_ids with 
+        | [] -> Ok t 
+        | newest_id :: _ -> 
+          let%bind card = Card_registry.find t.card_registry newest_id in 
+          if Game_rules.is_valid_play 
+            ~top_card:t.top_card ~played_card:card ~current_color:t.current_color 
+          then Ok t else loop t (drawn + 1))
+      in
+      loop t 0 
   | ReverseDirection ->
     let next_dir =
       match t.direction with
@@ -193,112 +248,26 @@ let apply_effect t (eff : Effect.t) : t Or_error.t =
       | Counter -> Clockwise
     in
     Ok { t with direction = next_dir }
+  | SetStackingValue -> 
+    let%map card = card_of_event event in 
+    {t with stacking_value = Some (Card.get_value card)}
+  | ClearStackingValue -> 
+    Ok { t with stacking_value = None }
   | AdvanceTurn ->
     let num_players = List.length t.players in
     let dir = match t.direction with Clockwise -> 1 | Counter -> -1 in
     (* add num_players again to account for neg mod *)
     let next_turn = (t.turn + dir + num_players) % num_players in
     Ok { t with turn = next_turn }
-  | CheckWinner { player_id } ->
-    let winner =
-      match List.nth t.players player_id with
-      | Some p ->
-        if List.is_empty (Player.get_hand p) then Some player_id else None
+  | CheckWinner ->
+    let%map player = player_of_event event in 
+    let id = Player.get_id player in 
+    let current_player = List.find t.players ~f:(fun p -> Int.equal (Player.get_id p) id) in 
+    let winner = 
+      match current_player with 
+      | Some p when List.is_empty (Player.get_hand p) -> Some id 
       | _ -> None
-    in
-    Ok { t with winner }
+    in 
+    { t with winner }
 ;;
 
-(*= (* applies one action to the state and returns the new state or an error if
-   the action is illegal. this advances the game *)
-let apply_action t ~player_id ~(action : Action.Client_to_server.t)
-  : t Or_error.t
-  =
-  let%bind () =
-    match t.winner with
-    | Some w -> Or_error.error_s [%message "Game is over" ~winner:(w : int)]
-    | None -> Ok ()
-  in
-  let%bind () =
-    if Int.equal t.turn player_id
-    then Ok ()
-    else
-      Or_error.error_s
-        [%message "Not your turn" (player_id : int) ~current:(t.turn : int)]
-  in
-  let player_count = List.length t.players in
-  match action with
-  | Draw ->
-    let%map t = draw_card_player t player_id in
-    { t with
-      turn =
-        Game_rules.get_next_turn
-          ~current_turn:t.turn
-          ~player_count
-          ~direction:t.direction
-          ~effect:Card.Value.Zero
-    }
-  | Play { card_id; declared_color } ->
-    let%bind player =
-      match List.nth t.players player_id with
-      | Some p -> Ok p
-      | None ->
-        Or_error.error_s [%message "Player ID not found" (player_id : int)]
-    in
-    let%bind card = Card_registry.find t.card_registry card_id in
-    let%bind () =
-      if Game_rules.is_valid_play
-           ~top_card:t.top_card
-           ~played_card:card
-           ~current_color:t.current_color
-      then Ok ()
-      else Or_error.error_s [%message "Illegal play" (card : Card.t)]
-    in
-    let%bind player = Player.remove_card player card_id in
-    let t = update_player t player in
-    let t = { t with played_pile = t.top_card :: t.played_pile } in
-    let t = update_top_card t card in
-    let%bind t =
-      match card.value, declared_color with
-      | (Wild | Wild4), Some color -> Ok { t with current_color = color }
-      | (Wild | Wild4), None ->
-        Or_error.error_string "Wild requires a declared color"
-      | _, _ -> Ok t
-    in
-    let direction =
-      Game_rules.get_next_direction
-        ~player_count
-        ~direction:t.direction
-        ~effect:card.value
-    in
-    let next_turn =
-      Game_rules.get_next_turn
-        ~current_turn:t.turn
-        ~player_count
-        ~direction
-        ~effect:card.value
-    in
-    let%map t =
-      match Game_rules.calculate_draw_penalty card.value with
-      | 0 -> Ok t
-      | n ->
-        let penalized =
-          Game_rules.get_next_turn
-            ~current_turn:t.turn
-            ~player_count
-            ~direction
-            ~effect:Card.Value.Zero
-        in
-        List.fold_result (List.init n ~f:Fn.id) ~init:t ~f:(fun t _ ->
-          draw_card_player t penalized)
-    in
-    let winner =
-      if List.is_empty (Player.get_hand player) then Some player_id else None
-    in
-    { t with direction; turn = next_turn; winner }
-  | Join_lobby _ | Quit ->
-    Or_error.error_s
-      [%message
-        "Action not handled by game state"
-          (action : Action.Client_to_server.t)]
-;; *)

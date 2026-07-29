@@ -25,7 +25,7 @@ type t =
   { clients : Client_connection.t String.Table.t
   ; mutable game_state : Game_state.t option
   ; request_writer : Queued_request.t Pipe.Writer.t
-  ; ruleset : Rule_engine.Ruleset.t
+  ; mutable ruleset : Rule_engine.Ruleset.t
   }
 
 let request_queue_size_budget = 1024
@@ -305,6 +305,30 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
               in
               let%map () = Pipe.write_if_open request_writer queued in
               Ok ())
+        ; Rpc.Rpc.implement Rpc_protocol.submit_rules_rpc
+            (fun state rules_text ->
+               match state.Connection_state.player_name with
+               | None -> return (Or_error.error_string "Not logged into lobby yet")
+               | Some player_name ->
+                 if Option.is_some t.game_state
+                 then
+                   return
+                     (Or_error.error_string
+                        "Cannot change rules while a game is in progress")
+                 else (
+                   match Rule_parser.parse_ruleset rules_text with
+                   | Error e -> return (Error e)
+                   | Ok rules ->
+                     t.ruleset <- rules;
+                     let num_rules = List.length rules in
+                     Core.print_s
+                       [%message
+                         "Rules updated" (player_name : string) (num_rules : int)];
+                     broadcast
+                       t
+                       (Action.Server_to_client.Rules_updated
+                          { player_name; num_rules });
+                     return (Ok ())))
         ; Rpc.Rpc.implement Rpc_protocol.start_game_rpc (fun state () ->
             match state.Connection_state.player_name with
             | None ->

@@ -1,0 +1,34 @@
+# Standard Uno. Start from this file when writing your own variant.
+# Reference: docs/rule-language.md
+
+rule "play wild" priority 100:
+  when card is wild and your turn
+  do play the card, set color to declared, advance turn
+
+rule "play plus two" priority 100:
+  when card is plus two and your turn
+  do play the card, set color from card, add 2 pending draws, advance turn
+
+rule "play skip" priority 100:
+  when card is skip and your turn
+  do play the card, set color from card, skip next player
+
+rule "play reverse" priority 100:
+  when card is reverse and your turn
+  do play the card, set color from card, reverse direction, advance turn
+
+rule "take penalty" priority 90:
+  when pending draws > 0 and your turn
+  do apply pending draws, advance turn
+
+rule "play plus four" priority 110:
+  when card is plus four and your turn
+  do play the card, set color to declared, add 4 pending draws, advance turn
+
+rule "play matching card" priority 10:
+  when (card matches color or card matches value) and your turn
+  do play the card, set color from card, advance turn
+
+rule "draw a card" priority 1:
+  when player draws and your turn
+  do draw 1 card, advance turn

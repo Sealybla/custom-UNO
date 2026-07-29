@@ -4,7 +4,17 @@ module Ruleset : sig
   type t = Rule.t list [@@deriving sexp, compare, equal, bin_io]
 
   val default : t
+  val draw_until_variant : t
+  val stacking_variant : t
 end
+
+
+val event_of_client_action
+  :  Game_state.t
+  -> player:Player.t
+  -> action:Action.Client_to_server.t
+  -> Event.t Or_error.t
+
 
 (* returns true if event holds given current rule_condition. false if doesn't
    hold *)

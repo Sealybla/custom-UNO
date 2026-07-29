@@ -8,10 +8,5 @@ type t =
       ; declared_color : Card.Color.t Option.t
       }
   | DrawRequested of { player : Player.t }
+  | PassRequested of { player : Player.t }
 [@@deriving sexp, compare, equal, bin_io]
-
-val of_client_action
-  :  Game_state.t
-  -> player:Player.t
-  -> action:Action.Client_to_server.t
-  -> t Or_error.t

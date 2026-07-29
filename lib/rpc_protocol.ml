@@ -34,6 +34,16 @@ let take_action_rpc =
   ~include_in_error_count:Only_on_exn
 ;;
 
+(* replace the lobby's ruleset with parsed rule text before a game starts *)
+let submit_rules_rpc =
+  Rpc.Rpc.create
+    ~name:"submit-rules"
+    ~version:1
+    ~bin_query:String.bin_t
+    ~bin_response:[%bin_type_class: unit Or_error.t]
+    ~include_in_error_count:Only_on_exn
+;;
+
 (* starts uno game *)
 let start_game_rpc =
   Rpc.Rpc.create
