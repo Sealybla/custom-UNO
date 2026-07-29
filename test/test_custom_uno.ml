@@ -509,6 +509,48 @@ let%expect_test "non-matching special cards are rejected" =
     |}]
 ;;
 
+(* official 2-player rule: reverse acts like a skip, so the player who
+   played it goes again; with 3+ players it only flips the direction *)
+let%expect_test "reverse skips the opponent in a two-player game" =
+  let rev = { Card.color = Red; value = Reverse; id = 830 } in
+  let f = { Card.color = Green; value = Zero; id = 831 } in
+  let top = { Card.color = Red; value = Five; id = 832 } in
+  let two_player =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ rev; f ]; "b", [] ]
+      ~top_card:top
+      ~draw_pile:[]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action Rule_engine.Ruleset.default two_player
+      ~player_id:0 ~action:(Play { card_id = 830; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message "two players" (t.turn : int) (t.direction : Direction.t)];
+  let three_player =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ rev; f ]; "b", []; "c", [] ]
+      ~top_card:top
+      ~draw_pile:[]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action Rule_engine.Ruleset.default three_player
+      ~player_id:0 ~action:(Play { card_id = 830; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message "three players" (t.turn : int) (t.direction : Direction.t)];
+  [%expect {|
+    ("two players" (t.turn 0) (t.direction Counter))
+    ("three players" (t.turn 2) (t.direction Counter))
+    |}]
+;;
+
 let%expect_test "matching special cards still play" =
   let p2 = { Card.color = Red; value = Plus; id = 810 } in
   let top = { Card.color = Red; value = Five; id = 811 } in

@@ -59,7 +59,7 @@ Parentheses override.
 | `next player draws N cards` | `DrawForNextPlayer N` (turn unchanged) |
 | `draw until playable` | `DrawUntilPlayable` (sets the drew-playable flag) |
 | `draw and decide` | `DrawAndDecide` (draw 1; playable → keep turn + set flag, else advance) |
-| `reverse direction` | `ReverseDirection` |
+| `reverse direction` | `ReverseDirection` (with 2 players also skips the opponent, per official Uno) |
 | `open stack` | `SetStackingValue` |
 | `clear stack` | `ClearStackingValue` |
 | `advance turn` | `AdvanceTurn` |

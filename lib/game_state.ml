@@ -299,7 +299,12 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
       | Clockwise -> Direction.Counter
       | Counter -> Clockwise
     in
-    Ok { t with direction = next_dir }
+    let t = { t with direction = next_dir } in
+    (* official 2-player rule: a reverse acts like a skip. Flipping the
+       direction alone would make it a no-op, so eat one extra turn here;
+       the reverse rule's own "advance turn" then lands back on the player
+       who played it. *)
+    if Int.equal (List.length t.players) 2 then Ok (advance_turn t) else Ok t
   | SetStackingValue ->
     let%map card = card_of_event event in
     { t with stacking_value = Some (Card.get_value card) }
