@@ -18,7 +18,8 @@ module Ruleset = struct
       }
     ; { id = 2
       ; priority = 100
-      ; condition = And (IsPlusTwo, IsPlayerTurn)
+      ; condition =
+          And (IsPlusTwo, And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn))
       ; actions =
           [ Mutate PlayTriggeringCard
           ; Mutate CheckWinner
@@ -29,7 +30,8 @@ module Ruleset = struct
       }
     ; { id = 3
       ; priority = 100
-      ; condition = And (IsSkip, IsPlayerTurn)
+      ; condition =
+          And (IsSkip, And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn))
       ; actions =
           [ Mutate PlayTriggeringCard
           ; Mutate CheckWinner
@@ -40,7 +42,8 @@ module Ruleset = struct
       }
     ; { id = 4
       ; priority = 100
-      ; condition = And (IsReverse, IsPlayerTurn)
+      ; condition =
+          And (IsReverse, And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn))
       ; actions =
           [ Mutate PlayTriggeringCard
           ; Mutate CheckWinner
@@ -49,9 +52,15 @@ module Ruleset = struct
           ; Mutate AdvanceTurn
           ]
       }
+      (* while a penalty is pending, anything except stacking another +2/+4
+         takes the cards - priority above the specials so a wild or skip
+         cannot dodge it *)
     ; { id = 5
-      ; priority = 90
-      ; condition = And (PendingDrawsGreaterThan 0, IsPlayerTurn)
+      ; priority = 105
+      ; condition =
+          And
+            ( PendingDrawsGreaterThan 0
+            , And (IsPlayerTurn, Not (Or (IsPlusTwo, IsPlusFour))) )
       ; actions = [ Mutate ApplyPendingDraws; Mutate AdvanceTurn ]
       }
     ; { id = 8

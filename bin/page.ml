@@ -162,6 +162,10 @@ let html =
     box-shadow:0 0 0 5px var(--cur,#333), 0 0 26px var(--cur,transparent);
     transition:box-shadow .35s; }
   #discard .card { transform:rotate(var(--tilt,0deg)); }
+  #pending-badge { position:absolute; top:-12px; right:-12px; z-index:5;
+    background:var(--c-red); color:#fff; font-weight:900; font-size:1rem;
+    border-radius:999px; padding:.25rem .6rem; border:3px solid #fff;
+    box-shadow:0 4px 8px rgba(0,0,0,.4); animation:pulse 1s ease-in-out infinite; }
   #seats { position:absolute; inset:0; z-index:3; pointer-events:none; }
   .seat { position:absolute; transform:translate(-50%,-50%); text-align:center; }
   .seat .fan { display:flex; justify-content:center; align-items:flex-end;
@@ -386,7 +390,9 @@ let html =
   <div id="table-oval"></div>
   <div id="seats"></div>
   <div class="table-center">
-    <div id="draw-pile" class="pile" title="draw a card"></div>
+    <div id="draw-pile" class="pile" title="draw a card">
+      <span id="pending-badge" hidden></span>
+    </div>
     <div id="discard" class="pile"></div>
   </div>
   <div id="turn-banner" hidden>YOUR TURN</div>
@@ -425,19 +431,19 @@ rule "play wild" priority 100:
   do play the card, set color to declared, advance turn
 
 rule "play plus two" priority 100:
-  when card is plus two and your turn
+  when card is plus two and (card matches color or card matches value) and your turn
   do play the card, set color from card, add 2 pending draws, advance turn
 
 rule "play skip" priority 100:
-  when card is skip and your turn
+  when card is skip and (card matches color or card matches value) and your turn
   do play the card, set color from card, skip next player
 
 rule "play reverse" priority 100:
-  when card is reverse and your turn
+  when card is reverse and (card matches color or card matches value) and your turn
   do play the card, set color from card, reverse direction, advance turn
 
-rule "take penalty" priority 90:
-  when pending draws > 0 and your turn
+rule "take penalty" priority 105:
+  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
   do apply pending draws, advance turn
 
 rule "play plus four" priority 110:
@@ -519,7 +525,7 @@ const EFF_OPTIONS = [
 let name = null;
 let code = null;
 let state = { players:[], hand:[], top:null, color:null, current:null,
-              counts:{}, inGame:false, pileStack:[] };
+              counts:{}, inGame:false, pileStack:[], pending:0 };
 let pendingWild = null;
 let lastPlayedId = null;
 let snapshotMode = false;
@@ -604,7 +610,7 @@ function apply(ev, fx){
       state.inGame = true; state.hand = ev.hand; state.top = ev.top_card;
       state.color = ev.current_color; state.players = ev.players;
       state.current = ev.current_player; state.counts = {};
-      state.pileStack = [ev.top_card];
+      state.pileStack = [ev.top_card]; state.pending = ev.pending || 0;
       dirty.seats = dirty.pile = dirty.hand = dirty.turn = true;
       $('log').innerHTML = ''; $('win-overlay').hidden = true;
       setView('game'); layoutSeats();
@@ -637,7 +643,8 @@ function apply(ev, fx){
         state.pileStack.push(ev.top_card);
         if (state.pileStack.length > 4) state.pileStack.shift();
       }
-      state.top = ev.top_card; state.color = ev.current_color; dirty.pile = true;
+      state.top = ev.top_card; state.color = ev.current_color;
+      state.pending = ev.pending || 0; dirty.pile = true;
       break;
     }
     case 'turn': state.current = ev.player; dirty.turn = dirty.seats = true; break;
@@ -750,6 +757,9 @@ function renderPile(){
     d.append(el);
   }
   d.style.setProperty('--cur', COLOR_CSS[state.color] || '#333');
+  const badge = $('pending-badge');
+  badge.hidden = !(state.pending > 0);
+  badge.textContent = '+' + state.pending;
 }
 
 function makeSlot(card){
@@ -1063,6 +1073,10 @@ window.addEventListener('resize', () => {
   clearTimeout(resizeT);
   resizeT = setTimeout(() => { setFan(); layoutSeats(); }, 120);
 });
+
+// the draw pile is three static card backs (the badge span stays on top)
+for (let i = 0; i < 3; i++)
+  $('draw-pile').insertBefore(cardBackEl(), $('pending-badge'));
 
 $('rules-text').value = RULES_TEMPLATE;
 checkRules();

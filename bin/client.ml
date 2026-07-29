@@ -6,16 +6,26 @@ let print_event (event : Action.Server_to_client.t) =
   match event with
   | Lobby_updated { players } ->
     print_s [%message "lobby" (players : string list)]
-  | Game_started { your_hand; top_card; current_color; player_names; current_player_name } ->
+  | Game_started
+      { your_hand; top_card; current_color; player_names; current_player_name
+      ; pending_draws
+      } ->
     print_endline "=== game started ===";
     print_s [%message (player_names : string list)];
-    print_s [%message (top_card : Card.t) (current_color : Card.Color.t)];
+    print_s
+      [%message
+        (top_card : Card.t) (current_color : Card.Color.t) (pending_draws : int)];
     print_s [%message "your hand" (your_hand : Card.t list)];
     print_s [%message "turn" (current_player_name : string)]
   | Hand_updated { your_hand } ->
     print_s [%message "your hand" (your_hand : Card.t list)]
-  | Pile_updated { top_card; current_color } ->
-    print_s [%message "pile" (top_card : Card.t) (current_color : Card.Color.t)]
+  | Pile_updated { top_card; current_color; pending_draws } ->
+    print_s
+      [%message
+        "pile"
+          (top_card : Card.t)
+          (current_color : Card.Color.t)
+          (pending_draws : int)]
   | Turn_changed { current_player_name } ->
     print_s [%message "turn" (current_player_name : string)]
   | Game_over { winner_name } ->

@@ -345,6 +345,86 @@ let%expect_test "MatchesTopColor is false for wilds but wilds still play" =
     |}]
 ;;
 
+(* regression: special cards must match color or value like any other card *)
+let%expect_test "non-matching special cards are rejected" =
+  let p2 = { Card.color = Blue; value = Plus; id = 800 } in
+  let skip = { Card.color = Green; value = Skip; id = 801 } in
+  let top = { Card.color = Red; value = Five; id = 802 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ p2; skip ]; "b", [] ]
+      ~top_card:top
+      ~draw_pile:[]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let try_play id =
+    Rule_engine.apply_action Rule_engine.Ruleset.default t
+      ~player_id:0 ~action:(Play { card_id = id; declared_color = None })
+    |> Or_error.is_error
+  in
+  let blue_plus_on_red_five_rejected = try_play 800 in
+  let green_skip_on_red_five_rejected = try_play 801 in
+  print_s
+    [%message
+      (blue_plus_on_red_five_rejected : bool)
+        (green_skip_on_red_five_rejected : bool)];
+  [%expect {|
+    ((blue_plus_on_red_five_rejected true)
+     (green_skip_on_red_five_rejected true))
+    |}]
+;;
+
+let%expect_test "matching special cards still play" =
+  let p2 = { Card.color = Red; value = Plus; id = 810 } in
+  let top = { Card.color = Red; value = Five; id = 811 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ p2 ]; "b", []; "c", [] ]
+      ~top_card:top
+      ~draw_pile:(Game_state.create_card_deck ())
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action Rule_engine.Ruleset.default t
+      ~player_id:0 ~action:(Play { card_id = 810; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  print_s [%message (t.pending_draws : int) (t.turn : int)];
+  [%expect {| ((t.pending_draws 2) (t.turn 1)) |}]
+;;
+
+(* regression: a wild (or any non-stacking card) cannot dodge a pending
+   penalty - the penalty rule outranks the specials *)
+let%expect_test "wild cannot dodge pending draws" =
+  let w = { Card.color = NoColor; value = Wild; id = 820 } in
+  let f = { Card.color = Red; value = Zero; id = 821 } in
+  let top = { Card.color = Green; value = Plus; id = 822 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ w; f ]; "b", [] ]
+      ~top_card:top
+      ~draw_pile:(Game_state.create_card_deck ())
+      ~pending_draws:2
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action Rule_engine.Ruleset.default t
+      ~player_id:0 ~action:(Play { card_id = 820; declared_color = Some Red })
+    |> Or_error.ok_exn
+  in
+  let hand = List.length (Player.get_hand (List.nth_exn t.players 0)) in
+  let top_unchanged = Card.equal t.top_card top in
+  (* wild not played: hand went 2 -> 4 (penalty), turn passed, pending cleared *)
+  print_s
+    [%message
+      (hand : int) (t.pending_draws : int) (t.turn : int) (top_unchanged : bool)];
+  [%expect {|
+    ((hand 4) (t.pending_draws 0) (t.turn 1) (top_unchanged true))
+    |}]
+;;
+
 (* ---------- rule parser: round-trips against the hand-coded rulesets ---------- *)
 
 let special_cards_text =
@@ -355,19 +435,19 @@ rule "play wild" priority 100:
   do play the card, set color to declared, advance turn
 
 rule "play plus two" priority 100:
-  when card is plus two and your turn
+  when card is plus two and (card matches color or card matches value) and your turn
   do play the card, set color from card, add 2 pending draws, advance turn
 
 rule "play skip" priority 100:
-  when card is skip and your turn
+  when card is skip and (card matches color or card matches value) and your turn
   do play the card, set color from card, skip next player
 
 rule "play reverse" priority 100:
-  when card is reverse and your turn
+  when card is reverse and (card matches color or card matches value) and your turn
   do play the card, set color from card, reverse direction, advance turn
 
-rule "take penalty" priority 90:
-  when pending draws > 0 and your turn
+rule "take penalty" priority 105:
+  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
   do apply pending draws, advance turn
 
 rule "play plus four" priority 110:

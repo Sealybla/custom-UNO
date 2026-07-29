@@ -67,21 +67,29 @@ let event_json (event : Action.Server_to_client.t) =
   | Lobby_updated { players } ->
     sprintf {|{"type":"lobby","players":%s}|} (jlist (List.map players ~f:jstr))
   | Game_started
-      { your_hand; top_card; current_color; player_names; current_player_name } ->
+      { your_hand
+      ; top_card
+      ; current_color
+      ; player_names
+      ; current_player_name
+      ; pending_draws
+      } ->
     sprintf
-      {|{"type":"game_started","hand":%s,"top_card":%s,"current_color":%s,"players":%s,"current_player":%s}|}
+      {|{"type":"game_started","hand":%s,"top_card":%s,"current_color":%s,"players":%s,"current_player":%s,"pending":%d}|}
       (jlist (List.map your_hand ~f:card_json))
       (card_json top_card)
       (jstr (color_name current_color))
       (jlist (List.map player_names ~f:jstr))
       (jstr current_player_name)
+      pending_draws
   | Hand_updated { your_hand } ->
     sprintf {|{"type":"hand","hand":%s}|} (jlist (List.map your_hand ~f:card_json))
-  | Pile_updated { top_card; current_color } ->
+  | Pile_updated { top_card; current_color; pending_draws } ->
     sprintf
-      {|{"type":"pile","top_card":%s,"current_color":%s}|}
+      {|{"type":"pile","top_card":%s,"current_color":%s,"pending":%d}|}
       (card_json top_card)
       (jstr (color_name current_color))
+      pending_draws
   | Turn_changed { current_player_name } ->
     sprintf {|{"type":"turn","player":%s}|} (jstr current_player_name)
   | Hand_counts { counts } ->
