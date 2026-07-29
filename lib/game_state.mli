@@ -18,6 +18,7 @@ module Effect : sig
     | ExecuteDraw of int
     | DrawForNextPlayer of int
     | DrawUntilPlayable
+    | DrawAndDecide
     | ReverseDirection
     | SetStackingValue 
     | ClearStackingValue
@@ -35,6 +36,7 @@ type t =
   ; stacking_value : Card.Value.t option
   ; direction : Direction.t
   ; pending_draws : int
+  ; drew_playable : bool
   ; turn : int
   ; card_registry : Card_registry.t
   ; winner : int option

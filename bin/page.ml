@@ -194,11 +194,26 @@ let html =
   #hand { position:relative; white-space:nowrap; height:calc(var(--card-w)*1.85); display:flex; align-items:flex-end; }
   .slot { display:inline-block; position:relative; }
   .slot + .slot { margin-left:calc(-1 * var(--overlap,20px)); }
-  .slot .card { transform:rotate(var(--rot,0deg)) translateY(var(--ty,0px));
-    transform-origin:50% 130%; transition:transform .25s var(--ease-pop); cursor:pointer; }
+  .slot .card { transform:rotate(var(--rot,0deg)) translateY(calc(var(--ty,0px) + var(--lift,0px)));
+    transform-origin:50% 130%; transition:transform .25s var(--ease-pop), box-shadow .25s, filter .25s; cursor:pointer; }
   .slot:hover { z-index:7; }
   .slot:hover .card { transform:rotate(var(--rot,0deg)) translateY(calc(var(--ty,0px) - 28px)) scale(1.12); }
+  /* on your turn: playable cards lift with a white glow, unplayable dim */
+  #hand.my-turn .slot:not(.playable) .card { filter:grayscale(.4) brightness(.72); }
+  .slot.playable .card { --lift:-16px;
+    box-shadow:0 8px 16px rgba(0,0,0,.45), 0 0 0 3px #fff, 0 0 18px rgba(255,255,255,.7); }
+  /* playable AND part of a same-value stack you could chain: gold pulse */
+  .slot.stackable .card { box-shadow:0 8px 16px rgba(0,0,0,.45),
+      0 0 0 3px var(--c-yellow), 0 0 24px rgba(255,206,0,.95);
+    animation:stackpulse 1.1s ease-in-out infinite; }
+  @keyframes stackpulse { 50% { box-shadow:0 8px 16px rgba(0,0,0,.45),
+      0 0 0 5px var(--c-yellow), 0 0 34px rgba(255,206,0,1); } }
   #pass-btn { margin-bottom:calc(var(--card-w)*.4); }
+  #leave-game { position:absolute; top:12px; right:14px; z-index:6;
+    background:rgba(0,0,0,.5); color:#fff; font-size:.85rem; font-weight:800;
+    box-shadow:0 3px 0 rgba(0,0,0,.35); }
+  #leave-game:hover { background:var(--c-red); }
+  button.leave { background:rgba(255,255,255,.18); color:#fff; }
   #log { position:absolute; left:14px; bottom:12px; z-index:4; list-style:none; margin:0;
     padding:0; font-size:.78rem; opacity:.75; max-width:230px; }
   #log li { padding:.12rem 0; border-bottom:1px solid rgba(255,255,255,.12); }
@@ -295,6 +310,7 @@ let html =
       </p>
       <ul id="lobby-players"></ul>
       <button id="start-btn">Start game</button>
+      <button id="leave-lobby" class="leave">Leave lobby</button>
       <div id="lobby-status" class="ok" style="margin-top:.6rem"></div>
     </div>
     <div class="panel">
@@ -354,6 +370,8 @@ let html =
             <code>player draws</code>
             <code>player passes</code>
             <code>continues stack</code>
+            <code>stack is open</code>
+            <code>drew playable card</code>
             <code>pending draws > 0</code>
             <code>your turn</code>
             <code>always</code>
@@ -365,6 +383,7 @@ let html =
             <code>set color to declared</code>
             <code>set color to red</code>
             <code>draw 2 cards</code>
+            <code>draw and decide</code>
             <code>next player draws 2 cards</code>
             <code>add 2 pending draws</code>
             <code>apply pending draws</code>
@@ -388,6 +407,7 @@ let html =
 <div id="view-game" hidden>
   <div id="game-logo">UNO</div>
   <div id="game-code"></div>
+  <button id="leave-game">Leave game</button>
   <div id="table-oval"></div>
   <div id="seats"></div>
   <div class="table-center">
@@ -399,7 +419,7 @@ let html =
   <div id="turn-banner" hidden>YOUR TURN</div>
   <div id="hand-area">
     <div id="hand"></div>
-    <button id="pass-btn">Pass</button>
+    <button id="pass-btn" hidden>Pass</button>
   </div>
   <ul id="log"></ul>
 </div>
@@ -425,9 +445,11 @@ const VALUE_LABEL = {Zero:'0',One:'1',Two:'2',Three:'3',Four:'4',Five:'5',Six:'6
   Seven:'7',Eight:'8',Nine:'9',Skip:'⊘',Reverse:'⇄',Plus:'+2',Wild:'W',Wild4:'+4'};
 const COLOR_CSS = {Red:'#e0332c',Green:'#18a850',Blue:'#0a6bbd',Yellow:'#ffce00',NoColor:'#333'};
 
-// shared building blocks: wild/skip/reverse are the same in every variant,
-// but +2/+4 differ (standard = victim draws immediately and is skipped;
-// stacking = a pending counter the victim can stack onto or cash out)
+// shared building blocks: wild/skip/reverse are the same in the standard
+// variants, but the stacking variant blocks them while a stack is open
+// (mid-stack only same-value continuations are legal). +2/+4 also differ
+// (standard = victim draws immediately and is skipped; stacking = a
+// pending counter the victim can stack onto or cash out).
 const BASE_SPECIALS = `rule "play wild" priority 100:
   when card is wild and your turn
   do play the card, set color to declared, advance turn
@@ -441,6 +463,19 @@ rule "play reverse" priority 100:
   do play the card, set color from card, reverse direction, advance turn
 `;
 
+const STACKING_SPECIALS = `rule "play wild" priority 100:
+  when card is wild and your turn and not stack is open
+  do play the card, set color to declared, advance turn
+
+rule "play skip" priority 100:
+  when card is skip and (card matches color or card matches value) and your turn and not stack is open
+  do play the card, set color from card, skip next player
+
+rule "play reverse" priority 100:
+  when card is reverse and (card matches color or card matches value) and your turn and not stack is open
+  do play the card, set color from card, reverse direction, advance turn
+`;
+
 const IMMEDIATE_DRAWS = `rule "play plus two" priority 100:
   when card is plus two and (card matches color or card matches value) and your turn
   do play the card, set color from card, next player draws 2 cards, skip next player
@@ -451,11 +486,11 @@ rule "play plus four" priority 110:
 `;
 
 const DEFERRED_DRAWS = `rule "play plus two" priority 100:
-  when card is plus two and (card matches color or card matches value) and your turn
+  when card is plus two and (card matches color or card matches value) and your turn and not stack is open
   do play the card, set color from card, add 2 pending draws, advance turn
 
 rule "play plus four" priority 110:
-  when card is plus four and your turn
+  when card is plus four and your turn and not stack is open
   do play the card, set color to declared, add 4 pending draws, advance turn
 
 rule "take penalty" priority 105:
@@ -463,9 +498,16 @@ rule "take penalty" priority 105:
   do apply pending draws, advance turn
 `;
 
-const DRAW_ONE = `rule "draw a card" priority 1:
-  when player draws and your turn
-  do draw 1 card, advance turn
+// drawing keeps your turn only when the drawn card is playable; then you
+// may play it or pass
+const DRAW_RULE = `rule "draw a card" priority 1:
+  when player draws and your turn and not stack is open and not drew playable card
+  do draw and decide
+`;
+
+const PASS_AFTER_DRAW = `rule "pass after draw" priority 1:
+  when player passes and your turn and drew playable card
+  do advance turn
 `;
 
 const RULES_TEMPLATE =
@@ -475,13 +517,13 @@ const RULES_TEMPLATE =
   when (card matches color or card matches value) and your turn
   do play the card, set color from card, advance turn
 
-` + DRAW_ONE;
+` + DRAW_RULE + '\n' + PASS_AFTER_DRAW;
 
 const STACKING_TEMPLATE =
   '# Stacking variant: chain same-value cards in one turn, pass to end it.\n\n' +
-  BASE_SPECIALS + '\n' + DEFERRED_DRAWS + '\n' +
+  STACKING_SPECIALS + '\n' + DEFERRED_DRAWS + '\n' +
 `rule "open stack" priority 10:
-  when (card matches color or card matches value) and your turn
+  when (card matches color or card matches value) and your turn and not stack is open
   do play the card, set color from card, open stack
 
 rule "continue stack" priority 120:
@@ -489,14 +531,14 @@ rule "continue stack" priority 120:
   do play the card, set color from card
 
 rule "pass on stack" priority 120:
-  when player passes and your turn
+  when player passes and your turn and stack is open
   do clear stack, advance turn
 
-` + DRAW_ONE;
+` + DRAW_RULE + '\n' + PASS_AFTER_DRAW;
 
-const DRAWUNTIL_TEMPLATE = RULES_TEMPLATE.replace(DRAW_ONE,
+const DRAWUNTIL_TEMPLATE = RULES_TEMPLATE.replace(DRAW_RULE,
 `rule "draw until playable" priority 1:
-  when player draws and your turn
+  when player draws and your turn and not drew playable card
   do draw until playable
 `);
 
@@ -513,6 +555,8 @@ const WHEN_OPTIONS = [
   ['player draws', 'the player clicks draw'],
   ['player passes', 'the player clicks pass'],
   ['continues stack', 'a card continues the stack'],
+  ['stack is open', 'a stack is open'],
+  ['drew playable card', 'the drawn card is playable'],
   ['pending draws > N', 'penalty draws are pending'],
   ['always', 'always (any action)'],
 ];
@@ -523,6 +567,7 @@ const EFF_OPTIONS = [
   ['set color to declared', 'set color to the declared color (wilds)'],
   ['set color to C', 'set color to a specific color'],
   ['draw N cards', 'draw some cards'],
+  ['draw and decide', 'draw 1; keep turn if playable'],
   ['next player draws N cards', 'next player draws cards now'],
   ['add N pending draws', 'add penalty draws (stackable)'],
   ['apply pending draws', 'apply the pending penalty'],
@@ -535,8 +580,10 @@ const EFF_OPTIONS = [
 
 let name = null;
 let code = null;
-let state = { players:[], hand:[], top:null, color:null, current:null,
-              counts:{}, inGame:false, pileStack:[], pending:0 };
+const freshState = () => ({ players:[], hand:[], top:null, color:null, current:null,
+              counts:{}, inGame:false, pileStack:[], pending:0,
+              canPass:false, stackValue:null, stacking:false });
+let state = freshState();
 let pendingWild = null;
 let lastPlayedId = null;
 let snapshotMode = false;
@@ -622,6 +669,7 @@ function apply(ev, fx){
       state.color = ev.current_color; state.players = ev.players;
       state.current = ev.current_player; state.counts = {};
       state.pileStack = [ev.top_card]; state.pending = ev.pending || 0;
+      state.stacking = !!ev.stacking; state.canPass = false; state.stackValue = null;
       dirty.seats = dirty.pile = dirty.hand = dirty.turn = true;
       $('log').innerHTML = ''; $('win-overlay').hidden = true;
       setView('game'); layoutSeats();
@@ -658,7 +706,12 @@ function apply(ev, fx){
       state.pending = ev.pending || 0; dirty.pile = true;
       break;
     }
-    case 'turn': state.current = ev.player; dirty.turn = dirty.seats = true; break;
+    case 'turn':
+      state.current = ev.player;
+      state.canPass = !!ev.can_pass;
+      state.stackValue = ev.stack_value || null;
+      dirty.turn = dirty.seats = true;
+      break;
     case 'hand_counts': {
       if (fx){
         for (const [p, n] of ev.counts){
@@ -685,14 +738,49 @@ function apply(ev, fx){
   }
 }
 
+/* ---------- playable / stackable helpers ---------- */
+const NUMBER_VALUES = new Set(['Zero','One','Two','Three','Four','Five',
+                               'Six','Seven','Eight','Nine']);
+
+function isPlayable(card){
+  if (state.stackValue) return card.value === state.stackValue;
+  if (state.pending > 0)
+    // only stacking another +2/+4 dodges a pending penalty
+    return card.value === 'Wild4' ||
+           (card.value === 'Plus' &&
+            (card.color === state.color || (state.top && state.top.value === 'Plus')));
+  if (card.value === 'Wild' || card.value === 'Wild4') return true;
+  return card.color === state.color || (state.top && card.value === state.top.value);
+}
+
+// lift + glow every playable card; gold-pulse the ones that can be chained
+// as a same-value stack (only meaningful when the ruleset can open stacks)
+function updateHighlights(){
+  const myTurn = state.inGame && state.current === name;
+  const copies = {};
+  for (const c of state.hand) copies[c.value] = (copies[c.value] || 0) + 1;
+  for (const slot of $('hand').children){
+    const card = state.hand.find(c => String(c.id) === slot.dataset.cid);
+    const playable = !!(myTurn && card && isPlayable(card));
+    const stackable = playable && state.stacking && NUMBER_VALUES.has(card.value) &&
+      (state.stackValue ? true : copies[card.value] > 1);
+    slot.classList.toggle('playable', playable);
+    slot.classList.toggle('stackable', stackable);
+  }
+  $('hand').classList.toggle('my-turn', myTurn);
+  $('pass-btn').hidden = !(myTurn && state.canPass);
+}
+
 /* ---------- targeted renderers ---------- */
 function render(){
+  const relight = dirty.pile || dirty.hand || dirty.turn;
   if (dirty.lobby){ renderLobby(); dirty.lobby = false; }
   if (!state.inGame){ dirty.seats = dirty.pile = dirty.hand = dirty.turn = false; return; }
   if (dirty.seats){ renderSeats(); dirty.seats = false; }
   if (dirty.pile){ renderPile(); dirty.pile = false; }
   if (dirty.hand){ renderHand(); dirty.hand = false; }
   if (dirty.turn){ $('turn-banner').hidden = state.current !== name; dirty.turn = false; }
+  if (relight) updateHighlights();
 }
 
 function renderLobby(){
@@ -912,6 +1000,28 @@ $('start-btn').onclick = async () => {
   const r = await api('/api/start', {method:'POST'}); if (!r.ok) toast(r.error);
 };
 $('win-back').onclick = () => { $('win-overlay').hidden = true; setView('lobby'); };
+
+/* ---------- leaving the party ---------- */
+// tells the server we're gone (mid-game a bot takes over; in the lobby the
+// seat frees up) and resets this tab back to the join screen
+async function leaveParty(){
+  try { await api('/api/leave', {method:'POST'}); } catch (e){ /* leaving anyway */ }
+  if (polling){ clearInterval(polling); polling = null; }
+  sessionStorage.removeItem('uno-name');
+  sessionStorage.removeItem('uno-code');
+  name = null; code = null;
+  state = freshState();
+  pendingWild = null; lastPlayedId = null;
+  $('win-overlay').hidden = true;
+  $('color-modal').hidden = true;
+  $('join-err').textContent = '';
+  $('lobby-status').textContent = '';
+  setView('join');
+}
+$('leave-lobby').onclick = leaveParty;
+$('leave-game').onclick = () => {
+  if (confirm('Leave the game? A bot will take over your hand.')) leaveParty();
+};
 $('rules-btn').onclick = async () => {
   const r = await api('/api/rules', {method:'POST', body: $('rules-text').value});
   const s = $('rules-status');

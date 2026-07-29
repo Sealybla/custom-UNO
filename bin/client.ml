@@ -8,10 +8,10 @@ let print_event (event : Action.Server_to_client.t) =
     print_s [%message "lobby" (players : string list)]
   | Game_started
       { your_hand; top_card; current_color; player_names; current_player_name
-      ; pending_draws
+      ; pending_draws; stacking_enabled
       } ->
     print_endline "=== game started ===";
-    print_s [%message (player_names : string list)];
+    print_s [%message (player_names : string list) (stacking_enabled : bool)];
     print_s
       [%message
         (top_card : Card.t) (current_color : Card.Color.t) (pending_draws : int)];
@@ -26,8 +26,13 @@ let print_event (event : Action.Server_to_client.t) =
           (top_card : Card.t)
           (current_color : Card.Color.t)
           (pending_draws : int)]
-  | Turn_changed { current_player_name } ->
-    print_s [%message "turn" (current_player_name : string)]
+  | Turn_changed { current_player_name; can_pass; stack_value } ->
+    print_s
+      [%message
+        "turn"
+          (current_player_name : string)
+          (can_pass : bool)
+          (stack_value : Card.Value.t option)]
   | Game_over { winner_name } ->
     print_s [%message "GAME OVER" (winner_name : string)]
   | Hand_counts { counts } ->

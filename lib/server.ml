@@ -90,11 +90,23 @@ let send_hands (room : Room.t) state =
           (Action.Server_to_client.Hand_updated { your_hand = hand }))
 ;;
 
+(* current player + whether a pass is legal + any open stack's value; sent
+   after every action so the UI can keep the pass button honest *)
+let turn_changed_event (room : Room.t) (state : Game_state.t) =
+  Action.Server_to_client.Turn_changed
+    { current_player_name =
+        Option.value (name_of_player_id state state.Game_state.turn) ~default:""
+    ; can_pass = Rule_engine.pass_available room.ruleset state
+    ; stack_value = state.Game_state.stacking_value
+    }
+;;
+
 let broadcast_game_started (room : Room.t) state =
   let player_names = List.map state.Game_state.players ~f:Player.get_name in
   let current_player_name =
     Option.value (name_of_player_id state state.Game_state.turn) ~default:""
   in
+  let stacking_enabled = Rule_engine.Ruleset.uses_stacking room.ruleset in
   List.iter state.Game_state.players ~f:(fun player ->
     match Hashtbl.find room.clients (Player.get_name player) with
     | None -> ()
@@ -110,15 +122,34 @@ let broadcast_game_started (room : Room.t) state =
              ; player_names
              ; current_player_name
              ; pending_draws = state.Game_state.pending_draws
+             ; stacking_enabled
              }));
-  broadcast room (hand_counts_event state)
+  broadcast room (hand_counts_event state);
+  broadcast room (turn_changed_event room state)
 ;;
 
-(* Chooses an action for a bot-controlled player: plays the first valid card
-   in hand, declaring a real color for wilds, or draws if nothing is
-   playable. *)
-let bot_action state player_name =
+(* Chooses an action for a bot-controlled player: continue an open stack or
+   pass; stack a +2/+4 onto a pending penalty or draw it; otherwise play the
+   first valid card in hand (declaring a real color for wilds) or draw. *)
+let bot_action (state : Game_state.t) player_name =
   let fallback = Action.Client_to_server.Draw in
+  let play_card hand (card : Card.t) =
+    let declared_color =
+      match card.Card.value with
+      | Wild | Wild4 ->
+        (* a wild's own color is NoColor, so declare a real one from hand *)
+        let color =
+          List.find_map hand ~f:(fun c ->
+            match c.Card.color with
+            | NoColor -> None
+            | color -> Some color)
+          |> Option.value ~default:Card.Color.Red
+        in
+        Some color
+      | _ -> None
+    in
+    Action.Client_to_server.Play { card_id = Card.get_id card; declared_color }
+  in
   match player_id_of_name state player_name with
   | None -> fallback
   | Some player_id ->
@@ -126,31 +157,39 @@ let bot_action state player_name =
      | None -> fallback
      | Some player ->
        let hand = hand_of_player state player in
-       (match
-          Game_rules.choose_card
-            ~hand
-            ~top_card:state.Game_state.top_card
-            ~current_color:state.Game_state.current_color
-        with
-        | None -> fallback
-        | Some card ->
-          let declared_color =
-            match card.Card.value with
-            | Wild | Wild4 ->
-              (* a wild's own color is NoColor, so declare a real one from
-                 hand *)
-              let color =
-                List.find_map hand ~f:(fun c ->
-                  match c.Card.color with
-                  | NoColor -> None
-                  | color -> Some color)
-                |> Option.value ~default:Card.Color.Red
-              in
-              Some color
-            | _ -> None
+       (match state.Game_state.stacking_value with
+        | Some v ->
+          (* mid-stack: only another card of the stacked value continues;
+             otherwise pass to close the stack *)
+          (match
+             List.find hand ~f:(fun c -> Card.Value.equal (Card.get_value c) v)
+           with
+           | Some card -> play_card hand card
+           | None -> Action.Client_to_server.Pass)
+        | None ->
+          let candidate =
+            if state.Game_state.pending_draws > 0
+            then
+              (* only another +2/+4 dodges a pending penalty; drawing (the
+                 fallback) accepts it *)
+              List.find hand ~f:(fun c ->
+                match c.Card.value with
+                | Wild4 -> true
+                | Plus ->
+                  Game_rules.is_valid_play
+                    ~top_card:state.Game_state.top_card
+                    ~played_card:c
+                    ~current_color:state.Game_state.current_color
+                | _ -> false)
+            else
+              Game_rules.choose_card
+                ~hand
+                ~top_card:state.Game_state.top_card
+                ~current_color:state.Game_state.current_color
           in
-          Action.Client_to_server.Play
-            { card_id = Card.get_id card; declared_color }))
+          (match candidate with
+           | None -> fallback
+           | Some card -> play_card hand card)))
 ;;
 
 let maybe_schedule_bot (room : Room.t) next_state current_player_name =
@@ -224,7 +263,10 @@ let start_engine_loop t (room : Room.t) request_reader =
                       client.writer
                       (Action.Server_to_client.Action_rejected
                          { reason = Error.to_string_hum e })
-                  | _ -> ())
+                  | _ -> ());
+                 (* a bot whose move was rejected must get another shot, or
+                    its seat would freeze the game *)
+                 maybe_schedule_bot room current_state player_name
                | Ok next_state ->
                  room.game_state <- Some next_state;
                  broadcast
@@ -264,10 +306,7 @@ let start_engine_loop t (room : Room.t) request_reader =
                     (match name_of_player_id next_state next_state.turn with
                      | None -> ()
                      | Some current_player_name ->
-                       broadcast
-                         room
-                         (Action.Server_to_client.Turn_changed
-                            { current_player_name });
+                       broadcast room (turn_changed_event room next_state);
                        maybe_schedule_bot room next_state current_player_name))))))
 ;;
 
@@ -422,8 +461,11 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                                  List.map game.Game_state.players ~f:Player.get_name
                              ; current_player_name
                              ; pending_draws = game.Game_state.pending_draws
+                             ; stacking_enabled =
+                                 Rule_engine.Ruleset.uses_stacking room.ruleset
                              }
                          ; hand_counts_event game
+                         ; turn_changed_event room game
                          ]))))
         ; Rpc.Rpc.implement Rpc_protocol.submit_rules_rpc
             (fun state rules_text ->
@@ -505,14 +547,26 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                      "Player dropped mid-game. Bot activated."
                        (room.code : string)
                        (name : string)];
-                 (match room.game_state with
-                  | Some game
-                    when Option.equal
-                           String.equal
-                           (name_of_player_id game game.Game_state.turn)
-                           (Some name) ->
-                    maybe_schedule_bot room game name
-                  | _ -> ()))
+                 if Hashtbl.for_all room.clients ~f:(fun c -> c.is_bot)
+                 then (
+                   (* every seat is now a bot: nobody is left to play for,
+                      so the game ends and the room can be forgotten *)
+                   room.game_state <- None;
+                   Hashtbl.clear room.clients;
+                   Core.print_s
+                     [%message
+                       "All players left. Game abandoned."
+                         (room.code : string)];
+                   maybe_remove_room t room)
+                 else (
+                   match room.game_state with
+                   | Some game
+                     when Option.equal
+                            String.equal
+                            (name_of_player_id game game.Game_state.turn)
+                            (Some name) ->
+                     maybe_schedule_bot room game name
+                   | _ -> ()))
              else (
                Hashtbl.remove room.clients name;
                Core.print_s

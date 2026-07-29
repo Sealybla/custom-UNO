@@ -25,6 +25,12 @@ rule "play matching card" priority 10:
   when (card matches color or card matches value) and your turn
   do play the card, set color from card, advance turn
 
+# drawing keeps your turn only when the drawn card is playable;
+# then you may play it or pass
 rule "draw a card" priority 1:
-  when player draws and your turn
-  do draw 1 card, advance turn
+  when player draws and your turn and not drew playable card
+  do draw and decide
+
+rule "pass after draw" priority 1:
+  when player passes and your turn and drew playable card
+  do advance turn

@@ -28,6 +28,7 @@ module Effect = struct
     | ExecuteDraw of int
     | DrawForNextPlayer of int
     | DrawUntilPlayable
+    | DrawAndDecide
     | ReverseDirection
     | SetStackingValue
     | ClearStackingValue
@@ -46,6 +47,8 @@ type t =
   ; stacking_value : Card.Value.t option
   ; direction : Direction.t
   ; pending_draws : int
+  ; drew_playable : bool
+    (* the current player just drew a playable card and may play or pass *)
   ; turn : int
   ; card_registry : Card_registry.t
   ; winner : int Option.t
@@ -70,6 +73,7 @@ let for_testing ~player_hands ~top_card ~draw_pile ~pending_draws ~turn =
   ; stacking_value = None
   ; direction = Direction.Clockwise
   ; pending_draws
+  ; drew_playable = false
   ; turn
   ; card_registry = Card_registry.of_cards all_cards
   ; winner = None
@@ -179,6 +183,7 @@ let create ?random_state ~player_names ~hand_size () : t Or_error.t =
     ; direction = Direction.Clockwise
     ; stacking_value = None
     ; pending_draws = 0
+    ; drew_playable = false
     ; turn = 0
     ; card_registry = Card_registry.of_cards deck
     ; winner = None
@@ -191,6 +196,15 @@ let create ?random_state ~player_names ~hand_size () : t Or_error.t =
   in
   let%map card, t = draw_card t in
   update_top_card t card
+;;
+
+(* passing the turn also forgets the drawn-card decision *)
+let advance_turn t =
+  let num_players = List.length t.players in
+  let dir = match t.direction with Clockwise -> 1 | Counter -> -1 in
+  (* add num_players again to account for neg mod *)
+  let next_turn = (t.turn + dir + num_players) % num_players in
+  { t with turn = next_turn; drew_playable = false }
 ;;
 
 (* apply an effect to game state t *)
@@ -253,10 +267,32 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
                ~top_card:t.top_card
                ~played_card:card
                ~current_color:t.current_color
-          then Ok t
+          then Ok { t with drew_playable = true }
           else loop t (drawn + 1))
     in
     loop t 0
+  | DrawAndDecide ->
+    (* draw one card; if it is playable the turn stays open so the player
+       can choose to play it or pass, otherwise the turn passes *)
+    let%bind player = player_of_event event in
+    let player_id = Player.get_id player in
+    let%bind t = draw_card_player t player_id in
+    let%bind drawn_player =
+      match List.nth t.players player_id with
+      | Some p -> Ok p
+      | None ->
+        Or_error.error_s [%message "Player ID not found" (player_id : int)]
+    in
+    (match Player.get_hand drawn_player with
+     | [] -> Ok (advance_turn t)
+     | newest_id :: _ ->
+       let%map card = Card_registry.find t.card_registry newest_id in
+       if Game_rules.is_valid_play
+            ~top_card:t.top_card
+            ~played_card:card
+            ~current_color:t.current_color
+       then { t with drew_playable = true }
+       else advance_turn t)
   | ReverseDirection ->
     let next_dir =
       match t.direction with
@@ -268,12 +304,7 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
     let%map card = card_of_event event in
     { t with stacking_value = Some (Card.get_value card) }
   | ClearStackingValue -> Ok { t with stacking_value = None }
-  | AdvanceTurn ->
-    let num_players = List.length t.players in
-    let dir = match t.direction with Clockwise -> 1 | Counter -> -1 in
-    (* add num_players again to account for neg mod *)
-    let next_turn = (t.turn + dir + num_players) % num_players in
-    Ok { t with turn = next_turn }
+  | AdvanceTurn -> Ok (advance_turn t)
   | CheckWinner ->
     let%map player = player_of_event event in
     let id = Player.get_id player in

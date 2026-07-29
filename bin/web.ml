@@ -77,15 +77,17 @@ let event_json (event : Action.Server_to_client.t) =
       ; player_names
       ; current_player_name
       ; pending_draws
+      ; stacking_enabled
       } ->
     sprintf
-      {|{"type":"game_started","hand":%s,"top_card":%s,"current_color":%s,"players":%s,"current_player":%s,"pending":%d}|}
+      {|{"type":"game_started","hand":%s,"top_card":%s,"current_color":%s,"players":%s,"current_player":%s,"pending":%d,"stacking":%b}|}
       (jlist (List.map your_hand ~f:card_json))
       (card_json top_card)
       (jstr (color_name current_color))
       (jlist (List.map player_names ~f:jstr))
       (jstr current_player_name)
       pending_draws
+      stacking_enabled
   | Hand_updated { your_hand } ->
     sprintf {|{"type":"hand","hand":%s}|} (jlist (List.map your_hand ~f:card_json))
   | Pile_updated { top_card; current_color; pending_draws } ->
@@ -94,8 +96,14 @@ let event_json (event : Action.Server_to_client.t) =
       (card_json top_card)
       (jstr (color_name current_color))
       pending_draws
-  | Turn_changed { current_player_name } ->
-    sprintf {|{"type":"turn","player":%s}|} (jstr current_player_name)
+  | Turn_changed { current_player_name; can_pass; stack_value } ->
+    sprintf
+      {|{"type":"turn","player":%s,"can_pass":%b,"stack_value":%s}|}
+      (jstr current_player_name)
+      can_pass
+      (match stack_value with
+       | Some v -> jstr (Sexp.to_string ([%sexp_of: Card.Value.t] v))
+       | None -> "null")
   | Hand_counts { counts } ->
     sprintf
       {|{"type":"hand_counts","counts":%s}|}

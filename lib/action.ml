@@ -21,14 +21,19 @@ module Server_to_client = struct
                         current_color : Card.Color.t;
                         player_names : String.t List.t;
                         current_player_name : String.t;
-                        pending_draws : Int.t }
+                        pending_draws : Int.t;
+                        stacking_enabled : Bool.t }
     | Hand_updated of { your_hand : Card.t List.t }
     | Pile_updated of
         { top_card : Card.t
         ; current_color : Card.Color.t
         ; pending_draws : Int.t
         }
-    | Turn_changed of { current_player_name : String.t }
+    | Turn_changed of
+        { current_player_name : String.t
+        ; can_pass : Bool.t (* a Pass by the current player would be legal *)
+        ; stack_value : Card.Value.t Option.t (* open stack's value, if any *)
+        }
     | Hand_counts of { counts : (String.t * Int.t) List.t }
     | Game_over of { winner_name : String.t }
     | Uno_called of { player_name : String.t }
