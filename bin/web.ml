@@ -101,15 +101,37 @@ let event_json (event : Action.Server_to_client.t) =
     sprintf {|{"type":"rejected","reason":%s}|} (jstr reason)
 ;;
 
-let join t ~name =
+(* names are only unique within a room, so sessions key on both *)
+let session_key ~code ~name = code ^ "/" ^ name
+
+let connect t =
+  Rpc.Connection.client
+    (Tcp.Where_to_connect.of_host_and_port { host = "127.0.0.1"; port = t.rpc_port })
+;;
+
+let create_room t =
+  match%bind connect t with
+  | Error exn -> return (Or_error.of_exn exn)
+  | Ok conn ->
+    let%bind result = Rpc.Rpc.dispatch Rpc_protocol.create_room_rpc conn () in
+    let%map () = Rpc.Connection.close conn in
+    (match result with
+     | Error err | Ok (Error err) -> Error err
+     | Ok (Ok code) -> Ok code)
+;;
+
+let join t ~code ~name =
+  let key = session_key ~code ~name in
   let fresh_join () =
-    match%bind
-      Rpc.Connection.client
-        (Tcp.Where_to_connect.of_host_and_port { host = "127.0.0.1"; port = t.rpc_port })
-    with
+    match%bind connect t with
     | Error exn -> return (Or_error.of_exn exn)
     | Ok conn ->
-      (match%bind Rpc.Rpc.dispatch Rpc_protocol.join_lobby_rpc conn name with
+      (match%bind
+         Rpc.Rpc.dispatch
+           Rpc_protocol.join_lobby_rpc
+           conn
+           { Rpc_protocol.Join_query.code; player_name = name }
+       with
        | Error err | Ok (Error err) ->
          let%map () = Rpc.Connection.close conn in
          Error err
@@ -122,28 +144,28 @@ let join t ~name =
             let session =
               { Session.conn; events = Queue.create (); last_poll = Time_ns.now () }
             in
-            Hashtbl.set t.sessions ~key:name ~data:session;
+            Hashtbl.set t.sessions ~key ~data:session;
             don't_wait_for
               (Pipe.iter_without_pushback reader ~f:(fun event ->
                  Queue.enqueue session.events (event_json event)));
             return (Ok ())))
   in
-  match Hashtbl.find t.sessions name with
+  match Hashtbl.find t.sessions key with
   | Some session when not (Rpc.Connection.is_closed session.conn) ->
-    (* same name joining again, e.g. after a page reload: re-attach *)
+    (* same player joining again, e.g. after a page reload: re-attach *)
     session.last_poll <- Time_ns.now ();
     return (Ok ())
   | Some _ | None ->
-    Hashtbl.remove t.sessions name;
+    Hashtbl.remove t.sessions key;
     fresh_join ()
 ;;
 
-let with_session t ~name ~f =
-  match Hashtbl.find t.sessions name with
+let with_session t ~code ~name ~f =
+  match Hashtbl.find t.sessions (session_key ~code ~name) with
   | None ->
     return
       (Or_error.error_string
-         "Not in the lobby (session may have expired) - reload the page")
+         "Not in the room (session may have expired) - reload the page")
   | Some session ->
     session.last_poll <- Time_ns.now ();
     f session
@@ -156,31 +178,31 @@ let rpc_result deferred =
   | Ok (Ok ()) -> Ok ()
 ;;
 
-let take_action t ~name ~action =
-  with_session t ~name ~f:(fun session ->
+let take_action t ~code ~name ~action =
+  with_session t ~code ~name ~f:(fun session ->
     rpc_result (Rpc.Rpc.dispatch Rpc_protocol.take_action_rpc session.conn action))
 ;;
 
-let start_game t ~name =
-  with_session t ~name ~f:(fun session ->
+let start_game t ~code ~name =
+  with_session t ~code ~name ~f:(fun session ->
     rpc_result (Rpc.Rpc.dispatch Rpc_protocol.start_game_rpc session.conn ()))
 ;;
 
-let submit_rules t ~name ~text =
-  with_session t ~name ~f:(fun session ->
+let submit_rules t ~code ~name ~text =
+  with_session t ~code ~name ~f:(fun session ->
     rpc_result (Rpc.Rpc.dispatch Rpc_protocol.submit_rules_rpc session.conn text))
 ;;
 
-let poll t ~name =
-  with_session t ~name ~f:(fun session ->
+let poll t ~code ~name =
+  with_session t ~code ~name ~f:(fun session ->
     let events = Queue.to_list session.events in
     Queue.clear session.events;
     return (Ok events))
 ;;
 
 (* fresh snapshot from the server; queued events predate it, so drop them *)
-let get_state t ~name =
-  with_session t ~name ~f:(fun session ->
+let get_state t ~code ~name =
+  with_session t ~code ~name ~f:(fun session ->
     Queue.clear session.events;
     match%map Rpc.Rpc.dispatch Rpc_protocol.get_state_rpc session.conn () with
     | Error err | Ok (Error err) -> Error err
@@ -212,11 +234,15 @@ let color_of_string = function
 
 let handle t ~body req =
   let uri = Cohttp.Request.uri req in
-  let with_name f =
-    match Uri.get_query_param uri "name" with
-    | None | Some "" ->
-      respond_json ~status:`Bad_request (error_body (Error.of_string "missing player name"))
-    | Some name -> f name
+  let with_ident f =
+    match Uri.get_query_param uri "code", Uri.get_query_param uri "name" with
+    | Some code, Some name
+      when (not (String.is_empty code)) && not (String.is_empty name) ->
+      f ~code:(String.uppercase (String.strip code)) ~name
+    | _ ->
+      respond_json
+        ~status:`Bad_request
+        (error_body (Error.of_string "missing room code or player name"))
   in
   match Uri.path uri with
   | "/api/check-rules" ->
@@ -226,28 +252,33 @@ let handle t ~body req =
      | Ok rules ->
        respond_json (sprintf {|{"ok":true,"num_rules":%d}|} (List.length rules))
      | Error err -> respond_json (error_body err))
-  | "/api/join" -> with_name (fun name -> respond_result (join t ~name))
+  | "/api/create-room" ->
+    (match%bind create_room t with
+     | Error err -> respond_json (error_body err)
+     | Ok code -> respond_json (sprintf {|{"ok":true,"code":%s}|} (jstr code)))
+  | "/api/join" -> with_ident (fun ~code ~name -> respond_result (join t ~code ~name))
   | "/api/poll" ->
-    with_name (fun name ->
-      match%bind poll t ~name with
+    with_ident (fun ~code ~name ->
+      match%bind poll t ~code ~name with
       | Error err -> respond_json (error_body err)
       | Ok events ->
         respond_json (sprintf {|{"ok":true,"events":%s}|} (jlist events)))
   | "/api/state" ->
-    with_name (fun name ->
-      match%bind get_state t ~name with
+    with_ident (fun ~code ~name ->
+      match%bind get_state t ~code ~name with
       | Error err -> respond_json (error_body err)
       | Ok events ->
         respond_json (sprintf {|{"ok":true,"events":%s}|} (jlist events)))
-  | "/api/start" -> with_name (fun name -> respond_result (start_game t ~name))
+  | "/api/start" ->
+    with_ident (fun ~code ~name -> respond_result (start_game t ~code ~name))
   | "/api/draw" ->
-    with_name (fun name ->
-      respond_result (take_action t ~name ~action:Action.Client_to_server.Draw))
+    with_ident (fun ~code ~name ->
+      respond_result (take_action t ~code ~name ~action:Action.Client_to_server.Draw))
   | "/api/pass" ->
-    with_name (fun name ->
-      respond_result (take_action t ~name ~action:Action.Client_to_server.Pass))
+    with_ident (fun ~code ~name ->
+      respond_result (take_action t ~code ~name ~action:Action.Client_to_server.Pass))
   | "/api/play" ->
-    with_name (fun name ->
+    with_ident (fun ~code ~name ->
       match Option.bind (Uri.get_query_param uri "card_id") ~f:Int.of_string_opt with
       | None ->
         respond_json
@@ -260,11 +291,12 @@ let handle t ~body req =
         respond_result
           (take_action
              t
+             ~code
              ~name
              ~action:(Action.Client_to_server.Play { card_id; declared_color })))
   | "/api/rules" ->
-    with_name (fun name ->
+    with_ident (fun ~code ~name ->
       let%bind text = Cohttp_async.Body.to_string body in
-      respond_result (submit_rules t ~name ~text))
+      respond_result (submit_rules t ~code ~name ~text))
   | _ -> Cohttp_async.Server.respond `Not_found
 ;;

@@ -195,11 +195,16 @@ file is a fatal boot error. `examples/standard.rules` is the template
 users start a variant from; `examples/stacking.rules` is the stacking
 variant.
 
-`submit_rules_rpc : string -> unit Or_error.t` lets any lobby member
-replace the ruleset before a game starts (rejected mid-game); parse errors
-come back over the wire for the rule editor to render, and successful
-updates broadcast `Rules_updated` to everyone. The terminal client submits
-with `rules <file>`.
+The server hosts many isolated rooms, each identified by a 4-letter code
+(`create_room_rpc` returns one; `join_lobby_rpc` takes code + name).
+Every room has its own lobby, game, engine loop, and ruleset — the
+`-rules` boot flag sets the default ruleset new rooms start from.
+
+`submit_rules_rpc : string -> unit Or_error.t` lets any room member
+replace that room's ruleset before a game starts (rejected mid-game);
+parse errors come back over the wire for the rule editor to render, and
+successful updates broadcast `Rules_updated` to the room. The terminal
+client submits with `rules <file>`.
 
 The web UI (served at `http://localhost:<port+1>/`) is click-only
 gameplay: clickable hand, draw pile, pass button, and a color picker for

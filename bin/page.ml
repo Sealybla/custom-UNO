@@ -201,6 +201,11 @@ let html =
   #game-logo { position:absolute; top:10px; left:16px; z-index:4; font-weight:900;
     font-style:italic; color:var(--c-yellow); -webkit-text-stroke:1px #fff;
     font-size:1.5rem; text-shadow:2px 2px 0 rgba(0,0,0,.4); transform:rotate(-4deg); }
+  #game-code { position:absolute; top:46px; left:18px; z-index:4; font-weight:800;
+    letter-spacing:.25em; opacity:.75; font-size:.85rem; }
+  .code-chip { display:inline-block; background:var(--c-yellow); color:var(--ink);
+    border-radius:8px; padding:.05rem .6rem .05rem .8rem; letter-spacing:.3em;
+    font-style:normal; vertical-align:middle; }
 
   /* ============ overlays ============ */
   #toast { position:fixed; top:14px; left:50%; transform:translateX(-50%) translateY(-80px);
@@ -266,13 +271,24 @@ let html =
   <div id="view-join" class="panel" style="text-align:center">
     <h2>Pull up a chair</h2>
     <input id="name-input" placeholder="your name" maxlength="20">
-    <button id="join-btn">Join lobby</button>
-    <div id="join-err" class="err"></div>
+    <div style="margin:1rem 0 .4rem"><button id="host-btn">Host a new lobby</button></div>
+    <div style="opacity:.7; font-weight:800; margin:.5rem 0">— or join with a code —</div>
+    <div style="display:flex; gap:.5rem; justify-content:center">
+      <input id="code-input" placeholder="CODE" maxlength="4"
+             style="width:7.5rem; text-transform:uppercase; text-align:center;
+                    font-weight:800; letter-spacing:.3em">
+      <button id="join-btn">Join</button>
+    </div>
+    <div id="join-err" class="err" style="margin-top:.6rem"></div>
   </div>
 
   <div id="view-lobby" class="lobby-grid" hidden>
     <div class="panel">
-      <h2>Lobby</h2>
+      <h2>Lobby <span id="room-code" class="code-chip"></span></h2>
+      <p style="margin:.1rem 0 .8rem">
+        <button id="copy-link" class="small">Copy invite link</button>
+        <span id="copy-done" class="ok"></span>
+      </p>
       <ul id="lobby-players"></ul>
       <button id="start-btn">Start game</button>
       <div id="lobby-status" class="ok" style="margin-top:.6rem"></div>
@@ -366,6 +382,7 @@ let html =
 
 <div id="view-game" hidden>
   <div id="game-logo">UNO</div>
+  <div id="game-code"></div>
   <div id="table-oval"></div>
   <div id="seats"></div>
   <div class="table-center">
@@ -500,6 +517,7 @@ const EFF_OPTIONS = [
 ];
 
 let name = null;
+let code = null;
 let state = { players:[], hand:[], top:null, color:null, current:null,
               counts:{}, inGame:false, pileStack:[] };
 let pendingWild = null;
@@ -570,7 +588,8 @@ function showWin(winner){
 
 async function api(path, opts = {}){
   const sep = path.includes('?') ? '&' : '?';
-  const res = await fetch(path + sep + 'name=' + encodeURIComponent(name), opts);
+  const ident = 'name=' + encodeURIComponent(name) + '&code=' + encodeURIComponent(code);
+  const res = await fetch(path + sep + ident, opts);
   return res.json();
 }
 
@@ -982,20 +1001,51 @@ async function joinAs(v){
       $('join-err').textContent = r.error;
       name = null;
       sessionStorage.removeItem('uno-name');
+      sessionStorage.removeItem('uno-code');
       return;
     }
     sessionStorage.setItem('uno-name', v);
+    sessionStorage.setItem('uno-code', code);
+    $('room-code').textContent = code;
+    $('game-code').textContent = 'ROOM ' + code;
     setView('lobby');
     await refreshState();
     startPolling();
   } catch (e){ $('join-err').textContent = 'server unreachable'; name = null; }
 }
 
+async function hostGame(){
+  const v = $('name-input').value.trim();
+  if (!v){ $('join-err').textContent = 'enter your name first'; return; }
+  try {
+    const res = await fetch('/api/create-room', {method:'POST'});
+    const r = await res.json();
+    if (!r.ok){ $('join-err').textContent = r.error; return; }
+    code = r.code;
+    joinAs(v);
+  } catch (e){ $('join-err').textContent = 'server unreachable'; }
+}
+
+$('host-btn').onclick = hostGame;
 $('join-btn').onclick = () => {
   const v = $('name-input').value.trim();
-  if (v) joinAs(v);
+  const c = $('code-input').value.trim().toUpperCase();
+  if (!v){ $('join-err').textContent = 'enter your name first'; return; }
+  if (c.length !== 4){ $('join-err').textContent = 'room codes are 4 letters'; return; }
+  code = c;
+  joinAs(v);
 };
 $('name-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('join-btn').click(); });
+$('code-input').addEventListener('keydown', e => { if (e.key === 'Enter') $('join-btn').click(); });
+
+$('copy-link').onclick = async () => {
+  const link = location.origin + '/?code=' + code;
+  try {
+    await navigator.clipboard.writeText(link);
+    $('copy-done').textContent = 'copied!';
+  } catch (e){ prompt('Copy this link:', link); }
+  setTimeout(() => { $('copy-done').textContent = ''; }, 1600);
+};
 
 let polling = null;
 function startPolling(){
@@ -1017,10 +1067,18 @@ window.addEventListener('resize', () => {
 $('rules-text').value = RULES_TEMPLATE;
 checkRules();
 
+// invite links carry ?code=XXXX; a saved session (per-tab) wins unless the
+// link points at a different room
+const urlCode = (new URLSearchParams(location.search).get('code') || '').toUpperCase();
 const savedName = sessionStorage.getItem('uno-name');
-if (savedName){
+const savedCode = sessionStorage.getItem('uno-code');
+if (savedName && savedCode && (!urlCode || urlCode === savedCode)){
   $('name-input').value = savedName;
+  code = savedCode;
   joinAs(savedName);
+} else if (urlCode){
+  $('code-input').value = urlCode;
+  $('name-input').focus();
 }
 </script>
 </body>

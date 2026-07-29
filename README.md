@@ -11,8 +11,10 @@ dune build
 dune exec custom-uno -- -port 8080
 ```
 
-Open <http://localhost:8081/> — every browser tab is a player (2+ needed
-to start). Optionally boot with a rule file:
+Open <http://localhost:8081/> — host a lobby (you get a 4-letter room
+code) or join one with a code; every browser tab is a player (2+ per room
+to start). Rooms are isolated: many groups can play on one server.
+Optionally boot with a rule file (the default ruleset for new rooms):
 
 ```
 dune exec custom-uno -- -port 8080 -rules examples/stacking.rules
@@ -26,8 +28,9 @@ dune exec custom-uno -- -port 8080 -rules examples/stacking.rules
 
 This starts a Cloudflare quick tunnel and prints a public
 `https://….trycloudflare.com` link — anyone who opens it on any device
-joins your game. The link is temporary: a new URL every run, gone when
-the script stops. For a permanent URL you'd use a named Cloudflare
+can host or join a room, and the lobby's "Copy invite link" button
+appends the room code so friends land straight on the join screen. The
+link is temporary: a new URL every run, gone when the script stops. For a permanent URL you'd use a named Cloudflare
 tunnel on your own domain (requires a Cloudflare account:
 `cloudflared tunnel login`).
 
@@ -41,6 +44,7 @@ documented in [docs/rule-language.md](docs/rule-language.md).
 ## Development
 
 ```
-dune runtest                                  # expect-test suite
-dune exec uno-client -- -name alice -port 8080   # terminal client (testing)
+dune runtest                                       # expect-test suite
+dune exec uno-client -- -name alice -host            # terminal client: create a room
+dune exec uno-client -- -name bob -room ABCD         # terminal client: join by code
 ```
