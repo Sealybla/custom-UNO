@@ -195,11 +195,16 @@ file is a fatal boot error. `examples/standard.rules` is the template
 users start a variant from; `examples/stacking.rules` is the stacking
 variant.
 
-`submit_rules_rpc : string -> unit Or_error.t` lets any lobby member
-replace the ruleset before a game starts (rejected mid-game); parse errors
-come back over the wire for the rule editor to render, and successful
-updates broadcast `Rules_updated` to everyone. The terminal client submits
-with `rules <file>`.
+The server hosts many isolated rooms, each identified by a 4-letter code
+(`create_room_rpc` returns one; `join_lobby_rpc` takes code + name).
+Every room has its own lobby, game, engine loop, and ruleset — the
+`-rules` boot flag sets the default ruleset new rooms start from.
+
+`submit_rules_rpc : string -> unit Or_error.t` lets any room member
+replace that room's ruleset before a game starts (rejected mid-game);
+parse errors come back over the wire for the rule editor to render, and
+successful updates broadcast `Rules_updated` to the room. The terminal
+client submits with `rules <file>`.
 
 The web UI (served at `http://localhost:<port+1>/`) is click-only
 gameplay: clickable hand, draw pile, pass button, and a color picker for
@@ -210,6 +215,15 @@ rendering parse errors inline. Browsers reach the game through the HTTP
 event queue). Illegal actions come back to the acting player as an
 `Action_rejected` event and show as a toast.
 
-Known v1 UI gaps: a page reload mid-game re-attaches but shows no state
-until the next event (needs a state-snapshot endpoint); opponents' hand
-counts aren't shown (`Hand_counts` is never broadcast by the server).
+A page reload rejoins automatically (the tab remembers its player name)
+and restores the table via `get_state_rpc`, which returns a snapshot of
+the current lobby/game as a replayable event list. The server broadcasts
+`Hand_counts` after every action, shown as count badges on the player
+chips (a red "UNO!" badge at one card).
+
+The rules editor is beginner-friendly: preset buttons load the Standard
+/ Stacking / Draw-until-playable templates; a "build a rule without
+typing" form (dropdown condition + effect chips + priority) generates
+rule text into the editor; a cheat sheet lists every condition/effect
+phrase with click-to-insert; and the editor live-validates as you type
+via `POST /api/check-rules` (parse-only dry run, no session needed).

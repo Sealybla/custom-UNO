@@ -14,12 +14,30 @@ let game_stream_rpc =
     ()
 ;;
 
-(* handles a player joining the lobby *)
+(* creates a fresh room and returns its join code *)
+let create_room_rpc =
+  Rpc.Rpc.create
+    ~name:"create-room"
+    ~version:1
+    ~bin_query:Unit.bin_t
+    ~bin_response:[%bin_type_class: String.t Or_error.t]
+    ~include_in_error_count:Only_on_exn
+;;
+
+module Join_query = struct
+  type t =
+    { code : String.t
+    ; player_name : String.t
+    }
+  [@@deriving sexp, bin_io]
+end
+
+(* handles a player joining a room's lobby by code *)
 let join_lobby_rpc =
   Rpc.Rpc.create
   ~name:"join-lobby"
-  ~version:1
-  ~bin_query:String.bin_t
+  ~version:2
+  ~bin_query:Join_query.bin_t
   ~bin_response:[%bin_type_class: unit Or_error.t]
   ~include_in_error_count:Only_on_exn
 ;;
@@ -32,6 +50,17 @@ let take_action_rpc =
   ~bin_query:Action.Client_to_server.bin_t
   ~bin_response:[%bin_type_class: unit Or_error.t]
   ~include_in_error_count:Only_on_exn
+;;
+
+(* personalized snapshot of the current lobby/game as a replayable event
+   list, for clients that (re)connect mid-session *)
+let get_state_rpc =
+  Rpc.Rpc.create
+    ~name:"get-state"
+    ~version:1
+    ~bin_query:Unit.bin_t
+    ~bin_response:[%bin_type_class: Action.Server_to_client.t List.t Or_error.t]
+    ~include_in_error_count:Only_on_exn
 ;;
 
 (* replace the lobby's ruleset with parsed rule text before a game starts *)

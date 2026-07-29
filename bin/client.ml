@@ -101,13 +101,31 @@ let handle_line conn line =
     Deferred.unit
 ;;
 
-let run ~host ~port ~name =
+let run ~host ~port ~name ~room ~create_room =
   let%bind conn =
     Rpc.Connection.client (Tcp.Where_to_connect.of_host_and_port { host; port })
     >>| Result.ok_exn
   in
-  let%bind () = Rpc.Rpc.dispatch_exn Rpc_protocol.join_lobby_rpc conn name >>| ok_exn in
-  print_endline "joined lobby";
+  let%bind code =
+    match room, create_room with
+    | Some code, _ -> return (String.uppercase code)
+    | None, true ->
+      let%map code =
+        Rpc.Rpc.dispatch_exn Rpc_protocol.create_room_rpc conn () >>| ok_exn
+      in
+      print_s [%message "room created" (code : string)];
+      code
+    | None, false ->
+      failwith "pass -room CODE to join a room, or -host to create one"
+  in
+  let%bind () =
+    Rpc.Rpc.dispatch_exn
+      Rpc_protocol.join_lobby_rpc
+      conn
+      { Rpc_protocol.Join_query.code; player_name = name }
+    >>| ok_exn
+  in
+  print_s [%message "joined lobby" (code : string)];
   let%bind reader, _md =
     Rpc.Pipe_rpc.dispatch_exn Rpc_protocol.game_stream_rpc conn ()
   in
@@ -123,9 +141,11 @@ let command =
      let%map_open name = flag "-name" (required string) ~doc:"string your player name"
      and port = flag "-port" (optional_with_default 8080 int) ~doc:"int server port"
      and host =
-       flag "-host" (optional_with_default "localhost" string) ~doc:"string server host"
+       flag "-server" (optional_with_default "localhost" string) ~doc:"string server host"
+     and room = flag "-room" (optional string) ~doc:"CODE room code to join"
+     and create_room = flag "-host" no_arg ~doc:" create a new room and print its code"
      in
-     fun () -> run ~host ~port ~name)
+     fun () -> run ~host ~port ~name ~room ~create_room)
 ;;
 
 let () = Command_unix.run command

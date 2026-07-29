@@ -1,21 +1,12 @@
 open! Core
 open! Async
 
-(** The global, single-threaded multiplayer Uno coordinator handle. *)
-type t
-
-(** binds a TCP stream to the designated port, initializes the internal
-    action budget queue, and provisions background loops. *)
+(** Binds a TCP stream to the designated port and serves the game protocol.
+    Players create/join isolated rooms by code; each room runs its own
+    lobby, ruleset, and game engine loop. [ruleset] is the default every
+    new room starts with. *)
 val start
   :  ?ruleset:Rule_engine.Ruleset.t
   -> port:int
   -> unit
   -> (Socket.Address.Inet.t, int) Tcp.Server.t Deferred.t
-
-(** Broadcasts a game protocol event manually to every active table slot. *)
-val broadcast : t -> Action.Server_to_client.t -> unit
-
-val player_id_of_name : Game_state.t -> string -> int option
-val name_of_player_id : Game_state.t -> int -> string option
-val maybe_schedule_bot : t -> Game_state.t -> string -> unit
-val bot_action : Game_state.t -> string -> Action.Client_to_server.t
