@@ -194,6 +194,8 @@ let parse_effect (toks : tokens) : (Game_state.Effect.t list * tokens) Or_error.
     Ok ([ ApplyPendingDraws ], rest)
   | (Word "draw", _) :: (Word "until", _) :: (Word "playable", _) :: rest ->
     Ok ([ DrawUntilPlayable ], rest)
+  | (Word "next", _) :: (Word "player", _) :: (Word "draws", _) :: (Int n, _)
+    :: (Word ("card" | "cards"), _) :: rest -> Ok ([ DrawForNextPlayer n ], rest)
   | (Word "draw", _) :: (Int n, _) :: (Word ("card" | "cards"), _) :: rest
   | (Word "draw", _) :: (Int n, _) :: rest -> Ok ([ ExecuteDraw n ], rest)
   | (Word "reverse", _) :: (Word "direction", _) :: rest -> Ok ([ ReverseDirection ], rest)

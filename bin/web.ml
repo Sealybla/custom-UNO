@@ -2,10 +2,10 @@ open! Core
 open! Async
 open Custom_uno
 
-(* Bridges browser HTTP requests onto the game's Async-RPC protocol.
-   Browsers can't speak bin_prot over TCP, so each joined browser player
-   gets a dedicated RPC connection held here, and game events are queued
-   as JSON until the page's /api/poll loop drains them. *)
+(* Bridges browser HTTP requests onto the game's Async-RPC protocol. Browsers
+   can't speak bin_prot over TCP, so each joined browser player gets a
+   dedicated RPC connection held here, and game events are queued as JSON
+   until the page's /api/poll loop drains them. *)
 
 module Session = struct
   type t =
@@ -20,18 +20,20 @@ type t =
   ; rpc_port : int
   }
 
-let session_expiry = Time_ns.Span.of_sec 60.
+let session_expiry = Time_ns.Span.of_sec 8.
 
 (* a browser that stops polling counts as disconnected: closing its RPC
    connection triggers the game server's usual dropout handling *)
 let create ~rpc_port =
   let t = { sessions = String.Table.create (); rpc_port } in
-  Clock_ns.every (Time_ns.Span.of_sec 15.) (fun () ->
+  Clock_ns.every (Time_ns.Span.of_sec 3.) (fun () ->
     let now = Time_ns.now () in
     Hashtbl.filter_inplace t.sessions ~f:(fun (session : Session.t) ->
       let alive =
         (not (Rpc.Connection.is_closed session.conn))
-        && Time_ns.Span.( < ) (Time_ns.diff now session.last_poll) session_expiry
+        && Time_ns.Span.( < )
+             (Time_ns.diff now session.last_poll)
+             session_expiry
       in
       if not alive then don't_wait_for (Rpc.Connection.close session.conn);
       alive));
@@ -65,9 +67,16 @@ let card_json (card : Card.t) =
 let event_json (event : Action.Server_to_client.t) =
   match event with
   | Lobby_updated { players } ->
-    sprintf {|{"type":"lobby","players":%s}|} (jlist (List.map players ~f:jstr))
+    sprintf
+      {|{"type":"lobby","players":%s}|}
+      (jlist (List.map players ~f:jstr))
   | Game_started
-      { your_hand; top_card; current_color; player_names; current_player_name } ->
+      { your_hand
+      ; top_card
+      ; current_color
+      ; player_names
+      ; current_player_name
+      } ->
     sprintf
       {|{"type":"game_started","hand":%s,"top_card":%s,"current_color":%s,"players":%s,"current_player":%s}|}
       (jlist (List.map your_hand ~f:card_json))
@@ -76,7 +85,9 @@ let event_json (event : Action.Server_to_client.t) =
       (jlist (List.map player_names ~f:jstr))
       (jstr current_player_name)
   | Hand_updated { your_hand } ->
-    sprintf {|{"type":"hand","hand":%s}|} (jlist (List.map your_hand ~f:card_json))
+    sprintf
+      {|{"type":"hand","hand":%s}|}
+      (jlist (List.map your_hand ~f:card_json))
   | Pile_updated { top_card; current_color } ->
     sprintf
       {|{"type":"pile","top_card":%s,"current_color":%s}|}
@@ -87,7 +98,9 @@ let event_json (event : Action.Server_to_client.t) =
   | Hand_counts { counts } ->
     sprintf
       {|{"type":"hand_counts","counts":%s}|}
-      (jlist (List.map counts ~f:(fun (name, n) -> sprintf "[%s,%d]" (jstr name) n)))
+      (jlist
+         (List.map counts ~f:(fun (name, n) ->
+            sprintf "[%s,%d]" (jstr name) n)))
   | Game_over { winner_name } ->
     sprintf {|{"type":"game_over","winner":%s}|} (jstr winner_name)
   | Uno_called { player_name } ->
@@ -105,7 +118,8 @@ let join t ~name =
   let fresh_join () =
     match%bind
       Rpc.Connection.client
-        (Tcp.Where_to_connect.of_host_and_port { host = "127.0.0.1"; port = t.rpc_port })
+        (Tcp.Where_to_connect.of_host_and_port
+           { host = "127.0.0.1"; port = t.rpc_port })
     with
     | Error exn -> return (Or_error.of_exn exn)
     | Ok conn ->
@@ -114,13 +128,18 @@ let join t ~name =
          let%map () = Rpc.Connection.close conn in
          Error err
        | Ok (Ok ()) ->
-         (match%bind Rpc.Pipe_rpc.dispatch Rpc_protocol.game_stream_rpc conn () with
+         (match%bind
+            Rpc.Pipe_rpc.dispatch Rpc_protocol.game_stream_rpc conn ()
+          with
           | Error err | Ok (Error err) ->
             let%map () = Rpc.Connection.close conn in
             Error err
           | Ok (Ok (reader, _metadata)) ->
             let session =
-              { Session.conn; events = Queue.create (); last_poll = Time_ns.now () }
+              { Session.conn
+              ; events = Queue.create ()
+              ; last_poll = Time_ns.now ()
+              }
             in
             Hashtbl.set t.sessions ~key:name ~data:session;
             don't_wait_for
@@ -156,9 +175,23 @@ let rpc_result deferred =
   | Ok (Ok ()) -> Ok ()
 ;;
 
+(* an explicit "leaving" signal from the page's unload beacon: drop the session
+   and close its RPC connection right away so the game server converts the
+   player to a bot immediately, instead of waiting out the poll-silence
+   timeout. Always Ok — a beacon fires with no one listening for the reply. *)
+let leave t ~name =
+  (match Hashtbl.find t.sessions name with
+   | None -> ()
+   | Some session ->
+     Hashtbl.remove t.sessions name;
+     don't_wait_for (Rpc.Connection.close session.conn));
+  return (Ok ())
+;;
+
 let take_action t ~name ~action =
   with_session t ~name ~f:(fun session ->
-    rpc_result (Rpc.Rpc.dispatch Rpc_protocol.take_action_rpc session.conn action))
+    rpc_result
+      (Rpc.Rpc.dispatch Rpc_protocol.take_action_rpc session.conn action))
 ;;
 
 let start_game t ~name =
@@ -168,7 +201,8 @@ let start_game t ~name =
 
 let submit_rules t ~name ~text =
   with_session t ~name ~f:(fun session ->
-    rpc_result (Rpc.Rpc.dispatch Rpc_protocol.submit_rules_rpc session.conn text))
+    rpc_result
+      (Rpc.Rpc.dispatch Rpc_protocol.submit_rules_rpc session.conn text))
 ;;
 
 let poll t ~name =
@@ -178,14 +212,19 @@ let poll t ~name =
     return (Ok events))
 ;;
 
-let json_headers = Cohttp.Header.of_list [ "Content-Type", "application/json" ]
+let json_headers =
+  Cohttp.Header.of_list [ "Content-Type", "application/json" ]
+;;
 
 let respond_json ?(status = `OK) body =
   Cohttp_async.Server.respond_string ~headers:json_headers ~status body
 ;;
 
 let ok_body = {|{"ok":true}|}
-let error_body err = sprintf {|{"ok":false,"error":%s}|} (jstr (Error.to_string_hum err))
+
+let error_body err =
+  sprintf {|{"ok":false,"error":%s}|} (jstr (Error.to_string_hum err))
+;;
 
 let respond_result result =
   match%bind result with
@@ -206,27 +245,35 @@ let handle t ~body req =
   let with_name f =
     match Uri.get_query_param uri "name" with
     | None | Some "" ->
-      respond_json ~status:`Bad_request (error_body (Error.of_string "missing player name"))
+      respond_json
+        ~status:`Bad_request
+        (error_body (Error.of_string "missing player name"))
     | Some name -> f name
   in
   match Uri.path uri with
   | "/api/join" -> with_name (fun name -> respond_result (join t ~name))
+  | "/api/leave" -> with_name (fun name -> respond_result (leave t ~name))
   | "/api/poll" ->
     with_name (fun name ->
       match%bind poll t ~name with
       | Error err -> respond_json (error_body err)
       | Ok events ->
         respond_json (sprintf {|{"ok":true,"events":%s}|} (jlist events)))
-  | "/api/start" -> with_name (fun name -> respond_result (start_game t ~name))
+  | "/api/start" ->
+    with_name (fun name -> respond_result (start_game t ~name))
   | "/api/draw" ->
     with_name (fun name ->
-      respond_result (take_action t ~name ~action:Action.Client_to_server.Draw))
+      respond_result
+        (take_action t ~name ~action:Action.Client_to_server.Draw))
   | "/api/pass" ->
     with_name (fun name ->
-      respond_result (take_action t ~name ~action:Action.Client_to_server.Pass))
+      respond_result
+        (take_action t ~name ~action:Action.Client_to_server.Pass))
   | "/api/play" ->
     with_name (fun name ->
-      match Option.bind (Uri.get_query_param uri "card_id") ~f:Int.of_string_opt with
+      match
+        Option.bind (Uri.get_query_param uri "card_id") ~f:Int.of_string_opt
+      with
       | None ->
         respond_json
           ~status:`Bad_request
@@ -239,7 +286,8 @@ let handle t ~body req =
           (take_action
              t
              ~name
-             ~action:(Action.Client_to_server.Play { card_id; declared_color })))
+             ~action:
+               (Action.Client_to_server.Play { card_id; declared_color })))
   | "/api/rules" ->
     with_name (fun name ->
       let%bind text = Cohttp_async.Body.to_string body in

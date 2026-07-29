@@ -4,8 +4,11 @@ open Or_error.Let_syntax
 module Ruleset = struct
   type t = Rule.t list [@@deriving sexp, compare, equal, bin_io]
 
-  (* special-card rules shared by every variant — no generic play, no stacking *)
-  let play_rules : t =
+  (* special-card rules shared by EVERY variant: wild, skip, reverse. The +2/+4
+     draw rules are intentionally NOT here — they differ between the standard
+     and stacking rulesets (immediate vs deferred), so each variant appends its
+     own below. *)
+  let base_special_rules : t =
     [ { id = 1
       ; priority = 100
       ; condition = And (IsWildCard, IsPlayerTurn)
@@ -13,17 +16,6 @@ module Ruleset = struct
           [ Mutate PlayTriggeringCard
           ; Mutate CheckWinner
           ; Mutate SetDeclaredColor
-          ; Mutate AdvanceTurn
-          ]
-      }
-    ; { id = 2
-      ; priority = 100
-      ; condition = And (IsPlusTwo, IsPlayerTurn)
-      ; actions =
-          [ Mutate PlayTriggeringCard
-          ; Mutate CheckWinner
-          ; Mutate SetColorFromTriggeringCard
-          ; Mutate (AddPendingDraws 2)
           ; Mutate AdvanceTurn
           ]
       }
@@ -49,10 +41,53 @@ module Ruleset = struct
           ; Mutate AdvanceTurn
           ]
       }
-    ; { id = 5
-      ; priority = 90
-      ; condition = And (PendingDrawsGreaterThan 0, IsPlayerTurn)
-      ; actions = [ Mutate ApplyPendingDraws; Mutate AdvanceTurn ]
+    ]
+  ;;
+
+  (* standard +2/+4: the NEXT player draws immediately and is skipped (two
+     AdvanceTurns). Used by the default and draw-until rulesets. *)
+  let immediate_draw_rules : t =
+    [ { id = 2
+      ; priority = 100
+      ; condition = And (IsPlusTwo, IsPlayerTurn)
+      ; actions =
+          [ Mutate PlayTriggeringCard
+          ; Mutate CheckWinner
+          ; Mutate SetColorFromTriggeringCard
+          ; Mutate (DrawForNextPlayer 2)
+          ; Mutate AdvanceTurn
+          ; Mutate AdvanceTurn
+          ]
+      }
+    ; { id = 8
+      ; priority = 110
+      ; condition = And (IsPlusFour, IsPlayerTurn)
+      ; actions =
+          [ Mutate PlayTriggeringCard
+          ; Mutate CheckWinner
+          ; Mutate SetDeclaredColor
+          ; Mutate (DrawForNextPlayer 4)
+          ; Mutate AdvanceTurn
+          ; Mutate AdvanceTurn
+          ]
+      }
+    ]
+  ;;
+
+  (* stacking +2/+4: bump a shared counter (rule 5 cashes it out on the
+     victim's turn), so the victim can stack their own +2/+4 first. Only used
+     by the stacking variant. *)
+  let deferred_draw_rules : t =
+    [ { id = 2
+      ; priority = 100
+      ; condition = And (IsPlusTwo, IsPlayerTurn)
+      ; actions =
+          [ Mutate PlayTriggeringCard
+          ; Mutate CheckWinner
+          ; Mutate SetColorFromTriggeringCard
+          ; Mutate (AddPendingDraws 2)
+          ; Mutate AdvanceTurn
+          ]
       }
     ; { id = 8
       ; priority = 110
@@ -64,6 +99,11 @@ module Ruleset = struct
           ; Mutate (AddPendingDraws 4)
           ; Mutate AdvanceTurn
           ]
+      }
+    ; { id = 5
+      ; priority = 90
+      ; condition = And (PendingDrawsGreaterThan 0, IsPlayerTurn)
+      ; actions = [ Mutate ApplyPendingDraws; Mutate AdvanceTurn ]
       }
     ]
   ;;
@@ -138,11 +178,18 @@ module Ruleset = struct
     }
   ;;
 
-  let default : t = play_rules @ [ generic_play_rule; draw_one_rule ]
-  let draw_until_variant : t = play_rules @ [ generic_play_rule; draw_until_rule ]
+  let default : t =
+    base_special_rules @ immediate_draw_rules @ [ generic_play_rule; draw_one_rule ]
+  ;;
+
+  let draw_until_variant : t =
+    base_special_rules @ immediate_draw_rules @ [ generic_play_rule; draw_until_rule ]
+  ;;
 
   let stacking_variant : t =
-    play_rules @ [ stack_open_rule; stack_continue_rule; stack_pass_rule; draw_one_rule ]
+    base_special_rules
+    @ deferred_draw_rules
+    @ [ stack_open_rule; stack_continue_rule; stack_pass_rule; draw_one_rule ]
   ;;
 end
 

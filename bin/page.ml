@@ -300,6 +300,13 @@ function startPolling(){
   }, 700);
 }
 
+// tell the server we're gone the instant the tab closes, so a bot can take
+// over immediately instead of waiting for the poll-silence timeout. sendBeacon
+// survives page unload where a normal fetch would be cancelled.
+window.addEventListener('pagehide', () => {
+  if (name) navigator.sendBeacon('/api/leave?name=' + encodeURIComponent(name));
+});
+
 $('rules-text').value = RULES_TEMPLATE;
 </script>
 </body>
