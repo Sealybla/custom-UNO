@@ -49,6 +49,10 @@ type t =
   ; pending_draws : int
   ; drew_playable : bool
     (* the current player just drew a playable card and may play or pass *)
+  ; turns_advanced : int
+    (* monotonic count of turn advances; diffing it across one action tells
+       the server how many seats the turn moved (2+ means someone was
+       skipped), which drives the "you got skipped" notifications *)
   ; turn : int
   ; card_registry : Card_registry.t
   ; winner : int Option.t
@@ -74,6 +78,7 @@ let for_testing ~player_hands ~top_card ~draw_pile ~pending_draws ~turn =
   ; direction = Direction.Clockwise
   ; pending_draws
   ; drew_playable = false
+  ; turns_advanced = 0
   ; turn
   ; card_registry = Card_registry.of_cards all_cards
   ; winner = None
@@ -184,6 +189,7 @@ let create ?random_state ~player_names ~hand_size () : t Or_error.t =
     ; stacking_value = None
     ; pending_draws = 0
     ; drew_playable = false
+    ; turns_advanced = 0
     ; turn = 0
     ; card_registry = Card_registry.of_cards deck
     ; winner = None
@@ -204,7 +210,11 @@ let advance_turn t =
   let dir = match t.direction with Clockwise -> 1 | Counter -> -1 in
   (* add num_players again to account for neg mod *)
   let next_turn = (t.turn + dir + num_players) % num_players in
-  { t with turn = next_turn; drew_playable = false }
+  { t with
+    turn = next_turn
+  ; drew_playable = false
+  ; turns_advanced = t.turns_advanced + 1
+  }
 ;;
 
 (* apply an effect to game state t *)

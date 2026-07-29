@@ -37,6 +37,7 @@ type t =
   ; direction : Direction.t
   ; pending_draws : int
   ; drew_playable : bool
+  ; turns_advanced : int
   ; turn : int
   ; card_registry : Card_registry.t
   ; winner : int option

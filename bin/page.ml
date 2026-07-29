@@ -249,6 +249,41 @@ let html =
     color:var(--c-yellow); -webkit-text-stroke:2px #fff;
     text-shadow:5px 5px 0 rgba(0,0,0,.4); pointer-events:none;
     animation:unopop .45s var(--ease-pop); }
+  /* big event splash: SKIPPED! / DRAW N! for the affected player,
+     REVERSED for the whole table */
+  .event-splash { position:fixed; left:50%; top:36%; z-index:45; pointer-events:none;
+    text-align:center; font-weight:900; font-style:italic;
+    transform:translate(-50%,-50%) rotate(-5deg);
+    animation:splashlife 1.8s var(--ease-pop) forwards; }
+  .event-splash .sym { font-size:clamp(4rem,16vw,7.5rem); line-height:1;
+    -webkit-text-stroke:3px #fff; text-shadow:6px 6px 0 rgba(0,0,0,.45); }
+  .event-splash .lbl { font-size:clamp(1.1rem,4vw,1.9rem); letter-spacing:.28em;
+    margin-top:.2rem; text-shadow:3px 3px 0 rgba(0,0,0,.45); color:#fff; }
+  .event-splash.red { color:var(--c-red); }
+  .event-splash.blue { color:var(--c-blue); }
+  .event-splash.mid .sym { font-size:clamp(2.6rem,10vw,4.6rem); }
+  .event-splash.spin .sym { display:inline-block; animation:spinonce .9s var(--ease-pop); }
+  @keyframes splashlife {
+    0% { opacity:0; transform:translate(-50%,-50%) scale(0) rotate(-14deg); }
+    12% { opacity:1; transform:translate(-50%,-50%) scale(1.18) rotate(-4deg); }
+    20% { transform:translate(-50%,-50%) scale(1) rotate(-5deg); }
+    78% { opacity:1; }
+    100% { opacity:0; transform:translate(-50%,-50%) scale(1.06) rotate(-5deg); } }
+  @keyframes spinonce { to { transform:rotate(360deg); } }
+  /* smaller signal over an opponent's seat */
+  .seat-badge { position:absolute; left:50%; top:-10px; z-index:6;
+    transform:translate(-50%,-100%); font-weight:900; font-size:.95rem;
+    padding:.3rem .75rem; border-radius:999px; border:2px solid #fff;
+    box-shadow:0 4px 10px rgba(0,0,0,.45); white-space:nowrap; pointer-events:none;
+    animation:badgelife 1.6s var(--ease-pop) forwards; }
+  .seat-badge.skip { background:var(--c-red); color:#fff; }
+  .seat-badge.penalty { background:var(--ink); color:var(--c-yellow); }
+  @keyframes badgelife {
+    0% { opacity:0; transform:translate(-50%,-60%) scale(0); }
+    14% { opacity:1; transform:translate(-50%,-105%) scale(1.15); }
+    24% { transform:translate(-50%,-100%) scale(1); }
+    72% { opacity:1; }
+    100% { opacity:0; transform:translate(-50%,-145%) scale(.9); } }
   #win-overlay { position:fixed; inset:0; z-index:50; background:rgba(10,6,10,.82);
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1.4rem;
     overflow:hidden; }
@@ -634,6 +669,28 @@ function unoSplash(who){
   const s = $('uno-splash'); s.textContent = 'UNO! ' + who; s.hidden = false;
   clearTimeout(s._h); s._h = setTimeout(() => { s.hidden = true; }, 1700);
 }
+// big center-stage event splash (symbol + label); delay staggers a batch
+function bigSplash(sym, label, cls, delay){
+  setTimeout(() => {
+    const el = document.createElement('div');
+    el.className = 'event-splash ' + (cls || '');
+    el.innerHTML = '<div class="sym"></div><div class="lbl"></div>';
+    el.querySelector('.sym').textContent = sym;
+    el.querySelector('.lbl').textContent = label;
+    document.body.append(el);
+    setTimeout(() => el.remove(), 1900);
+  }, delay || 0);
+}
+// smaller but noticeable signal above an opponent's seat
+function seatBadge(player, text, cls){
+  const s = seatOf(player);
+  if (!s) return;
+  const b = document.createElement('div');
+  b.className = 'seat-badge ' + (cls || '');
+  b.textContent = text;
+  s.append(b);
+  setTimeout(() => b.remove(), 1700);
+}
 function showWin(winner){
   const w = $('win-overlay');
   w.querySelector('.win-name').textContent = winner;
@@ -724,6 +781,18 @@ function apply(ev, fx){
       break;
     }
     case 'uno': unoSplash(ev.player); logLine('UNO! ' + ev.player); break;
+    case 'skipped':
+      logLine((ev.player === name ? 'you were' : ev.player + ' was') + ' skipped');
+      if (fx) fx.push({kind:'skipped', player:ev.player});
+      break;
+    case 'forced_draw':
+      logLine((ev.player === name ? 'you draw ' : ev.player + ' draws ') + ev.count);
+      if (fx) fx.push({kind:'penalty', player:ev.player, count:ev.count});
+      break;
+    case 'direction':
+      logLine('direction reversed');
+      if (fx) fx.push({kind:'reversed'});
+      break;
     case 'game_over':
       state.inGame = false;
       $('lobby-status').textContent = 'Last game: ' + ev.winner + ' won';
@@ -932,6 +1001,22 @@ function flyClone(node, from, to, opts = {}){
 }
 
 function runFx(fx){
+  // a +2/+4 victim is skipped by the same play; the DRAW splash already
+  // says so, so drop their separate skip signal
+  const penalized = new Set(fx.filter(f => f.kind === 'penalty').map(f => f.player));
+  let splashes = 0;
+  const stagger = () => 300 * splashes++;
+  for (const f of fx){
+    if (f.kind === 'skipped' && !penalized.has(f.player)){
+      if (f.player === name) bigSplash('⊘', 'SKIPPED!', 'red', stagger());
+      else seatBadge(f.player, '⊘ skipped', 'skip');
+    } else if (f.kind === 'penalty'){
+      if (f.player === name) bigSplash('+' + f.count, 'DRAW ' + f.count + '!', 'red', stagger());
+      else seatBadge(f.player, '+' + f.count + ' cards', 'penalty');
+    } else if (f.kind === 'reversed'){
+      bigSplash('⇄', 'REVERSED', 'blue mid spin', stagger());
+    }
+  }
   for (const f of fx){
     if (f.kind === 'ownPlay' || f.kind === 'oppPlay'){
       const top = $('discard').lastElementChild;

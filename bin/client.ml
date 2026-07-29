@@ -42,6 +42,12 @@ let print_event (event : Action.Server_to_client.t) =
   | Rules_updated { player_name; num_rules } ->
     print_s [%message "rules updated" (player_name : string) (num_rules : int)]
   | Action_rejected { reason } -> print_s [%message "rejected" (reason : string)]
+  | Player_skipped { player_name } ->
+    print_s [%message "skipped" (player_name : string)]
+  | Forced_draw { player_name; count } ->
+    print_s [%message "forced to draw" (player_name : string) (count : int)]
+  | Direction_changed { direction } ->
+    print_s [%message "direction" (direction : Direction.t)]
 ;;
 
 let color_of_string = function

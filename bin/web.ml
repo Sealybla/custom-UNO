@@ -121,6 +121,17 @@ let event_json (event : Action.Server_to_client.t) =
       num_rules
   | Action_rejected { reason } ->
     sprintf {|{"type":"rejected","reason":%s}|} (jstr reason)
+  | Player_skipped { player_name } ->
+    sprintf {|{"type":"skipped","player":%s}|} (jstr player_name)
+  | Forced_draw { player_name; count } ->
+    sprintf
+      {|{"type":"forced_draw","player":%s,"count":%d}|}
+      (jstr player_name)
+      count
+  | Direction_changed { direction } ->
+    sprintf
+      {|{"type":"direction","clockwise":%b}|}
+      (match direction with Clockwise -> true | Counter -> false)
 ;;
 
 (* names are only unique within a room, so sessions key on both *)

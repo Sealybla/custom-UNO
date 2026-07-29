@@ -218,6 +218,67 @@ let maybe_schedule_bot (room : Room.t) next_state current_player_name =
   | _ -> ()
 ;;
 
+(* Compare the states around one action and broadcast what happened to whom:
+   who was skipped, who was forced to draw, and direction flips. These are
+   pure notifications - the UI turns them into splashes and seat badges. *)
+let broadcast_notifications
+  (room : Room.t)
+  ~(before : Game_state.t)
+  ~(after : Game_state.t)
+  ~actor_id
+  =
+  let hand_len (st : Game_state.t) idx =
+    match List.nth st.players idx with
+    | Some p -> List.length (Player.get_hand p)
+    | None -> 0
+  in
+  (* forced draws: a hand that grew without its owner acting, or the actor
+     cashing out a pending +2/+4 penalty *)
+  List.iteri after.players ~f:(fun idx p ->
+    let grew = hand_len after idx - hand_len before idx in
+    let forced =
+      if idx = actor_id
+      then before.pending_draws > 0 && after.pending_draws = 0 && grew > 0
+      else grew > 0
+    in
+    if forced
+    then
+      broadcast
+        room
+        (Action.Server_to_client.Forced_draw
+           { player_name = Player.get_name p; count = grew }));
+  (* skipped players: the turn moved 2+ seats in one action; everyone the
+     turn passed over (except the actor) was skipped *)
+  let advances = after.turns_advanced - before.turns_advanced in
+  if advances >= 2
+  then (
+    let num_players = List.length after.players in
+    let dir = if Direction.equal after.direction Clockwise then 1 else -1 in
+    List.iter
+      (List.init (advances - 1) ~f:(fun k -> k + 1))
+      ~f:(fun k ->
+        let idx =
+          (actor_id + (dir * k) + (num_players * advances)) % num_players
+        in
+        if not (Int.equal idx actor_id)
+        then (
+          match name_of_player_id after idx with
+          | Some player_name ->
+            broadcast
+              room
+              (Action.Server_to_client.Player_skipped { player_name })
+          | None -> ())));
+  (* a direction flip is its own spectacle with 3+ players; with 2 the skip
+     notification already tells the story *)
+  if (not (Direction.equal before.direction after.direction))
+     && List.length after.players > 2
+  then
+    broadcast
+      room
+      (Action.Server_to_client.Direction_changed
+         { direction = after.direction })
+;;
+
 (* a room with nobody in it and no running game can be forgotten *)
 let maybe_remove_room t (room : Room.t) =
   if Hashtbl.is_empty room.clients && Option.is_none room.game_state
@@ -278,6 +339,11 @@ let start_engine_loop t (room : Room.t) request_reader =
                       });
                  send_hands room next_state;
                  broadcast room (hand_counts_event next_state);
+                 broadcast_notifications
+                   room
+                   ~before:current_state
+                   ~after:next_state
+                   ~actor_id:player_id;
                  (match List.nth next_state.players player_id with
                   | Some p when Int.equal (List.length (Player.get_hand p)) 1
                     ->

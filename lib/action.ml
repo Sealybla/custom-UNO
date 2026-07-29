@@ -39,5 +39,9 @@ module Server_to_client = struct
     | Uno_called of { player_name : String.t }
     | Rules_updated of { player_name : String.t; num_rules : Int.t }
     | Action_rejected of { reason : String.t }
+    (* pure-notification events driving the table animations *)
+    | Player_skipped of { player_name : String.t }
+    | Forced_draw of { player_name : String.t; count : Int.t }
+    | Direction_changed of { direction : Direction.t }
   [@@deriving sexp, compare, equal, bin_io]
 end
