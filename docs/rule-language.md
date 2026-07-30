@@ -57,7 +57,7 @@ Parentheses override.
 | `apply pending draws` | `ApplyPendingDraws` |
 | `draw N` / `draw N cards` | `ExecuteDraw N` |
 | `next player draws N cards` | `DrawForNextPlayer N` (turn unchanged) |
-| `draw until playable` | `DrawUntilPlayable` (sets the drew-playable flag) |
+| `draw until playable` | `DrawUntilPlayable` (draw 1, turn stays; a playable draw sets the drew-playable flag) |
 | `draw and decide` | `DrawAndDecide` (draw 1; playable → keep turn + set flag, else advance) |
 | `reverse direction` | `ReverseDirection` (with 2 players also skips the opponent, per official Uno) |
 | `open stack` | `SetStackingValue` |
@@ -147,9 +147,10 @@ rule "take penalty" priority 105:
   do apply pending draws, advance turn
 ```
 
-Every variant handles drawing the same way — one card, and a playable
-draw keeps the turn open so the player can play it or pass (this is the
-only time a bare pass is legal in the non-stacking variants):
+The standard and stacking variants handle drawing the same way — one
+card, and a playable draw keeps the turn open so the player can play it
+or pass via the "Done" button (this is the only time a bare pass is
+legal outside the stacking rules):
 
 ```
 rule "draw a card" priority 1:
@@ -169,13 +170,16 @@ rule "play matching card" priority 10:
   do play the card, set color from card, advance turn
 ```
 
-Draw-until variant replaces "draw a card" with (`draw until playable`
-also sets the drew-playable flag when it stops on a playable card):
+Draw-until variant replaces "draw a card" with the rule below and has
+no pass rule at all, so the Done button never appears. Each draw click
+takes one card and never ends the turn: a drawn playable card may be
+kept and the drawing continued — the only way to end the turn is to
+actually play a card:
 
 ```
 rule "draw until playable" priority 1:
-  when player draws and your turn and not drew playable card
-  do draw until playable
+  when player draws and your turn
+  do draw 1 cards
 ```
 
 Stacking variant replaces "play matching card" with:

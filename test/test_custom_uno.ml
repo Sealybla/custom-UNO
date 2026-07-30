@@ -294,12 +294,15 @@ let%expect_test "plus4 stacks then cashes out" =
     |}]
 ;;
 
-let%expect_test "draw until playable keeps drawing" =
+(* each click draws one card and the turn stays put; there is no pass in
+   this variant, so a drawn playable card can be kept and drawing goes on
+   — only actually playing a card ends the turn *)
+let%expect_test "draw until playable: one card per click, play is the only exit" =
   let top = { Card.color = Red; value = Five; id = 400 } in
-  (* draw pile: two unplayable cards, then a playable one *)
+  (* draw pile: unplayable, playable, unplayable *)
   let d1 = { Card.color = Blue; value = Two; id = 401 } in   (* not red, not 5 *)
-  let d2 = { Card.color = Green; value = Eight; id = 402 } in (* not red, not 5 *)
-  let d3 = { Card.color = Red; value = Nine; id = 403 } in    (* red — playable *)
+  let d2 = { Card.color = Red; value = Nine; id = 402 } in    (* red — playable *)
+  let d3 = { Card.color = Green; value = Eight; id = 403 } in (* not red, not 5 *)
   let t =
     Game_state.for_testing
       ~player_hands:[ "a", []; "b", [] ]
@@ -308,15 +311,45 @@ let%expect_test "draw until playable keeps drawing" =
       ~pending_draws:0
       ~turn:0
   in
-  let before = List.length (Player.get_hand (List.nth_exn t.players 0)) in
+  let rules = Rule_engine.Ruleset.draw_until_variant in
+  let draw t =
+    Rule_engine.apply_action rules t ~player_id:0 ~action:Draw |> Or_error.ok_exn
+  in
+  let report label (t : Game_state.t) =
+    let hand = List.length (Player.get_hand (List.nth_exn t.players 0)) in
+    print_s
+      [%message
+        label (hand : int) (t.turn : int)
+          (Rule_engine.pass_available rules t : bool)]
+  in
+  let t = draw t in
+  report "click 1 (unplayable)" t;
+  let t = draw t in
+  report "click 2 (playable)" t;
+  (* passing is never legal, even holding a playable draw *)
+  let pass = Rule_engine.apply_action rules t ~player_id:0 ~action:Pass in
+  print_s [%message (Or_error.is_error pass : bool)];
+  (* the playable card may be kept: drawing again is still allowed *)
+  let t = draw t in
+  report "click 3 (kept it)" t;
+  (* playing a card is what finally ends the turn *)
   let t =
-    Rule_engine.apply_action Rule_engine.Ruleset.draw_until_variant t
-      ~player_id:0 ~action:Draw
+    Rule_engine.apply_action rules t ~player_id:0
+      ~action:(Play { card_id = 402; declared_color = None })
     |> Or_error.ok_exn
   in
-  let after = List.length (Player.get_hand (List.nth_exn t.players 0)) in
-  print_s [%message "drew until playable" (before : int) (after : int) (t.turn : int)];
-  [%expect {| ("drew until playable" (before 0) (after 3) (t.turn 0)) |}]
+  report "after play" t;
+  [%expect {|
+    ("click 1 (unplayable)" (hand 1) (t.turn 0)
+     ("Rule_engine.pass_available rules t" false))
+    ("click 2 (playable)" (hand 2) (t.turn 0)
+     ("Rule_engine.pass_available rules t" false))
+    ("Or_error.is_error pass" true)
+    ("click 3 (kept it)" (hand 3) (t.turn 0)
+     ("Rule_engine.pass_available rules t" false))
+    ("after play" (hand 2) (t.turn 1)
+     ("Rule_engine.pass_available rules t" false))
+    |}]
 ;;
 
 
@@ -697,8 +730,8 @@ rule "pass after draw" priority 1:
 let draw_until_text =
   {|
 rule "draw until playable" priority 1:
-  when player draws and your turn and not drew playable card
-  do draw until playable
+  when player draws and your turn
+  do draw 1 cards
 |}
 ;;
 
@@ -742,10 +775,12 @@ let%expect_test "parsed default ruleset equals hand-coded default" =
   [%expect {| parsed rules match the hand-coded ruleset |}]
 ;;
 
+(* no pass_after_draw_text here: the draw-until variant deliberately has
+   no pass rule, so playing a card is the only way to end the turn *)
 let%expect_test "parsed draw-until ruleset equals hand-coded variant" =
   check_against_hand_coded
     (base_special_text ^ immediate_draw_text ^ generic_play_text
-     ^ draw_until_text ^ pass_after_draw_text)
+     ^ draw_until_text)
     Rule_engine.Ruleset.draw_until_variant;
   [%expect {| parsed rules match the hand-coded ruleset |}]
 ;;

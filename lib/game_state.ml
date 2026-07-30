@@ -261,26 +261,21 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
     List.fold_result (List.init count ~f:Fn.id) ~init:t ~f:(fun s _ ->
       draw_card_player s player_id)
   | DrawUntilPlayable ->
+    (* one card per draw click, the turn staying put either way; a playable
+       draw sets drew_playable for rules that condition on it *)
     let%bind player = player_of_event event in
     let player_id = Player.get_id player in
-    let rec loop t drawn =
-      if drawn >= 108
-      then Ok t
-      else (
-        let%bind t = draw_card_player t player_id in
-        let hand_ids = Player.get_hand (List.nth_exn t.players player_id) in
-        match hand_ids with
-        | [] -> Ok t
-        | newest_id :: _ ->
-          let%bind card = Card_registry.find t.card_registry newest_id in
-          if Game_rules.is_valid_play
-               ~top_card:t.top_card
-               ~played_card:card
-               ~current_color:t.current_color
-          then Ok { t with drew_playable = true }
-          else loop t (drawn + 1))
-    in
-    loop t 0
+    let%bind t = draw_card_player t player_id in
+    (match Player.get_hand (List.nth_exn t.players player_id) with
+     | [] -> Ok t
+     | newest_id :: _ ->
+       let%map card = Card_registry.find t.card_registry newest_id in
+       if Game_rules.is_valid_play
+            ~top_card:t.top_card
+            ~played_card:card
+            ~current_color:t.current_color
+       then { t with drew_playable = true }
+       else t)
   | DrawAndDecide ->
     (* draw one card; if it is playable the turn stays open so the player
        can choose to play it or pass, otherwise the turn passes *)

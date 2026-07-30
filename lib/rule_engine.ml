@@ -251,13 +251,14 @@ module Ruleset = struct
     }
   ;;
 
-  (* keep drawing until a playable card appears, then stop (turn stays) *)
+  (* each draw click takes one card and never ends the turn; drawn playable
+     cards may be kept and drawing continued — with no pass rule in the
+     variant, only actually playing a card ends the turn *)
   let draw_until_rule : Rule.t =
     { id = 7
     ; priority = 1
-    ; condition =
-        And (IsDrawAction, And (IsPlayerTurn, Not DrewPlayableCard))
-    ; actions = [ Mutate DrawUntilPlayable ]
+    ; condition = And (IsDrawAction, IsPlayerTurn)
+    ; actions = [ Mutate (ExecuteDraw 1) ]
     }
   ;;
 
@@ -270,7 +271,7 @@ module Ruleset = struct
   let draw_until_variant : t =
     base_special_rules
     @ immediate_draw_rules
-    @ [ generic_play_rule; draw_until_rule; pass_after_draw_rule ]
+    @ [ generic_play_rule; draw_until_rule ]
   ;;
 
   let stacking_variant : t =

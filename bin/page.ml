@@ -454,7 +454,7 @@ let html =
   <div id="turn-banner" hidden>YOUR TURN</div>
   <div id="hand-area">
     <div id="hand"></div>
-    <button id="pass-btn" hidden>Pass</button>
+    <button id="pass-btn" hidden>Done</button>
   </div>
   <ul id="log"></ul>
 </div>
@@ -555,7 +555,7 @@ const RULES_TEMPLATE =
 ` + DRAW_RULE + '\n' + PASS_AFTER_DRAW;
 
 const STACKING_TEMPLATE =
-  '# Stacking variant: chain same-value cards in one turn, pass to end it.\n\n' +
+  '# Stacking variant: chain same-value cards in one turn, click Done to end it.\n\n' +
   STACKING_SPECIALS + '\n' + DEFERRED_DRAWS + '\n' +
 `rule "open stack" priority 10:
   when (card matches color or card matches value) and your turn and not stack is open
@@ -571,11 +571,14 @@ rule "pass on stack" priority 120:
 
 ` + DRAW_RULE + '\n' + PASS_AFTER_DRAW;
 
+// no pass rule at all: the done button never shows, and a drawn playable
+// card may be kept — the only way to end the turn is to play a card
 const DRAWUNTIL_TEMPLATE = RULES_TEMPLATE.replace(DRAW_RULE,
-`rule "draw until playable" priority 1:
-  when player draws and your turn and not drew playable card
-  do draw until playable
-`);
+`# drawing never ends your turn: keep drawing until you play a card
+rule "draw until playable" priority 1:
+  when player draws and your turn
+  do draw 1 cards
+`).replace('\n' + PASS_AFTER_DRAW, '');
 
 const TEMPLATES = { standard: RULES_TEMPLATE, stacking: STACKING_TEMPLATE,
                     drawuntil: DRAWUNTIL_TEMPLATE };
@@ -588,7 +591,7 @@ const WHEN_OPTIONS = [
   ['card is reverse', 'a reverse is played'],
   ['card is wild', 'a wild is played'],
   ['player draws', 'the player clicks draw'],
-  ['player passes', 'the player clicks pass'],
+  ['player passes', 'the player clicks done'],
   ['continues stack', 'a card continues the stack'],
   ['stack is open', 'a stack is open'],
   ['drew playable card', 'the drawn card is playable'],
@@ -606,7 +609,7 @@ const EFF_OPTIONS = [
   ['next player draws N cards', 'next player draws cards now'],
   ['add N pending draws', 'add penalty draws (stackable)'],
   ['apply pending draws', 'apply the pending penalty'],
-  ['draw until playable', 'keep drawing until playable'],
+  ['draw until playable', 'draw 1; flag a playable draw'],
   ['reverse direction', 'reverse direction'],
   ['skip next player', 'skip the next player'],
   ['open stack', 'open a stack'],
