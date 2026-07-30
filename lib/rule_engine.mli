@@ -6,6 +6,9 @@ module Ruleset : sig
   val default : t
   val draw_until_variant : t
   val stacking_variant : t
+
+  (* true if any rule in the set can open a same-value stack *)
+  val uses_stacking : t -> bool
 end
 
 
@@ -33,6 +36,10 @@ val process_event
   -> Game_state.t
   -> Event.t
   -> Game_state.t Or_error.t
+
+(* true if some rule would accept a Pass from the current player right now
+   (drives the UI's pass-button visibility) *)
+val pass_available : Ruleset.t -> Game_state.t -> bool
 
 val apply_action
   :  Ruleset.t

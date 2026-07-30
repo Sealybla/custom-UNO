@@ -17,9 +17,11 @@ module Condition : sig
     | IsSkip 
     | IsReverse 
     | IsDrawAction 
-    | IsPlusTwo 
+    | IsPlusTwo
     | IsPlusFour
     | ContinuesStack
+    | StackIsOpen
+    | DrewPlayableCard
     | IsPassAction
     | And of t * t
     | Or of t * t

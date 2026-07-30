@@ -122,6 +122,10 @@ let parse_atom (toks : tokens) : (Rule.Condition.t * tokens) Or_error.t =
   | (Word "pending", _) :: (Word "draws", _) :: (Greater, _) :: (Int n, _) :: rest ->
     Ok (PendingDrawsGreaterThan n, rest)
   | (Word "continues", _) :: (Word "stack", _) :: rest -> Ok (ContinuesStack, rest)
+  | (Word "stack", _) :: (Word "is", _) :: (Word "open", _) :: rest ->
+    Ok (StackIsOpen, rest)
+  | (Word "drew", _) :: (Word "playable", _) :: (Word "card", _) :: rest ->
+    Ok (DrewPlayableCard, rest)
   | (Word "player", _) :: (Word "draws", _) :: rest -> Ok (IsDrawAction, rest)
   | (Word "player", _) :: (Word "passes", _) :: rest -> Ok (IsPassAction, rest)
   | _ -> Or_error.errorf "unknown condition (%s)" (where toks)
@@ -194,6 +198,8 @@ let parse_effect (toks : tokens) : (Game_state.Effect.t list * tokens) Or_error.
     Ok ([ ApplyPendingDraws ], rest)
   | (Word "draw", _) :: (Word "until", _) :: (Word "playable", _) :: rest ->
     Ok ([ DrawUntilPlayable ], rest)
+  | (Word "draw", _) :: (Word "and", _) :: (Word "decide", _) :: rest ->
+    Ok ([ DrawAndDecide ], rest)
   | (Word "next", _) :: (Word "player", _) :: (Word "draws", _) :: (Int n, _)
     :: (Word ("card" | "cards"), _) :: rest -> Ok ([ DrawForNextPlayer n ], rest)
   | (Word "draw", _) :: (Int n, _) :: (Word ("card" | "cards"), _) :: rest

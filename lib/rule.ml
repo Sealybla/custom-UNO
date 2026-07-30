@@ -20,6 +20,8 @@ module Condition = struct
     | IsPlusTwo
     | IsPlusFour
     | ContinuesStack
+    | StackIsOpen
+    | DrewPlayableCard
     | IsPassAction
     | And of t * t
     | Or of t * t

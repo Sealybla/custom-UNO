@@ -15,20 +15,30 @@ module Server_to_client : sig
   type t =
     | Lobby_updated of { players : String.t List.t }
     | Game_started of { your_hand : Card.t List.t;
-                        top_card : Card.t; 
+                        top_card : Card.t;
                         current_color : Card.Color.t;
                         player_names : String.t List.t;
-                        current_player_name : String.t }
+                        current_player_name : String.t;
+                        pending_draws : Int.t;
+                        stacking_enabled : Bool.t }
     | Hand_updated of { your_hand : Card.t List.t }
     | Pile_updated of
         { top_card : Card.t
         ; current_color : Card.Color.t
+        ; pending_draws : Int.t
         }
-    | Turn_changed of { current_player_name : String.t }
+    | Turn_changed of
+        { current_player_name : String.t
+        ; can_pass : Bool.t
+        ; stack_value : Card.Value.t Option.t
+        }
     | Hand_counts of { counts : (String.t * Int.t) List.t }
     | Game_over of { winner_name : String.t }
     | Uno_called of { player_name : String.t }
     | Rules_updated of { player_name : String.t; num_rules : Int.t }
     | Action_rejected of { reason : String.t }
+    | Player_skipped of { player_name : String.t }
+    | Forced_draw of { player_name : String.t; count : Int.t }
+    | Direction_changed of { direction : Direction.t }
   [@@deriving sexp, compare, equal, bin_io]
 end

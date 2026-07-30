@@ -76,25 +76,34 @@ let event_json (event : Action.Server_to_client.t) =
       ; current_color
       ; player_names
       ; current_player_name
+      ; pending_draws
+      ; stacking_enabled
       } ->
     sprintf
-      {|{"type":"game_started","hand":%s,"top_card":%s,"current_color":%s,"players":%s,"current_player":%s}|}
+      {|{"type":"game_started","hand":%s,"top_card":%s,"current_color":%s,"players":%s,"current_player":%s,"pending":%d,"stacking":%b}|}
       (jlist (List.map your_hand ~f:card_json))
       (card_json top_card)
       (jstr (color_name current_color))
       (jlist (List.map player_names ~f:jstr))
       (jstr current_player_name)
+      pending_draws
+      stacking_enabled
   | Hand_updated { your_hand } ->
+    sprintf {|{"type":"hand","hand":%s}|} (jlist (List.map your_hand ~f:card_json))
+  | Pile_updated { top_card; current_color; pending_draws } ->
     sprintf
-      {|{"type":"hand","hand":%s}|}
-      (jlist (List.map your_hand ~f:card_json))
-  | Pile_updated { top_card; current_color } ->
-    sprintf
-      {|{"type":"pile","top_card":%s,"current_color":%s}|}
+      {|{"type":"pile","top_card":%s,"current_color":%s,"pending":%d}|}
       (card_json top_card)
       (jstr (color_name current_color))
-  | Turn_changed { current_player_name } ->
-    sprintf {|{"type":"turn","player":%s}|} (jstr current_player_name)
+      pending_draws
+  | Turn_changed { current_player_name; can_pass; stack_value } ->
+    sprintf
+      {|{"type":"turn","player":%s,"can_pass":%b,"stack_value":%s}|}
+      (jstr current_player_name)
+      can_pass
+      (match stack_value with
+       | Some v -> jstr (Sexp.to_string ([%sexp_of: Card.Value.t] v))
+       | None -> "null")
   | Hand_counts { counts } ->
     sprintf
       {|{"type":"hand_counts","counts":%s}|}
@@ -112,6 +121,17 @@ let event_json (event : Action.Server_to_client.t) =
       num_rules
   | Action_rejected { reason } ->
     sprintf {|{"type":"rejected","reason":%s}|} (jstr reason)
+  | Player_skipped { player_name } ->
+    sprintf {|{"type":"skipped","player":%s}|} (jstr player_name)
+  | Forced_draw { player_name; count } ->
+    sprintf
+      {|{"type":"forced_draw","player":%s,"count":%d}|}
+      (jstr player_name)
+      count
+  | Direction_changed { direction } ->
+    sprintf
+      {|{"type":"direction","clockwise":%b}|}
+      (match direction with Clockwise -> true | Counter -> false)
 ;;
 
 (* names are only unique within a room, so sessions key on both *)

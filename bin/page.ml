@@ -162,9 +162,16 @@ let html =
     box-shadow:0 0 0 5px var(--cur,#333), 0 0 26px var(--cur,transparent);
     transition:box-shadow .35s; }
   #discard .card { transform:rotate(var(--tilt,0deg)); }
+<<<<<<< HEAD
   .pile-wrap { display:flex; flex-direction:column; align-items:center; gap:.45rem; }
   .pile-label { font-size:.6rem; font-weight:900; font-style:italic; letter-spacing:.14em;
     text-transform:uppercase; color:rgba(255,255,255,.82); text-shadow:0 1px 2px rgba(0,0,0,.6); }
+=======
+  #pending-badge { position:absolute; top:-12px; right:-12px; z-index:5;
+    background:var(--c-red); color:#fff; font-weight:900; font-size:1rem;
+    border-radius:999px; padding:.25rem .6rem; border:3px solid #fff;
+    box-shadow:0 4px 8px rgba(0,0,0,.4); animation:pulse 1s ease-in-out infinite; }
+>>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
   #seats { position:absolute; inset:0; z-index:3; pointer-events:none; }
   .seat { position:absolute; transform:translate(-50%,-50%); text-align:center; }
   .seat .fan { display:flex; justify-content:center; align-items:flex-end;
@@ -193,11 +200,26 @@ let html =
   #hand { position:relative; white-space:nowrap; height:calc(var(--card-w)*1.85); display:flex; align-items:flex-end; }
   .slot { display:inline-block; position:relative; }
   .slot + .slot { margin-left:calc(-1 * var(--overlap,20px)); }
-  .slot .card { transform:rotate(var(--rot,0deg)) translateY(var(--ty,0px));
-    transform-origin:50% 130%; transition:transform .25s var(--ease-pop); cursor:pointer; }
+  .slot .card { transform:rotate(var(--rot,0deg)) translateY(calc(var(--ty,0px) + var(--lift,0px)));
+    transform-origin:50% 130%; transition:transform .25s var(--ease-pop), box-shadow .25s, filter .25s; cursor:pointer; }
   .slot:hover { z-index:7; }
   .slot:hover .card { transform:rotate(var(--rot,0deg)) translateY(calc(var(--ty,0px) - 28px)) scale(1.12); }
+  /* on your turn: playable cards lift with a white glow, unplayable dim */
+  #hand.my-turn .slot:not(.playable) .card { filter:grayscale(.4) brightness(.72); }
+  .slot.playable .card { --lift:-16px;
+    box-shadow:0 8px 16px rgba(0,0,0,.45), 0 0 0 3px #fff, 0 0 18px rgba(255,255,255,.7); }
+  /* playable AND part of a same-value stack you could chain: gold pulse */
+  .slot.stackable .card { box-shadow:0 8px 16px rgba(0,0,0,.45),
+      0 0 0 3px var(--c-yellow), 0 0 24px rgba(255,206,0,.95);
+    animation:stackpulse 1.1s ease-in-out infinite; }
+  @keyframes stackpulse { 50% { box-shadow:0 8px 16px rgba(0,0,0,.45),
+      0 0 0 5px var(--c-yellow), 0 0 34px rgba(255,206,0,1); } }
   #pass-btn { margin-bottom:calc(var(--card-w)*.4); }
+  #leave-game { position:absolute; top:12px; right:14px; z-index:6;
+    background:rgba(0,0,0,.5); color:#fff; font-size:.85rem; font-weight:800;
+    box-shadow:0 3px 0 rgba(0,0,0,.35); }
+  #leave-game:hover { background:var(--c-red); }
+  button.leave { background:rgba(255,255,255,.18); color:#fff; }
   #log { position:absolute; left:14px; bottom:12px; z-index:4; list-style:none; margin:0;
     padding:0; font-size:.78rem; opacity:.75; max-width:230px; }
   #log li { padding:.12rem 0; border-bottom:1px solid rgba(255,255,255,.12); }
@@ -233,6 +255,41 @@ let html =
     color:var(--c-yellow); -webkit-text-stroke:2px #fff;
     text-shadow:5px 5px 0 rgba(0,0,0,.4); pointer-events:none;
     animation:unopop .45s var(--ease-pop); }
+  /* big event splash: SKIPPED! / DRAW N! for the affected player,
+     REVERSED for the whole table */
+  .event-splash { position:fixed; left:50%; top:36%; z-index:45; pointer-events:none;
+    text-align:center; font-weight:900; font-style:italic;
+    transform:translate(-50%,-50%) rotate(-5deg);
+    animation:splashlife 1.8s var(--ease-pop) forwards; }
+  .event-splash .sym { font-size:clamp(4rem,16vw,7.5rem); line-height:1;
+    -webkit-text-stroke:3px #fff; text-shadow:6px 6px 0 rgba(0,0,0,.45); }
+  .event-splash .lbl { font-size:clamp(1.1rem,4vw,1.9rem); letter-spacing:.28em;
+    margin-top:.2rem; text-shadow:3px 3px 0 rgba(0,0,0,.45); color:#fff; }
+  .event-splash.red { color:var(--c-red); }
+  .event-splash.blue { color:var(--c-blue); }
+  .event-splash.mid .sym { font-size:clamp(2.6rem,10vw,4.6rem); }
+  .event-splash.spin .sym { display:inline-block; animation:spinonce .9s var(--ease-pop); }
+  @keyframes splashlife {
+    0% { opacity:0; transform:translate(-50%,-50%) scale(0) rotate(-14deg); }
+    12% { opacity:1; transform:translate(-50%,-50%) scale(1.18) rotate(-4deg); }
+    20% { transform:translate(-50%,-50%) scale(1) rotate(-5deg); }
+    78% { opacity:1; }
+    100% { opacity:0; transform:translate(-50%,-50%) scale(1.06) rotate(-5deg); } }
+  @keyframes spinonce { to { transform:rotate(360deg); } }
+  /* smaller signal over an opponent's seat */
+  .seat-badge { position:absolute; left:50%; top:-10px; z-index:6;
+    transform:translate(-50%,-100%); font-weight:900; font-size:.95rem;
+    padding:.3rem .75rem; border-radius:999px; border:2px solid #fff;
+    box-shadow:0 4px 10px rgba(0,0,0,.45); white-space:nowrap; pointer-events:none;
+    animation:badgelife 1.6s var(--ease-pop) forwards; }
+  .seat-badge.skip { background:var(--c-red); color:#fff; }
+  .seat-badge.penalty { background:var(--ink); color:var(--c-yellow); }
+  @keyframes badgelife {
+    0% { opacity:0; transform:translate(-50%,-60%) scale(0); }
+    14% { opacity:1; transform:translate(-50%,-105%) scale(1.15); }
+    24% { transform:translate(-50%,-100%) scale(1); }
+    72% { opacity:1; }
+    100% { opacity:0; transform:translate(-50%,-145%) scale(.9); } }
   #win-overlay { position:fixed; inset:0; z-index:50; background:rgba(10,6,10,.82);
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:1.4rem;
     overflow:hidden; }
@@ -294,6 +351,7 @@ let html =
       </p>
       <ul id="lobby-players"></ul>
       <button id="start-btn">Start game</button>
+      <button id="leave-lobby" class="leave">Leave lobby</button>
       <div id="lobby-status" class="ok" style="margin-top:.6rem"></div>
     </div>
     <div class="panel">
@@ -353,6 +411,8 @@ let html =
             <code>player draws</code>
             <code>player passes</code>
             <code>continues stack</code>
+            <code>stack is open</code>
+            <code>drew playable card</code>
             <code>pending draws > 0</code>
             <code>your turn</code>
             <code>always</code>
@@ -364,6 +424,8 @@ let html =
             <code>set color to declared</code>
             <code>set color to red</code>
             <code>draw 2 cards</code>
+            <code>draw and decide</code>
+            <code>next player draws 2 cards</code>
             <code>add 2 pending draws</code>
             <code>apply pending draws</code>
             <code>draw until playable</code>
@@ -386,9 +448,11 @@ let html =
 <div id="view-game" hidden>
   <div id="game-logo">UNO</div>
   <div id="game-code"></div>
+  <button id="leave-game">Leave game</button>
   <div id="table-oval"></div>
   <div id="seats"></div>
   <div class="table-center">
+<<<<<<< HEAD
     <div class="pile-wrap">
       <div id="draw-pile" class="pile" title="click to draw a card"></div>
       <span class="pile-label">Draw Pile</span>
@@ -397,11 +461,17 @@ let html =
       <div id="discard" class="pile"></div>
       <span class="pile-label">Discard</span>
     </div>
+=======
+    <div id="draw-pile" class="pile" title="draw a card">
+      <span id="pending-badge" hidden></span>
+    </div>
+    <div id="discard" class="pile"></div>
+>>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
   </div>
   <div id="turn-banner" hidden>YOUR TURN</div>
   <div id="hand-area">
     <div id="hand"></div>
-    <button id="pass-btn">Pass</button>
+    <button id="pass-btn" hidden>Pass</button>
   </div>
   <ul id="log"></ul>
 </div>
@@ -427,16 +497,22 @@ const VALUE_LABEL = {Zero:'0',One:'1',Two:'2',Three:'3',Four:'4',Five:'5',Six:'6
   Seven:'7',Eight:'8',Nine:'9',Skip:'⊘',Reverse:'⇄',Plus:'+2',Wild:'W',Wild4:'+4'};
 const COLOR_CSS = {Red:'#e0332c',Green:'#18a850',Blue:'#0a6bbd',Yellow:'#ffce00',NoColor:'#333'};
 
-const RULES_TEMPLATE = `# Standard Uno. Edit these rules to make your own variant.
-
-rule "play wild" priority 100:
+// shared building blocks: wild/skip/reverse are the same in the standard
+// variants, but the stacking variant blocks them while a stack is open
+// (mid-stack only same-value continuations are legal). +2/+4 also differ
+// (standard = victim draws immediately and is skipped; stacking = a
+// pending counter the victim can stack onto or cash out).
+const BASE_SPECIALS = `rule "play wild" priority 100:
   when card is wild and your turn
   do play the card, set color to declared, advance turn
 
+<<<<<<< HEAD
 rule "play plus two" priority 100:
   when card is plus two and (card matches color or card matches value) and your turn
   do play the card, set color from card, next player draws 2 cards, skip next player
 
+=======
+>>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
 rule "play skip" priority 100:
   when card is skip and (card matches color or card matches value) and your turn
   do play the card, set color from card, skip next player
@@ -444,20 +520,71 @@ rule "play skip" priority 100:
 rule "play reverse" priority 100:
   when card is reverse and (card matches color or card matches value) and your turn
   do play the card, set color from card, reverse direction, advance turn
+`;
+
+<<<<<<< HEAD
+rule "play plus four" priority 110:
+  when card is plus four and your turn
+  do play the card, set color to declared, next player draws 4 cards, skip next player
+=======
+const STACKING_SPECIALS = `rule "play wild" priority 100:
+  when card is wild and your turn and not stack is open
+  do play the card, set color to declared, advance turn
+
+rule "play skip" priority 100:
+  when card is skip and (card matches color or card matches value) and your turn and not stack is open
+  do play the card, set color from card, skip next player
+
+rule "play reverse" priority 100:
+  when card is reverse and (card matches color or card matches value) and your turn and not stack is open
+  do play the card, set color from card, reverse direction, advance turn
+`;
+
+const IMMEDIATE_DRAWS = `rule "play plus two" priority 100:
+  when card is plus two and (card matches color or card matches value) and your turn
+  do play the card, set color from card, next player draws 2 cards, skip next player
 
 rule "play plus four" priority 110:
   when card is plus four and your turn
   do play the card, set color to declared, next player draws 4 cards, skip next player
+`;
 
-rule "play matching card" priority 10:
+const DEFERRED_DRAWS = `rule "play plus two" priority 100:
+  when card is plus two and (card matches color or card matches value) and your turn and not stack is open
+  do play the card, set color from card, add 2 pending draws, advance turn
+
+rule "play plus four" priority 110:
+  when card is plus four and your turn and not stack is open
+  do play the card, set color to declared, add 4 pending draws, advance turn
+>>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
+
+rule "take penalty" priority 105:
+  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
+  do apply pending draws, advance turn
+`;
+
+// drawing keeps your turn only when the drawn card is playable; then you
+// may play it or pass
+const DRAW_RULE = `rule "draw a card" priority 1:
+  when player draws and your turn and not stack is open and not drew playable card
+  do draw and decide
+`;
+
+const PASS_AFTER_DRAW = `rule "pass after draw" priority 1:
+  when player passes and your turn and drew playable card
+  do advance turn
+`;
+
+const RULES_TEMPLATE =
+  '# Standard Uno. Edit these rules to make your own variant.\n\n' +
+  BASE_SPECIALS + '\n' + IMMEDIATE_DRAWS + '\n' +
+`rule "play matching card" priority 10:
   when (card matches color or card matches value) and your turn
   do play the card, set color from card, advance turn
 
-rule "draw a card" priority 1:
-  when player draws and your turn
-  do draw 1 card, advance turn
-`;
+` + DRAW_RULE + '\n' + PASS_AFTER_DRAW;
 
+<<<<<<< HEAD
 // Stacking keeps the DEFERRED +2/+4 model (a shared pending counter the victim
 // can add to), unlike the standard template's immediate draw-and-skip — so it
 // is spelled out in full rather than derived from RULES_TEMPLATE.
@@ -489,6 +616,13 @@ rule "play plus four" priority 110:
 
 rule "open stack" priority 10:
   when (card matches color or card matches value) and your turn
+=======
+const STACKING_TEMPLATE =
+  '# Stacking variant: chain same-value cards in one turn, pass to end it.\n\n' +
+  STACKING_SPECIALS + '\n' + DEFERRED_DRAWS + '\n' +
+`rule "open stack" priority 10:
+  when (card matches color or card matches value) and your turn and not stack is open
+>>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
   do play the card, set color from card, open stack
 
 rule "continue stack" priority 120:
@@ -496,21 +630,21 @@ rule "continue stack" priority 120:
   do play the card, set color from card
 
 rule "pass on stack" priority 120:
-  when player passes and your turn
+  when player passes and your turn and stack is open
   do clear stack, advance turn
 
+<<<<<<< HEAD
 rule "draw a card" priority 1:
   when player draws and your turn
   do draw 1 card, advance turn
 `;
+=======
+` + DRAW_RULE + '\n' + PASS_AFTER_DRAW;
+>>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
 
-const DRAWUNTIL_TEMPLATE = RULES_TEMPLATE.replace(
-`rule "draw a card" priority 1:
-  when player draws and your turn
-  do draw 1 card, advance turn
-`,
+const DRAWUNTIL_TEMPLATE = RULES_TEMPLATE.replace(DRAW_RULE,
 `rule "draw until playable" priority 1:
-  when player draws and your turn
+  when player draws and your turn and not drew playable card
   do draw until playable
 `);
 
@@ -527,6 +661,8 @@ const WHEN_OPTIONS = [
   ['player draws', 'the player clicks draw'],
   ['player passes', 'the player clicks pass'],
   ['continues stack', 'a card continues the stack'],
+  ['stack is open', 'a stack is open'],
+  ['drew playable card', 'the drawn card is playable'],
   ['pending draws > N', 'penalty draws are pending'],
   ['always', 'always (any action)'],
 ];
@@ -537,8 +673,14 @@ const EFF_OPTIONS = [
   ['set color to declared', 'set color to the declared color (wilds)'],
   ['set color to C', 'set color to a specific color'],
   ['draw N cards', 'draw some cards'],
+<<<<<<< HEAD
   ['next player draws N cards', 'make the next player draw'],
   ['add N pending draws', 'add penalty draws'],
+=======
+  ['draw and decide', 'draw 1; keep turn if playable'],
+  ['next player draws N cards', 'next player draws cards now'],
+  ['add N pending draws', 'add penalty draws (stackable)'],
+>>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
   ['apply pending draws', 'apply the pending penalty'],
   ['draw until playable', 'keep drawing until playable'],
   ['reverse direction', 'reverse direction'],
@@ -549,8 +691,10 @@ const EFF_OPTIONS = [
 
 let name = null;
 let code = null;
-let state = { players:[], hand:[], top:null, color:null, current:null,
-              counts:{}, inGame:false, pileStack:[] };
+const freshState = () => ({ players:[], hand:[], top:null, color:null, current:null,
+              counts:{}, inGame:false, pileStack:[], pending:0,
+              canPass:false, stackValue:null, stacking:false });
+let state = freshState();
 let pendingWild = null;
 let lastPlayedId = null;
 let snapshotMode = false;
@@ -601,6 +745,28 @@ function unoSplash(who){
   const s = $('uno-splash'); s.textContent = 'UNO! ' + who; s.hidden = false;
   clearTimeout(s._h); s._h = setTimeout(() => { s.hidden = true; }, 1700);
 }
+// big center-stage event splash (symbol + label); delay staggers a batch
+function bigSplash(sym, label, cls, delay){
+  setTimeout(() => {
+    const el = document.createElement('div');
+    el.className = 'event-splash ' + (cls || '');
+    el.innerHTML = '<div class="sym"></div><div class="lbl"></div>';
+    el.querySelector('.sym').textContent = sym;
+    el.querySelector('.lbl').textContent = label;
+    document.body.append(el);
+    setTimeout(() => el.remove(), 1900);
+  }, delay || 0);
+}
+// smaller but noticeable signal above an opponent's seat
+function seatBadge(player, text, cls){
+  const s = seatOf(player);
+  if (!s) return;
+  const b = document.createElement('div');
+  b.className = 'seat-badge ' + (cls || '');
+  b.textContent = text;
+  s.append(b);
+  setTimeout(() => b.remove(), 1700);
+}
 function showWin(winner){
   const w = $('win-overlay');
   w.querySelector('.win-name').textContent = winner;
@@ -635,7 +801,8 @@ function apply(ev, fx){
       state.inGame = true; state.hand = ev.hand; state.top = ev.top_card;
       state.color = ev.current_color; state.players = ev.players;
       state.current = ev.current_player; state.counts = {};
-      state.pileStack = [ev.top_card];
+      state.pileStack = [ev.top_card]; state.pending = ev.pending || 0;
+      state.stacking = !!ev.stacking; state.canPass = false; state.stackValue = null;
       dirty.seats = dirty.pile = dirty.hand = dirty.turn = true;
       $('log').innerHTML = ''; $('win-overlay').hidden = true;
       setView('game'); layoutSeats();
@@ -668,10 +835,16 @@ function apply(ev, fx){
         state.pileStack.push(ev.top_card);
         if (state.pileStack.length > 4) state.pileStack.shift();
       }
-      state.top = ev.top_card; state.color = ev.current_color; dirty.pile = true;
+      state.top = ev.top_card; state.color = ev.current_color;
+      state.pending = ev.pending || 0; dirty.pile = true;
       break;
     }
-    case 'turn': state.current = ev.player; dirty.turn = dirty.seats = true; break;
+    case 'turn':
+      state.current = ev.player;
+      state.canPass = !!ev.can_pass;
+      state.stackValue = ev.stack_value || null;
+      dirty.turn = dirty.seats = true;
+      break;
     case 'hand_counts': {
       if (fx){
         for (const [p, n] of ev.counts){
@@ -684,6 +857,18 @@ function apply(ev, fx){
       break;
     }
     case 'uno': unoSplash(ev.player); logLine('UNO! ' + ev.player); break;
+    case 'skipped':
+      logLine((ev.player === name ? 'you were' : ev.player + ' was') + ' skipped');
+      if (fx) fx.push({kind:'skipped', player:ev.player});
+      break;
+    case 'forced_draw':
+      logLine((ev.player === name ? 'you draw ' : ev.player + ' draws ') + ev.count);
+      if (fx) fx.push({kind:'penalty', player:ev.player, count:ev.count});
+      break;
+    case 'direction':
+      logLine('direction reversed');
+      if (fx) fx.push({kind:'reversed'});
+      break;
     case 'game_over':
       state.inGame = false;
       $('lobby-status').textContent = 'Last game: ' + ev.winner + ' won';
@@ -698,14 +883,49 @@ function apply(ev, fx){
   }
 }
 
+/* ---------- playable / stackable helpers ---------- */
+const NUMBER_VALUES = new Set(['Zero','One','Two','Three','Four','Five',
+                               'Six','Seven','Eight','Nine']);
+
+function isPlayable(card){
+  if (state.stackValue) return card.value === state.stackValue;
+  if (state.pending > 0)
+    // only stacking another +2/+4 dodges a pending penalty
+    return card.value === 'Wild4' ||
+           (card.value === 'Plus' &&
+            (card.color === state.color || (state.top && state.top.value === 'Plus')));
+  if (card.value === 'Wild' || card.value === 'Wild4') return true;
+  return card.color === state.color || (state.top && card.value === state.top.value);
+}
+
+// lift + glow every playable card; gold-pulse the ones that can be chained
+// as a same-value stack (only meaningful when the ruleset can open stacks)
+function updateHighlights(){
+  const myTurn = state.inGame && state.current === name;
+  const copies = {};
+  for (const c of state.hand) copies[c.value] = (copies[c.value] || 0) + 1;
+  for (const slot of $('hand').children){
+    const card = state.hand.find(c => String(c.id) === slot.dataset.cid);
+    const playable = !!(myTurn && card && isPlayable(card));
+    const stackable = playable && state.stacking && NUMBER_VALUES.has(card.value) &&
+      (state.stackValue ? true : copies[card.value] > 1);
+    slot.classList.toggle('playable', playable);
+    slot.classList.toggle('stackable', stackable);
+  }
+  $('hand').classList.toggle('my-turn', myTurn);
+  $('pass-btn').hidden = !(myTurn && state.canPass);
+}
+
 /* ---------- targeted renderers ---------- */
 function render(){
+  const relight = dirty.pile || dirty.hand || dirty.turn;
   if (dirty.lobby){ renderLobby(); dirty.lobby = false; }
   if (!state.inGame){ dirty.seats = dirty.pile = dirty.hand = dirty.turn = false; return; }
   if (dirty.seats){ renderSeats(); dirty.seats = false; }
   if (dirty.pile){ renderPile(); dirty.pile = false; }
   if (dirty.hand){ renderHand(); dirty.hand = false; }
   if (dirty.turn){ $('turn-banner').hidden = state.current !== name; dirty.turn = false; }
+  if (relight) updateHighlights();
 }
 
 function renderLobby(){
@@ -781,12 +1001,18 @@ function renderPile(){
     d.append(el);
   }
   d.style.setProperty('--cur', COLOR_CSS[state.color] || '#333');
+<<<<<<< HEAD
   // give the draw pile a visible face-down stack (3 backs = what the CSS
   // nth-child rules style). Build once; rebuilding each pile update would
   // interrupt the hover-lift animation.
   const dp = $('draw-pile');
   if (!dp.children.length)
     for (let i = 0; i < 3; i++) dp.append(cardBackEl());
+=======
+  const badge = $('pending-badge');
+  badge.hidden = !(state.pending > 0);
+  badge.textContent = '+' + state.pending;
+>>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
 }
 
 function makeSlot(card){
@@ -860,6 +1086,22 @@ function flyClone(node, from, to, opts = {}){
 }
 
 function runFx(fx){
+  // a +2/+4 victim is skipped by the same play; the DRAW splash already
+  // says so, so drop their separate skip signal
+  const penalized = new Set(fx.filter(f => f.kind === 'penalty').map(f => f.player));
+  let splashes = 0;
+  const stagger = () => 300 * splashes++;
+  for (const f of fx){
+    if (f.kind === 'skipped' && !penalized.has(f.player)){
+      if (f.player === name) bigSplash('⊘', 'SKIPPED!', 'red', stagger());
+      else seatBadge(f.player, '⊘ skipped', 'skip');
+    } else if (f.kind === 'penalty'){
+      if (f.player === name) bigSplash('+' + f.count, 'DRAW ' + f.count + '!', 'red', stagger());
+      else seatBadge(f.player, '+' + f.count + ' cards', 'penalty');
+    } else if (f.kind === 'reversed'){
+      bigSplash('⇄', 'REVERSED', 'blue mid spin', stagger());
+    }
+  }
   for (const f of fx){
     if (f.kind === 'ownPlay' || f.kind === 'oppPlay'){
       const top = $('discard').lastElementChild;
@@ -928,6 +1170,28 @@ $('start-btn').onclick = async () => {
   const r = await api('/api/start', {method:'POST'}); if (!r.ok) toast(r.error);
 };
 $('win-back').onclick = () => { $('win-overlay').hidden = true; setView('lobby'); };
+
+/* ---------- leaving the party ---------- */
+// tells the server we're gone (mid-game a bot takes over; in the lobby the
+// seat frees up) and resets this tab back to the join screen
+async function leaveParty(){
+  try { await api('/api/leave', {method:'POST'}); } catch (e){ /* leaving anyway */ }
+  if (polling){ clearInterval(polling); polling = null; }
+  sessionStorage.removeItem('uno-name');
+  sessionStorage.removeItem('uno-code');
+  name = null; code = null;
+  state = freshState();
+  pendingWild = null; lastPlayedId = null;
+  $('win-overlay').hidden = true;
+  $('color-modal').hidden = true;
+  $('join-err').textContent = '';
+  $('lobby-status').textContent = '';
+  setView('join');
+}
+$('leave-lobby').onclick = leaveParty;
+$('leave-game').onclick = () => {
+  if (confirm('Leave the game? A bot will take over your hand.')) leaveParty();
+};
 $('rules-btn').onclick = async () => {
   const r = await api('/api/rules', {method:'POST', body: $('rules-text').value});
   const s = $('rules-status');
@@ -1109,6 +1373,10 @@ window.addEventListener('resize', () => {
   clearTimeout(resizeT);
   resizeT = setTimeout(() => { setFan(); layoutSeats(); }, 120);
 });
+
+// the draw pile is three static card backs (the badge span stays on top)
+for (let i = 0; i < 3; i++)
+  $('draw-pile').insertBefore(cardBackEl(), $('pending-badge'));
 
 $('rules-text').value = RULES_TEMPLATE;
 checkRules();

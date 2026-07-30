@@ -4,10 +4,10 @@ open Or_error.Let_syntax
 module Ruleset = struct
   type t = Rule.t list [@@deriving sexp, compare, equal, bin_io]
 
-  (* special-card rules shared by EVERY variant: wild, skip, reverse. The +2/+4
-     draw rules are intentionally NOT here — they differ between the standard
-     and stacking rulesets (immediate vs deferred), so each variant appends its
-     own below. *)
+  (* special-card rules shared by EVERY variant: wild, skip, reverse. The
+     +2/+4 draw rules are intentionally NOT here — they differ between the
+     standard and stacking rulesets (immediate vs deferred), so each variant
+     appends its own below. *)
   let base_special_rules : t =
     [ { id = 1
       ; priority = 100
@@ -22,7 +22,9 @@ module Ruleset = struct
     ; { id = 3
       ; priority = 100
       ; condition =
-          And (IsSkip, And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn))
+          And
+            ( IsSkip
+            , And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn) )
       ; actions =
           [ Mutate PlayTriggeringCard
           ; Mutate CheckWinner
@@ -34,7 +36,9 @@ module Ruleset = struct
     ; { id = 4
       ; priority = 100
       ; condition =
-          And (IsReverse, And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn))
+          And
+            ( IsReverse
+            , And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn) )
       ; actions =
           [ Mutate PlayTriggeringCard
           ; Mutate CheckWinner
@@ -47,12 +51,15 @@ module Ruleset = struct
   ;;
 
   (* standard +2/+4: the NEXT player draws immediately and is skipped (two
-     AdvanceTurns). Used by the default and draw-until rulesets. *)
+     AdvanceTurns). Used by the default and draw-until rulesets. The +2 must
+     match color or value like any other card; +4 is always playable. *)
   let immediate_draw_rules : t =
     [ { id = 2
       ; priority = 100
       ; condition =
-          And (IsPlusTwo, And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn))
+          And
+            ( IsPlusTwo
+            , And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn) )
       ; actions =
           [ Mutate PlayTriggeringCard
           ; Mutate CheckWinner
@@ -77,14 +84,67 @@ module Ruleset = struct
     ]
   ;;
 
+  (* the stacking variant's wild/skip/reverse: same as the base specials but
+     blocked while a stack is open, so mid-stack the only legal plays are
+     same-value continuations (or a pass to close the stack) *)
+  let stacking_special_rules : t =
+    [ { id = 1
+      ; priority = 100
+      ; condition = And (IsWildCard, And (IsPlayerTurn, Not StackIsOpen))
+      ; actions =
+          [ Mutate PlayTriggeringCard
+          ; Mutate CheckWinner
+          ; Mutate SetDeclaredColor
+          ; Mutate AdvanceTurn
+          ]
+      }
+    ; { id = 3
+      ; priority = 100
+      ; condition =
+          And
+            ( IsSkip
+            , And
+                ( Or (MatchesTopColor, MatchesTopValue)
+                , And (IsPlayerTurn, Not StackIsOpen) ) )
+      ; actions =
+          [ Mutate PlayTriggeringCard
+          ; Mutate CheckWinner
+          ; Mutate SetColorFromTriggeringCard
+          ; Mutate AdvanceTurn
+          ; Mutate AdvanceTurn
+          ]
+      }
+    ; { id = 4
+      ; priority = 100
+      ; condition =
+          And
+            ( IsReverse
+            , And
+                ( Or (MatchesTopColor, MatchesTopValue)
+                , And (IsPlayerTurn, Not StackIsOpen) ) )
+      ; actions =
+          [ Mutate PlayTriggeringCard
+          ; Mutate CheckWinner
+          ; Mutate SetColorFromTriggeringCard
+          ; Mutate ReverseDirection
+          ; Mutate AdvanceTurn
+          ]
+      }
+    ]
+  ;;
+
   (* stacking +2/+4: bump a shared counter (rule 5 cashes it out on the
      victim's turn), so the victim can stack their own +2/+4 first. Only used
-     by the stacking variant. *)
+     by the stacking variant; blocked mid-stack like the other specials. *)
   let deferred_draw_rules : t =
     [ { id = 2
       ; priority = 100
       ; condition =
-          And (IsPlusTwo, And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn))
+          And
+            ( IsPlusTwo
+            , And
+                ( Or (MatchesTopColor, MatchesTopValue)
+                , And (IsPlayerTurn, Not StackIsOpen) ) )
       ; actions =
           [ Mutate PlayTriggeringCard
           ; Mutate CheckWinner
@@ -95,7 +155,7 @@ module Ruleset = struct
       }
     ; { id = 8
       ; priority = 110
-      ; condition = And (IsPlusFour, IsPlayerTurn)
+      ; condition = And (IsPlusFour, And (IsPlayerTurn, Not StackIsOpen))
       ; actions =
           [ Mutate PlayTriggeringCard
           ; Mutate CheckWinner
@@ -104,9 +164,15 @@ module Ruleset = struct
           ; Mutate AdvanceTurn
           ]
       }
+      (* while a penalty is pending, anything except stacking another +2/+4
+         takes the cards - priority above the specials so a wild or skip
+         cannot dodge it *)
     ; { id = 5
-      ; priority = 90
-      ; condition = And (PendingDrawsGreaterThan 0, IsPlayerTurn)
+      ; priority = 105
+      ; condition =
+          And
+            ( PendingDrawsGreaterThan 0
+            , And (IsPlayerTurn, Not (Or (IsPlusTwo, IsPlusFour))) )
       ; actions = [ Mutate ApplyPendingDraws; Mutate AdvanceTurn ]
       }
     ]
@@ -126,11 +192,16 @@ module Ruleset = struct
     }
   ;;
 
-  (* stacking: playing a card opens a same-value stack, turn stays open *)
+  (* stacking: playing a card opens a same-value stack, turn stays open. Only
+     fires when no stack is open yet — otherwise a same-color card could
+     sneak into an open stack by "re-opening" it. *)
   let stack_open_rule : Rule.t =
     { id = 6
     ; priority = 10
-    ; condition = And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn)
+    ; condition =
+        And
+          ( Or (MatchesTopColor, MatchesTopValue)
+          , And (IsPlayerTurn, Not StackIsOpen) )
     ; actions =
         [ Mutate PlayTriggeringCard
         ; Mutate CheckWinner
@@ -155,21 +226,35 @@ module Ruleset = struct
     }
   ;;
 
-  (* pass while stacking — clear the stack and end the turn *)
+  (* pass while a stack is open — clear the stack and end the turn *)
   let stack_pass_rule : Rule.t =
     { id = 21
     ; priority = 120
-    ; condition = And (IsPassAction, IsPlayerTurn)
+    ; condition = And (IsPassAction, And (IsPlayerTurn, StackIsOpen))
     ; actions = [ Mutate ClearStackingValue; Mutate AdvanceTurn ]
     }
   ;;
 
-  (* draw one card and pass — standard Uno *)
-  let draw_one_rule : Rule.t =
+  (* draw one card; a playable draw keeps the turn open (play it or pass), an
+     unplayable draw ends the turn. Blocked while deciding or mid-stack. *)
+  let draw_decide_rule : Rule.t =
     { id = 7
     ; priority = 1
-    ; condition = And (IsDrawAction, IsPlayerTurn)
-    ; actions = [ Mutate (ExecuteDraw 1); Mutate AdvanceTurn ]
+    ; condition =
+        And
+          ( IsDrawAction
+          , And (IsPlayerTurn, And (Not StackIsOpen, Not DrewPlayableCard))
+          )
+    ; actions = [ Mutate DrawAndDecide ]
+    }
+  ;;
+
+  (* after drawing a playable card, passing ends the turn *)
+  let pass_after_draw_rule : Rule.t =
+    { id = 9
+    ; priority = 1
+    ; condition = And (IsPassAction, And (IsPlayerTurn, DrewPlayableCard))
+    ; actions = [ Mutate AdvanceTurn ]
     }
   ;;
 
@@ -177,23 +262,43 @@ module Ruleset = struct
   let draw_until_rule : Rule.t =
     { id = 7
     ; priority = 1
-    ; condition = And (IsDrawAction, IsPlayerTurn)
+    ; condition = And (IsDrawAction, And (IsPlayerTurn, Not DrewPlayableCard))
     ; actions = [ Mutate DrawUntilPlayable ]
     }
   ;;
 
   let default : t =
-    base_special_rules @ immediate_draw_rules @ [ generic_play_rule; draw_one_rule ]
+    base_special_rules
+    @ immediate_draw_rules
+    @ [ generic_play_rule; draw_decide_rule; pass_after_draw_rule ]
   ;;
 
   let draw_until_variant : t =
-    base_special_rules @ immediate_draw_rules @ [ generic_play_rule; draw_until_rule ]
+    base_special_rules
+    @ immediate_draw_rules
+    @ [ generic_play_rule; draw_until_rule; pass_after_draw_rule ]
   ;;
 
   let stacking_variant : t =
-    base_special_rules
+    stacking_special_rules
     @ deferred_draw_rules
-    @ [ stack_open_rule; stack_continue_rule; stack_pass_rule; draw_one_rule ]
+    @ [ stack_open_rule
+      ; stack_continue_rule
+      ; stack_pass_rule
+      ; draw_decide_rule
+      ; pass_after_draw_rule
+      ]
+  ;;
+
+  (* does any rule open a stack? tells the UI to mark stackable cards *)
+  let uses_stacking (t : t) : bool =
+    let rec opens_stack (act : Rule.Action_AST.t) =
+      match act with
+      | Mutate SetStackingValue -> true
+      | Mutate _ | Chain_event _ -> false
+      | Sequence acts -> List.exists acts ~f:opens_stack
+    in
+    List.exists t ~f:(fun rule -> List.exists rule.actions ~f:opens_stack)
   ;;
 end
 
@@ -241,39 +346,40 @@ let rec eval_condition
        (match Card.get_value card with Wild | Wild4 -> true | _ -> false)
      | _ -> false)
   | PendingDrawsGreaterThan n -> state.pending_draws > n
-  | IsPlayerTurn -> 
-    (match evt with 
-    | CardPlayed { player; _} | DrawRequested { player } | PassRequested { player } -> 
-      Int.equal (Player.get_id player) state.turn)
-  | IsSkip -> 
-    (match evt with 
-    | CardPlayed {card; _ } -> Card.Value.equal (Card.get_value card) Skip
-    | _ -> false)
-  | IsReverse -> 
-    (match evt with 
-    | CardPlayed { card; _} -> Card.Value.equal (Card.get_value card) Reverse 
-    | _ -> false)
-  | IsDrawAction -> 
-    (match evt with 
-    | DrawRequested _ -> true 
-    | _ -> false )
-  | IsPlusTwo -> 
-    (match evt with 
-    | CardPlayed { card; _ } -> Card.Value.equal (Card.get_value card) Plus 
-    | _ -> false)
-  | IsPlusFour -> 
-    (match evt with 
-    | CardPlayed {card; _} -> Card.Value.equal (Card.get_value card) Wild4 
-    | _ -> false)
-  | ContinuesStack -> 
-    (match evt with 
-    | CardPlayed {card ; _} -> 
-      (match state.stacking_value with 
-      | Some v -> Card.Value.equal (Card.get_value card) v 
-      | None -> false) 
-    | _ -> false)
-  | IsPassAction -> 
-    (match evt with PassRequested _ -> true | _ -> false)
+  | IsPlayerTurn ->
+    (match evt with
+     | CardPlayed { player; _ }
+     | DrawRequested { player }
+     | PassRequested { player } ->
+       Int.equal (Player.get_id player) state.turn)
+  | IsSkip ->
+    (match evt with
+     | CardPlayed { card; _ } -> Card.Value.equal (Card.get_value card) Skip
+     | _ -> false)
+  | IsReverse ->
+    (match evt with
+     | CardPlayed { card; _ } ->
+       Card.Value.equal (Card.get_value card) Reverse
+     | _ -> false)
+  | IsDrawAction -> (match evt with DrawRequested _ -> true | _ -> false)
+  | IsPlusTwo ->
+    (match evt with
+     | CardPlayed { card; _ } -> Card.Value.equal (Card.get_value card) Plus
+     | _ -> false)
+  | IsPlusFour ->
+    (match evt with
+     | CardPlayed { card; _ } -> Card.Value.equal (Card.get_value card) Wild4
+     | _ -> false)
+  | ContinuesStack ->
+    (match evt with
+     | CardPlayed { card; _ } ->
+       (match state.stacking_value with
+        | Some v -> Card.Value.equal (Card.get_value card) v
+        | None -> false)
+     | _ -> false)
+  | StackIsOpen -> Option.is_some state.stacking_value
+  | DrewPlayableCard -> state.drew_playable
+  | IsPassAction -> (match evt with PassRequested _ -> true | _ -> false)
   | And (c1, c2) ->
     eval_condition state evt c1 && eval_condition state evt c2
   | Or (c1, c2) -> eval_condition state evt c1 || eval_condition state evt c2
@@ -321,13 +427,32 @@ let rec process_event
       eval_condition state evt rule.condition)
   in
   match matching_rules with
-    | [] ->
-      (* short and clean: this text is shown to the player who acted *)
-      Or_error.error_string "Illegal move: no rule allows that right now"
-    | rule :: _ ->
-      List.fold_result rule.actions ~init:state ~f:(fun curr_state act ->
-        let%bind next_state, chained_events = eval_action curr_state act ~evt in
-        List.fold_result chained_events ~init:next_state ~f:(process_event rules))
+  | [] ->
+    (* short and clean: this text is shown to the player who acted *)
+    Or_error.error_string "Illegal move: no rule allows that right now"
+  | rule :: _ ->
+    List.fold_result rule.actions ~init:state ~f:(fun curr_state act ->
+      let%bind next_state, chained_events =
+        eval_action curr_state act ~evt
+      in
+      List.fold_result
+        chained_events
+        ~init:next_state
+        ~f:(process_event rules))
+;;
+
+(* would any rule accept a Pass from the current player right now? Used by
+   the UI to decide whether the pass button is worth showing. *)
+let pass_available (rules : Ruleset.t) (state : Game_state.t) : bool =
+  match state.winner with
+  | Some _ -> false
+  | None ->
+    (match List.nth state.players state.turn with
+     | None -> false
+     | Some player ->
+       let evt = Event.PassRequested { player } in
+       List.exists rules ~f:(fun (rule : Rule.t) ->
+         eval_condition state evt rule.condition))
 ;;
 
 let apply_action

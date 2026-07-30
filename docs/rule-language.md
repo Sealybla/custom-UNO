@@ -7,7 +7,7 @@ Target: `Rule_parser.parse_ruleset : string -> Rule_engine.Ruleset.t Or_error.t`
 
 ```
 rule "play plus two" priority 100:
-  when card is plus two and your turn
+  when card is plus two and (card matches color or card matches value) and your turn
   do play the card, set color from card, add 2 pending draws, advance turn
 ```
 
@@ -36,6 +36,8 @@ rule "play plus two" priority 100:
 | `card is plus four` | `IsPlusFour` |
 | `pending draws > N` | `PendingDrawsGreaterThan N` |
 | `continues stack` | `ContinuesStack` |
+| `stack is open` | `StackIsOpen` |
+| `drew playable card` | `DrewPlayableCard` |
 | `player draws` | `IsDrawAction` |
 | `player passes` | `IsPassAction` |
 | `<c> and <c>` / `<c> or <c>` / `not <c>` / `( <c> )` | `And` / `Or` / `Not` / grouping |
@@ -54,8 +56,10 @@ Parentheses override.
 | `add N pending draws` | `AddPendingDraws N` |
 | `apply pending draws` | `ApplyPendingDraws` |
 | `draw N` / `draw N cards` | `ExecuteDraw N` |
-| `draw until playable` | `DrawUntilPlayable` |
-| `reverse direction` | `ReverseDirection` |
+| `next player draws N cards` | `DrawForNextPlayer N` (turn unchanged) |
+| `draw until playable` | `DrawUntilPlayable` (sets the drew-playable flag) |
+| `draw and decide` | `DrawAndDecide` (draw 1; playable → keep turn + set flag, else advance) |
+| `reverse direction` | `ReverseDirection` (with 2 players also skips the opponent, per official Uno) |
 | `open stack` | `SetStackingValue` |
 | `clear stack` | `ClearStackingValue` |
 | `advance turn` | `AdvanceTurn` |
@@ -90,32 +94,71 @@ phrases by peeking ahead (e.g. `card` `is` `plus` `two` is one atom).
 
 ## Validation: the current rulesets, rewritten
 
-Shared special-card rules (`Ruleset.play_rules`):
+Shared special-card rules (`Ruleset.base_special_rules`; wild is always
+playable, skip/reverse must match like any other card):
 
 ```
 rule "play wild" priority 100:
   when card is wild and your turn
   do play the card, set color to declared, advance turn
 
-rule "play plus two" priority 100:
-  when card is plus two and your turn
-  do play the card, set color from card, add 2 pending draws, advance turn
-
 rule "play skip" priority 100:
-  when card is skip and your turn
+  when card is skip and (card matches color or card matches value) and your turn
   do play the card, set color from card, skip next player
 
 rule "play reverse" priority 100:
-  when card is reverse and your turn
+  when card is reverse and (card matches color or card matches value) and your turn
   do play the card, set color from card, reverse direction, advance turn
+```
 
-rule "take penalty" priority 90:
-  when pending draws > 0 and your turn
-  do apply pending draws, advance turn
+The +2/+4 rules differ per variant. Standard (and draw-until) use the
+immediate form (`Ruleset.immediate_draw_rules`) — the victim draws on the
+spot and is skipped:
+
+```
+rule "play plus two" priority 100:
+  when card is plus two and (card matches color or card matches value) and your turn
+  do play the card, set color from card, next player draws 2 cards, skip next player
 
 rule "play plus four" priority 110:
   when card is plus four and your turn
+  do play the card, set color to declared, next player draws 4 cards, skip next player
+```
+
+The stacking variant uses the deferred form
+(`Ruleset.deferred_draw_rules`) — a pending counter the victim can stack
+onto, with the penalty rule outranking everything except another +2/+4.
+Its specials (and the +2/+4 rules) all carry `and not stack is open`
+(`Ruleset.stacking_special_rules`): while a same-value stack is open, only
+continuations or a pass are legal, so a same-color card can't sneak in
+mid-stack:
+
+```
+rule "play plus two" priority 100:
+  when card is plus two and (card matches color or card matches value) and your turn and not stack is open
+  do play the card, set color from card, add 2 pending draws, advance turn
+
+rule "play plus four" priority 110:
+  when card is plus four and your turn and not stack is open
   do play the card, set color to declared, add 4 pending draws, advance turn
+
+rule "take penalty" priority 105:
+  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
+  do apply pending draws, advance turn
+```
+
+Every variant handles drawing the same way — one card, and a playable
+draw keeps the turn open so the player can play it or pass (this is the
+only time a bare pass is legal in the non-stacking variants):
+
+```
+rule "draw a card" priority 1:
+  when player draws and your turn and not stack is open and not drew playable card
+  do draw and decide
+
+rule "pass after draw" priority 1:
+  when player passes and your turn and drew playable card
+  do advance turn
 ```
 
 Default variant adds:
@@ -124,17 +167,14 @@ Default variant adds:
 rule "play matching card" priority 10:
   when (card matches color or card matches value) and your turn
   do play the card, set color from card, advance turn
-
-rule "draw a card" priority 1:
-  when player draws and your turn
-  do draw 1 card, advance turn
 ```
 
-Draw-until variant replaces "draw a card" with:
+Draw-until variant replaces "draw a card" with (`draw until playable`
+also sets the drew-playable flag when it stops on a playable card):
 
 ```
 rule "draw until playable" priority 1:
-  when player draws and your turn
+  when player draws and your turn and not drew playable card
   do draw until playable
 ```
 
@@ -142,7 +182,7 @@ Stacking variant replaces "play matching card" with:
 
 ```
 rule "open stack" priority 10:
-  when (card matches color or card matches value) and your turn
+  when (card matches color or card matches value) and your turn and not stack is open
   do play the card, set color from card, open stack
 
 rule "continue stack" priority 120:
@@ -150,7 +190,7 @@ rule "continue stack" priority 120:
   do play the card, set color from card
 
 rule "pass on stack" priority 120:
-  when player passes and your turn
+  when player passes and your turn and stack is open
   do clear stack, advance turn
 ```
 
@@ -208,7 +248,17 @@ client submits with `rules <file>`.
 
 The web UI (served at `http://localhost:<port+1>/`) is click-only
 gameplay: clickable hand, draw pile, pass button, and a color picker for
-wilds. The lobby's house-rules editor is the one typing surface — it
+wilds. On your turn every playable card lifts with a glow; cards that
+could be chained as a same-value stack pulse gold (the server tells the
+page whether the ruleset can open stacks via `stacking_enabled` on
+`Game_started`). The pass button only appears when a pass is actually
+legal: `Turn_changed` carries `can_pass` (the server dry-runs the rule
+conditions against a Pass) and `stack_value` (the open stack's value, if
+any). A "Leave game" button (and the tab-close beacon) hands the seat to
+a bot mid-game — bots continue stacks, stack +2/+4s onto pending
+penalties, and pass when a stack runs dry; when the last human leaves,
+the game is abandoned and the room closes. The lobby's house-rules editor
+is the one typing surface — it
 starts from the standard-rules template and submits to `/api/rules`,
 rendering parse errors inline. Browsers reach the game through the HTTP
 → RPC bridge in `bin/web.ml` (per-player RPC connection + polled JSON
