@@ -28,6 +28,7 @@ module Room = struct
     ; request_writer : Queued_request.t Pipe.Writer.t
     ; mutable action_seq : int (* bumped per applied action; stales timers *)
     ; mutable autopilot : string option (* player whose turn timed out *)
+    ; mutable auto_passes : int (* consecutive server-made formality passes *)
     }
 end
 
@@ -266,6 +267,35 @@ let schedule_turn_driver ?(after_rejection = false) (room : Room.t) state =
            enqueue_auto_action room st current)))
 ;;
 
+(* The seat whose turn it is either has real choices - broadcast the turn
+   and arm its driver - or can only click done, a formality the server
+   performs at once (e.g. mid-stack with nothing left to continue). The
+   cap stops a pathological all-pass ruleset from looping forever. *)
+let drive_or_auto_pass (room : Room.t) state =
+  match name_of_player_id state state.Game_state.turn with
+  | None -> ()
+  | Some current ->
+    if Rule_engine.only_pass_available room.ruleset state
+       && room.auto_passes < List.length state.Game_state.players
+    then (
+      room.auto_passes <- room.auto_passes + 1;
+      Core.print_s
+        [%message
+          "Auto-pass: only legal move" (room.code : string) (current : string)];
+      don't_wait_for
+        (Pipe.write_if_open
+           room.request_writer
+           { Queued_request.player_name = current
+           ; action = Action.Client_to_server.Pass
+           ; enqueued_at = Time_ns.now ()
+           ; from_timer = true
+           }))
+    else (
+      room.auto_passes <- 0;
+      broadcast room (turn_changed_event room state);
+      schedule_turn_driver room state)
+;;
+
 (* Compare the states around one action and broadcast what happened to whom:
    who was skipped, who was forced to draw, and direction flips. These are
    pure notifications - the UI turns them into splashes and seat badges. *)
@@ -422,12 +452,7 @@ let start_engine_loop t (room : Room.t) request_reader =
                             { players = Hashtbl.keys room.clients });
                        maybe_remove_room t room
                      | None -> ())
-                  | None ->
-                    (match name_of_player_id next_state next_state.turn with
-                     | None -> ()
-                     | Some _ ->
-                       broadcast room (turn_changed_event room next_state);
-                       schedule_turn_driver room next_state))))))
+                  | None -> drive_or_auto_pass room next_state)))))
 ;;
 
 let code_alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -455,6 +480,7 @@ let create_room t =
     ; request_writer
     ; action_seq = 0
     ; autopilot = None
+    ; auto_passes = 0
     }
   in
   Hashtbl.set t.rooms ~key:code ~data:room;
@@ -645,9 +671,10 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                   | Ok initial_state ->
                     room.game_state <- Some initial_state;
                     room.autopilot <- None;
+                    room.auto_passes <- 0;
                     broadcast_game_started room initial_state;
                     (* the first player's turn timer starts now *)
-                    schedule_turn_driver room initial_state;
+                    drive_or_auto_pass room initial_state;
                     return (Ok ()))))
         ]
       ~on_unknown_rpc:`Close_connection

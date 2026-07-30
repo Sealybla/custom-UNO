@@ -462,3 +462,22 @@ let apply_action
   let%bind evt = event_of_client_action state ~player ~action in
   process_event rules state evt
 ;;
+
+(* Simulates every move the current player could make. When a pass is legal
+   but no card play and no draw is, pressing the done button is a formality
+   the server performs for them (e.g. mid-stack with nothing to continue). *)
+let only_pass_available (rules : Ruleset.t) (state : Game_state.t) : bool =
+  pass_available rules state
+  &&
+  match List.nth state.players state.turn with
+  | None -> false
+  | Some player ->
+    let try_action action =
+      apply_action rules state ~player_id:state.turn ~action |> Or_error.is_ok
+    in
+    (not
+       (List.exists (Player.get_hand player) ~f:(fun card_id ->
+          (* any real color works for simulating a wild's declaration *)
+          try_action (Play { card_id; declared_color = Some Red }))))
+    && not (try_action Draw)
+;;

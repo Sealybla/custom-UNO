@@ -47,3 +47,7 @@ val apply_action
   -> player_id:int
   -> action:Action.Client_to_server.t
   -> Game_state.t Or_error.t
+
+(* true when a pass is the current player's only legal move (no card play
+   and no draw would be accepted) - the server then passes for them *)
+val only_pass_available : Ruleset.t -> Game_state.t -> bool

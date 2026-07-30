@@ -353,6 +353,68 @@ let%expect_test "draw until playable: one card per click, play is the only exit"
 ;;
 
 
+(* mid-stack with no continuation in hand, done is a formality: the server
+   detects pass as the only legal move; holding another card of the stacked
+   value (or a playable drawn card in the default rules) keeps real choices *)
+let%expect_test "only-pass detection" =
+  let top = { Card.color = Red; value = Three; id = 700 } in
+  let seven = { Card.color = Red; value = Seven; id = 701 } in
+  let other_seven = { Card.color = Blue; value = Seven; id = 702 } in
+  let off_card = { Card.color = Blue; value = Two; id = 703 } in
+  let rules = Rule_engine.Ruleset.stacking_variant in
+  let open_stack hand =
+    let t =
+      Game_state.for_testing
+        ~player_hands:[ "a", hand; "b", [] ]
+        ~top_card:top
+        ~draw_pile:(Game_state.create_card_deck ())
+        ~pending_draws:0
+        ~turn:0
+    in
+    Rule_engine.apply_action rules t ~player_id:0
+      ~action:(Play { card_id = 701; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  let stuck = open_stack [ seven; off_card ] in
+  print_s
+    [%message
+      "no continuation" (Rule_engine.only_pass_available rules stuck : bool)];
+  let choices = open_stack [ seven; other_seven ] in
+  print_s
+    [%message
+      "another seven in hand"
+        (Rule_engine.only_pass_available rules choices : bool)];
+  (* default rules: a drawn playable card can always be played, so a pass
+     there is never the only move *)
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", []; "b", [] ]
+      ~top_card:{ Card.color = Red; value = Five; id = 710 }
+      ~draw_pile:[ { Card.color = Red; value = Nine; id = 711 } ]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action Rule_engine.Ruleset.default t ~player_id:0
+      ~action:Draw
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message
+      "drew a playable card"
+        (Rule_engine.pass_available Rule_engine.Ruleset.default t : bool)
+        (Rule_engine.only_pass_available Rule_engine.Ruleset.default t : bool)];
+  [%expect
+    {|
+    ("no continuation" ("Rule_engine.only_pass_available rules stuck" true))
+    ("another seven in hand"
+     ("Rule_engine.only_pass_available rules choices" false))
+    ("drew a playable card"
+     ("Rule_engine.pass_available Rule_engine.Ruleset.default t" true)
+     ("Rule_engine.only_pass_available Rule_engine.Ruleset.default t" false))
+    |}]
+;;
+
 let%expect_test "stacking same number plays multiple in one turn" =
   let s1 = { Card.color = Red; value = Seven; id = 500 } in
   let s2 = { Card.color = Blue; value = Seven; id = 501 } in
