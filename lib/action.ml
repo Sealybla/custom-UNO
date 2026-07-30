@@ -37,6 +37,9 @@ module Server_to_client = struct
     | Hand_counts of { counts : (String.t * Int.t) List.t }
     | Game_over of { winner_name : String.t }
     | Uno_called of { player_name : String.t }
+    (* the current player is running out of turn time; at zero the server
+       plays for them *)
+    | Turn_countdown of { player_name : String.t; seconds : Int.t }
     | Rules_updated of { player_name : String.t; num_rules : Int.t }
     | Action_rejected of { reason : String.t }
     (* pure-notification events driving the table animations *)

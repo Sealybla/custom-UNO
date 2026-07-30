@@ -232,6 +232,16 @@ let html =
     border-radius:999px; box-shadow:0 6px 0 rgba(0,0,0,.3); z-index:70;
     transition:transform .3s var(--ease-pop); pointer-events:none; max-width:88vw; }
   #toast.show { transform:translateX(-50%) translateY(0); }
+  #turn-countdown { position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    background:var(--ink); color:#fff; font-weight:800; padding:.5rem 1.1rem .5rem .7rem;
+    border-radius:999px; border:3px solid var(--c-red); z-index:65;
+    display:flex; align-items:center; gap:.55rem;
+    box-shadow:0 6px 0 rgba(0,0,0,.3), 0 0 22px rgba(224,51,44,.55);
+    animation:cdpop .25s var(--ease-pop); pointer-events:none; max-width:88vw; }
+  #turn-countdown .num { background:var(--c-red); color:#fff; font-weight:900;
+    font-size:1.15rem; width:2rem; height:2rem; border-radius:50%; flex:none;
+    display:grid; place-items:center; animation:pulse .5s ease-in-out infinite; }
+  @keyframes cdpop { from { transform:translateX(-50%) scale(.6); opacity:0; } }
   #color-modal { position:fixed; inset:0; background:rgba(0,0,0,.65);
     display:flex; align-items:center; justify-content:center; z-index:30; }
   #color-modal .wheel { width:min(300px,74vw); aspect-ratio:1; border-radius:50%;
@@ -452,6 +462,7 @@ let html =
     <div id="discard" class="pile"></div>
   </div>
   <div id="turn-banner" hidden>YOUR TURN</div>
+  <div id="turn-countdown" hidden><span class="num"></span><span class="msg"></span></div>
   <div id="hand-area">
     <div id="hand"></div>
     <button id="pass-btn" hidden>Done</button>
@@ -674,6 +685,23 @@ function unoSplash(who){
   const s = $('uno-splash'); s.textContent = 'UNO! ' + who; s.hidden = false;
   clearTimeout(s._h); s._h = setTimeout(() => { s.hidden = true; }, 1700);
 }
+// server-driven turn countdown: ticks locally, cleared by the next action
+let cdTimer = null;
+function showCountdown(player, seconds){
+  const el = $('turn-countdown');
+  const render = s => {
+    el.querySelector('.num').textContent = s;
+    el.querySelector('.msg').textContent = player === name
+      ? 'play now or a card is played for you!'
+      : player + ' is out of time soon…';
+  };
+  clearInterval(cdTimer);
+  let s = seconds; render(s); el.hidden = false;
+  cdTimer = setInterval(() => { s--; if (s < 1) hideCountdown(); else render(s); }, 1000);
+}
+function hideCountdown(){
+  clearInterval(cdTimer); cdTimer = null; $('turn-countdown').hidden = true;
+}
 // big center-stage event splash (symbol + label); delay staggers a batch
 function bigSplash(sym, label, cls, delay){
   setTimeout(() => {
@@ -727,6 +755,7 @@ function apply(ev, fx){
       if (!state.inGame) setView('lobby');
       break;
     case 'game_started':
+      hideCountdown();
       state.inGame = true; state.hand = ev.hand; state.top = ev.top_card;
       state.color = ev.current_color; state.players = ev.players;
       state.current = ev.current_player; state.counts = {};
@@ -774,7 +803,13 @@ function apply(ev, fx){
       state.current = ev.player;
       state.canPass = !!ev.can_pass;
       state.stackValue = ev.stack_value || null;
+      hideCountdown(); // an action landed, so the clock restarted
       dirty.turn = dirty.seats = true;
+      break;
+    case 'countdown':
+      showCountdown(ev.player, ev.seconds);
+      logLine((ev.player === name ? 'you have' : ev.player + ' has') +
+              ' ' + ev.seconds + 's left');
       break;
     case 'hand_counts': {
       if (fx){
@@ -802,6 +837,7 @@ function apply(ev, fx){
       break;
     case 'game_over':
       state.inGame = false;
+      hideCountdown();
       $('lobby-status').textContent = 'Last game: ' + ev.winner + ' won';
       showWin(ev.winner);
       break;
@@ -1108,6 +1144,7 @@ async function leaveParty(){
   name = null; code = null;
   state = freshState();
   pendingWild = null; lastPlayedId = null;
+  hideCountdown();
   $('win-overlay').hidden = true;
   $('color-modal').hidden = true;
   $('join-err').textContent = '';

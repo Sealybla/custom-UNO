@@ -114,6 +114,11 @@ let event_json (event : Action.Server_to_client.t) =
     sprintf {|{"type":"game_over","winner":%s}|} (jstr winner_name)
   | Uno_called { player_name } ->
     sprintf {|{"type":"uno","player":%s}|} (jstr player_name)
+  | Turn_countdown { player_name; seconds } ->
+    sprintf
+      {|{"type":"countdown","player":%s,"seconds":%d}|}
+      (jstr player_name)
+      seconds
   | Rules_updated { player_name; num_rules } ->
     sprintf
       {|{"type":"rules_updated","player":%s,"num_rules":%d}|}
