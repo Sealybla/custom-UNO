@@ -631,7 +631,9 @@ const rect = el => el.getBoundingClientRect();
 /* ---------- card factories ---------- */
 function cardEl(card, mini){
   const el = document.createElement('div');
-  el.className = 'card ' + card.color + (mini ? ' mini' : '');
+  // a wild that has been played wears its declared color (card.declared)
+  const color = card.color === 'NoColor' && card.declared ? card.declared : card.color;
+  el.className = 'card ' + color + (mini ? ' mini' : '');
   el.dataset.cid = card.id;
   const label = VALUE_LABEL[card.value] || card.value;
   el.innerHTML = '<span class="ix tl"></span><span class="ellipse"></span>' +
@@ -743,6 +745,8 @@ function apply(ev, fx){
       break;
     }
     case 'pile': {
+      if (ev.top_card.color === 'NoColor' && ev.current_color !== 'NoColor')
+        ev.top_card.declared = ev.current_color;
       const changed = !state.top || state.top.id !== ev.top_card.id;
       if (changed){
         if (fx){
@@ -919,6 +923,10 @@ function renderSeats(){
 function renderPile(){
   const d = $('discard');
   d.innerHTML = '';
+  // the color can change while the same wild stays on top (custom rules)
+  const top = state.pileStack[state.pileStack.length - 1];
+  if (top && top.color === 'NoColor' && state.color && state.color !== 'NoColor')
+    top.declared = state.color;
   for (const c of state.pileStack){
     const el = cardEl(c);
     el.style.setProperty('--tilt', tiltOf(c.id) + 'deg');
