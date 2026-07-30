@@ -262,6 +262,16 @@ module Ruleset = struct
     }
   ;;
 
+  (* draw-until inside the stacking variant: same idea, but no drawing
+     while a stack is open *)
+  let draw_until_stack_rule : Rule.t =
+    { id = 7
+    ; priority = 1
+    ; condition = And (IsDrawAction, And (IsPlayerTurn, Not StackIsOpen))
+    ; actions = [ Mutate (ExecuteDraw 1) ]
+    }
+  ;;
+
   let default : t =
     base_special_rules
     @ immediate_draw_rules
@@ -282,6 +292,18 @@ module Ruleset = struct
       ; stack_pass_rule
       ; draw_decide_rule
       ; pass_after_draw_rule
+      ]
+  ;;
+
+  (* stacking play rules combined with draw-until drawing: chain same-value
+     cards, and when stuck draw one card per click until you can play *)
+  let stacking_draw_until_variant : t =
+    stacking_special_rules
+    @ deferred_draw_rules
+    @ [ stack_open_rule
+      ; stack_continue_rule
+      ; stack_pass_rule
+      ; draw_until_stack_rule
       ]
   ;;
 

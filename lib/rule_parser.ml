@@ -224,8 +224,9 @@ let rec parse_effects toks : (Game_state.Effect.t list * tokens) Or_error.t =
 
 let default_priority = 50
 
-(* called with the tokens after the leading "rule" keyword *)
-let parse_rule (toks : tokens) ~id : (Rule.t * tokens) Or_error.t =
+(* called with the tokens after the leading "rule" keyword; ids are
+   assigned later, after name-based merging *)
+let parse_rule (toks : tokens) : ((string * Rule.t) * tokens) Or_error.t =
   let%bind name, toks =
     match toks with
     | (Token.Str name, _) :: rest -> Ok (name, rest)
@@ -250,21 +251,60 @@ let parse_rule (toks : tokens) ~id : (Rule.t * tokens) Or_error.t =
      let%bind toks = expect_word toks "do" in
      let%map effects, toks = parse_effects toks in
      let actions = List.map effects ~f:(fun e -> Rule.Action_AST.Mutate e) in
-     { Rule.id; priority; condition; actions }, toks)
+     (name, { Rule.id = 0; priority; condition; actions }), toks)
 ;;
 
 let parse_ruleset src : Rule.t list Or_error.t =
   let%bind toks = tokenize src in
-  let rec go toks acc next_id =
+  let rec go toks acc ~allow_use =
     match toks with
-    | [] ->
-      (match acc with
-       | [] -> Or_error.error_string "no rules found"
-       | _ -> Ok (List.rev acc))
+    | [] -> Ok (List.rev acc)
     | (Token.Word "rule", _) :: rest ->
-      let%bind rule, rest = parse_rule rest ~id:next_id in
-      go rest (rule :: acc) (next_id + 1)
-    | _ -> Or_error.errorf "expected 'rule' to start a rule (%s)" (where toks)
+      let%bind named, rest = parse_rule rest in
+      go rest (named :: acc) ~allow_use
+    | (Token.Word "use", line) :: rest when allow_use ->
+      (* the preset name is every word to the end of the line *)
+      let name_words, rest =
+        List.split_while rest ~f:(fun (tok, l) ->
+          match tok with
+          | Token.Word _ -> l = line
+          | _ -> false)
+      in
+      let name =
+        String.concat
+          ~sep:" "
+          (List.map name_words ~f:(fun (tok, _) -> Token.to_string tok))
+      in
+      (match Presets.find name with
+       | None ->
+         Or_error.errorf
+           "line %d: unknown preset '%s' after 'use' (available: %s)"
+           line
+           name
+           (String.concat ~sep:", " Presets.names)
+       | Some text ->
+         let%bind preset_toks = tokenize text in
+         let%bind included = go preset_toks [] ~allow_use:false in
+         go rest (List.rev included @ acc) ~allow_use)
+    | _ ->
+      Or_error.errorf
+        "expected 'rule' or 'use <preset>' to start a line (%s)"
+        (where toks)
   in
-  go toks [] 1
+  let%bind named = go toks [] ~allow_use:true in
+  (* a later rule with the same name replaces the earlier one in place, so
+     rules pulled in by `use` can be redefined without duplicating them *)
+  let merged =
+    List.fold named ~init:[] ~f:(fun acc (name, rule) ->
+      let key = String.lowercase name in
+      if List.exists acc ~f:(fun (k, _) -> String.equal k key)
+      then
+        List.map acc ~f:(fun (k, r) ->
+          if String.equal k key then k, rule else k, r)
+      else acc @ [ key, rule ])
+  in
+  match merged with
+  | [] -> Or_error.error_string "no rules found"
+  | _ ->
+    Ok (List.mapi merged ~f:(fun i (_, rule) -> { rule with Rule.id = i + 1 }))
 ;;

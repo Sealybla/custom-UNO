@@ -109,6 +109,10 @@ let html =
   .preset-row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.5rem; }
   button.preset, button.small { padding:.3rem .8rem; font-size:.82rem;
     background:rgba(255,255,255,.92); box-shadow:0 2px 0 rgba(0,0,0,.3); }
+  button.preset.toggle { background:rgba(255,255,255,.45); }
+  button.preset.toggle.active { background:var(--c-yellow);
+    box-shadow:inset 0 2px 2px rgba(0,0,0,.25); }
+  button.preset.toggle.active::before { content:'\2713  '; font-weight:900; }
   #check-status { font-size:.83rem; margin:.25rem 0 .35rem; min-height:1.1rem;
     font-family:ui-monospace,monospace; white-space:pre-wrap; }
   #check-status.ok { color:#8fe3a8; } #check-status.err { color:#ffb0b0; }
@@ -366,10 +370,11 @@ let html =
     <div class="panel">
       <h2>House rules</h2>
       <div class="preset-row">
-        <span style="opacity:.8">Start from:</span>
-        <button class="preset" data-preset="standard">Standard</button>
-        <button class="preset" data-preset="stacking">Stacking</button>
-        <button class="preset" data-preset="drawuntil">Draw until playable</button>
+        <span style="opacity:.8">Preset:</span>
+        <button class="preset" id="preset-standard">Standard</button>
+        <span style="opacity:.8">+ toggles:</span>
+        <button class="preset toggle" id="toggle-stacking">Stacking</button>
+        <button class="preset toggle" id="toggle-drawuntil">Draw until playable</button>
       </div>
       <div id="check-status"></div>
       <textarea id="rules-text" rows="12" spellcheck="false"></textarea>
@@ -409,7 +414,12 @@ let html =
   do &lt;effect&gt;, &lt;effect&gt;</pre>
         <div class="cheat">
           <div>
-            <h4>Conditions (click to insert)</h4>
+            <h4>Presets (click to insert)</h4>
+            <code>use standard</code>
+            <code>use stacking</code>
+            <code>use draw until playable</code>
+            <code>use stacking with draw until playable</code>
+            <h4 style="margin-top:.6rem">Conditions (click to insert)</h4>
             <code>card matches color</code>
             <code>card matches value</code>
             <code>card is wild</code>
@@ -496,108 +506,30 @@ const VALUE_LABEL = {Zero:'0',One:'1',Two:'2',Three:'3',Four:'4',Five:'5',Six:'6
   Seven:'7',Eight:'8',Nine:'9',Skip:'⊘',Reverse:'⇄',Plus:'+2',Wild:'W',Wild4:'+4'};
 const COLOR_CSS = {Red:'#e0332c',Green:'#18a850',Blue:'#0a6bbd',Yellow:'#ffce00',NoColor:'#333'};
 
-// shared building blocks: wild/skip/reverse are the same in the standard
-// variants, but the stacking variant blocks them while a stack is open
-// (mid-stack only same-value continuations are legal). +2/+4 also differ
-// (standard = victim draws immediately and is skipped; stacking = a
-// pending counter the victim can stack onto or cash out).
-const BASE_SPECIALS = `rule "play wild" priority 100:
-  when card is wild and your turn
-  do play the card, set color to declared, advance turn
-
-rule "play skip" priority 100:
-  when card is skip and (card matches color or card matches value) and your turn
-  do play the card, set color from card, skip next player
-
-rule "play reverse" priority 100:
-  when card is reverse and (card matches color or card matches value) and your turn
-  do play the card, set color from card, reverse direction, advance turn
-`;
-
-const STACKING_SPECIALS = `rule "play wild" priority 100:
-  when card is wild and your turn and not stack is open
-  do play the card, set color to declared, advance turn
-
-rule "play skip" priority 100:
-  when card is skip and (card matches color or card matches value) and your turn and not stack is open
-  do play the card, set color from card, skip next player
-
-rule "play reverse" priority 100:
-  when card is reverse and (card matches color or card matches value) and your turn and not stack is open
-  do play the card, set color from card, reverse direction, advance turn
-`;
-
-const IMMEDIATE_DRAWS = `rule "play plus two" priority 100:
-  when card is plus two and (card matches color or card matches value) and your turn
-  do play the card, set color from card, next player draws 2 cards, skip next player
-
-rule "play plus four" priority 110:
-  when card is plus four and your turn
-  do play the card, set color to declared, next player draws 4 cards, skip next player
-`;
-
-const DEFERRED_DRAWS = `rule "play plus two" priority 100:
-  when card is plus two and (card matches color or card matches value) and your turn and not stack is open
-  do play the card, set color from card, add 2 pending draws, advance turn
-
-rule "play plus four" priority 110:
-  when card is plus four and your turn and not stack is open
-  do play the card, set color to declared, add 4 pending draws, advance turn
-
-rule "take penalty" priority 105:
-  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
-  do apply pending draws, advance turn
-`;
-
-// drawing keeps your turn only when the drawn card is playable; then you
-// may play it or pass
-const DRAW_RULE = `rule "draw a card" priority 1:
-  when player draws and your turn and not stack is open and not drew playable card
-  do draw and decide
-`;
-
-const PASS_AFTER_DRAW = `rule "pass after draw" priority 1:
-  when player passes and your turn and drew playable card
-  do advance turn
-`;
-
-const RULES_TEMPLATE =
-  '# Standard Uno. Edit these rules to make your own variant.\n\n' +
-  BASE_SPECIALS + '\n' + IMMEDIATE_DRAWS + '\n' +
-`rule "play matching card" priority 10:
-  when (card matches color or card matches value) and your turn
-  do play the card, set color from card, advance turn
-
-` + DRAW_RULE + '\n' + PASS_AFTER_DRAW;
-
-const STACKING_TEMPLATE =
-  '# Stacking variant: chain same-value cards in one turn, click Done to end it.\n\n' +
-  STACKING_SPECIALS + '\n' + DEFERRED_DRAWS + '\n' +
-`rule "open stack" priority 10:
-  when (card matches color or card matches value) and your turn and not stack is open
-  do play the card, set color from card, open stack
-
-rule "continue stack" priority 120:
-  when continues stack and your turn
-  do play the card, set color from card
-
-rule "pass on stack" priority 120:
-  when player passes and your turn and stack is open
-  do clear stack, advance turn
-
-` + DRAW_RULE + '\n' + PASS_AFTER_DRAW;
-
-// no pass rule at all: the done button never shows, and a drawn playable
-// card may be kept — the only way to end the turn is to play a card
-const DRAWUNTIL_TEMPLATE = RULES_TEMPLATE.replace(DRAW_RULE,
-`# drawing never ends your turn: keep drawing until you play a card
-rule "draw until playable" priority 1:
-  when player draws and your turn
-  do draw 1 cards
-`).replace('\n' + PASS_AFTER_DRAW, '');
-
-const TEMPLATES = { standard: RULES_TEMPLATE, stacking: STACKING_TEMPLATE,
-                    drawuntil: DRAWUNTIL_TEMPLATE };
+// the preset toggles compose the ruleset through the server-side `use`
+// shortcut; the rules a `use` line expands to live in lib/presets.ml and
+// are documented in docs/rule-language.md
+const PRESET_DESC = {
+  'standard': 'Standard Uno.',
+  'stacking': 'Stacking: chain same-value cards in one turn, click Done to end it.',
+  'draw until playable':
+    'Draw-until: when you cannot play, keep drawing (one card per click) until you can.',
+  'stacking with draw until playable':
+    'Stacking + draw-until: chain same-value cards; when stuck, keep drawing until you can play.',
+};
+function presetName(){
+  const s = $('toggle-stacking').classList.contains('active');
+  const d = $('toggle-drawuntil').classList.contains('active');
+  return s && d ? 'stacking with draw until playable'
+       : s ? 'stacking' : d ? 'draw until playable' : 'standard';
+}
+function presetText(){
+  const name = presetName();
+  return '# ' + PRESET_DESC[name] + '\n' +
+    'use ' + name + '\n\n' +
+    '# Add house rules below - they combine with the preset above.\n' +
+    '# Redefining a rule with the same name replaces the preset version.\n';
+}
 
 const WHEN_OPTIONS = [
   ['card matches color or card matches value', 'a matching card is played'],
@@ -1246,7 +1178,7 @@ $('rules-btn').onclick = async () => {
 };
 
 /* ---------- rules editor helpers ---------- */
-let lastLoaded = RULES_TEMPLATE;
+let lastLoaded = '';
 let checkT = null;
 
 async function checkRules(){
@@ -1262,14 +1194,23 @@ async function checkRules(){
 function scheduleCheck(){ clearTimeout(checkT); checkT = setTimeout(checkRules, 600); }
 $('rules-text').addEventListener('input', scheduleCheck);
 
-document.querySelectorAll('button.preset').forEach(b => b.onclick = () => {
+// the toggles compose: stacking and draw-until can be on together
+function setPreset(stacking, drawuntil){
   const ta = $('rules-text');
   if (ta.value.trim() !== lastLoaded.trim() &&
       !confirm('Replace the current rule text?')) return;
-  ta.value = TEMPLATES[b.dataset.preset];
+  $('toggle-stacking').classList.toggle('active', stacking);
+  $('toggle-drawuntil').classList.toggle('active', drawuntil);
+  ta.value = presetText();
   lastLoaded = ta.value;
   checkRules();
-});
+}
+const toggleOn = id => $(id).classList.contains('active');
+$('preset-standard').onclick = () => setPreset(false, false);
+$('toggle-stacking').onclick = () =>
+  setPreset(!toggleOn('toggle-stacking'), toggleOn('toggle-drawuntil'));
+$('toggle-drawuntil').onclick = () =>
+  setPreset(toggleOn('toggle-stacking'), !toggleOn('toggle-drawuntil'));
 
 document.querySelectorAll('.cheat code').forEach(c => c.onclick = () => {
   const ta = $('rules-text');
@@ -1424,7 +1365,8 @@ window.addEventListener('resize', () => {
 for (let i = 0; i < 3; i++)
   $('draw-pile').insertBefore(cardBackEl(), $('pending-badge'));
 
-$('rules-text').value = RULES_TEMPLATE;
+$('rules-text').value = presetText();
+lastLoaded = $('rules-text').value;
 checkRules();
 
 // invite links carry ?code=XXXX; a saved session (per-tab) wins unless the

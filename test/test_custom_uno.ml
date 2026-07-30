@@ -699,120 +699,6 @@ let%expect_test "wild cannot dodge pending draws" =
 ;;
 
 (* ---------- rule parser: round-trips against the hand-coded rulesets ---------- *)
-
-(* shared by every variant: wild, skip, reverse — same order as
-   Ruleset.base_special_rules *)
-let base_special_text =
-  {|
-rule "play wild" priority 100:
-  when card is wild and your turn
-  do play the card, set color to declared, advance turn
-
-rule "play skip" priority 100:
-  when card is skip and (card matches color or card matches value) and your turn
-  do play the card, set color from card, skip next player
-
-rule "play reverse" priority 100:
-  when card is reverse and (card matches color or card matches value) and your turn
-  do play the card, set color from card, reverse direction, advance turn
-|}
-;;
-
-(* standard +2/+4: the next player draws immediately and is skipped *)
-let immediate_draw_text =
-  {|
-rule "play plus two" priority 100:
-  when card is plus two and (card matches color or card matches value) and your turn
-  do play the card, set color from card, next player draws 2 cards, skip next player
-
-rule "play plus four" priority 110:
-  when card is plus four and your turn
-  do play the card, set color to declared, next player draws 4 cards, skip next player
-|}
-;;
-
-(* the stacking variant's specials are blocked while a stack is open *)
-let stacking_special_text =
-  {|
-rule "play wild" priority 100:
-  when card is wild and your turn and not stack is open
-  do play the card, set color to declared, advance turn
-
-rule "play skip" priority 100:
-  when card is skip and (card matches color or card matches value) and your turn and not stack is open
-  do play the card, set color from card, skip next player
-
-rule "play reverse" priority 100:
-  when card is reverse and (card matches color or card matches value) and your turn and not stack is open
-  do play the card, set color from card, reverse direction, advance turn
-|}
-;;
-
-(* stacking +2/+4: bump a shared counter, cashed out later by "take penalty" *)
-let deferred_draw_text =
-  {|
-rule "play plus two" priority 100:
-  when card is plus two and (card matches color or card matches value) and your turn and not stack is open
-  do play the card, set color from card, add 2 pending draws, advance turn
-
-rule "play plus four" priority 110:
-  when card is plus four and your turn and not stack is open
-  do play the card, set color to declared, add 4 pending draws, advance turn
-
-rule "take penalty" priority 105:
-  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
-  do apply pending draws, advance turn
-|}
-;;
-
-let generic_play_text =
-  {|
-rule "play matching card" priority 10:
-  when (card matches color or card matches value) and your turn
-  do play the card, set color from card, advance turn
-|}
-;;
-
-let draw_decide_text =
-  {|
-rule "draw a card" priority 1:
-  when player draws and your turn and not stack is open and not drew playable card
-  do draw and decide
-|}
-;;
-
-let pass_after_draw_text =
-  {|
-rule "pass after draw" priority 1:
-  when player passes and your turn and drew playable card
-  do advance turn
-|}
-;;
-
-let draw_until_text =
-  {|
-rule "draw until playable" priority 1:
-  when player draws and your turn
-  do draw 1 cards
-|}
-;;
-
-let stacking_text =
-  {|
-rule "open stack" priority 10:
-  when (card matches color or card matches value) and your turn and not stack is open
-  do play the card, set color from card, open stack
-
-rule "continue stack" priority 120:
-  when continues stack and your turn
-  do play the card, set color from card
-
-rule "pass on stack" priority 120:
-  when player passes and your turn and stack is open
-  do clear stack, advance turn
-|}
-;;
-
 (* ids are auto-assigned by the parser and hand-picked in the hand-coded
    rules, so compare everything else *)
 let strip_ids (rules : Rule.t list) =
@@ -829,39 +715,139 @@ let check_against_hand_coded text expected =
       print_s [%message "MISMATCH" (parsed : Rule.t list) (expected : Rule.t list)]
 ;;
 
+(* the canonical preset texts (lib/presets.ml) must parse to exactly the
+   hand-coded variants - they are what the lobby toggles and `use` expand *)
 let%expect_test "parsed default ruleset equals hand-coded default" =
-  check_against_hand_coded
-    (base_special_text ^ immediate_draw_text ^ generic_play_text
-     ^ draw_decide_text ^ pass_after_draw_text)
-    Rule_engine.Ruleset.default;
+  check_against_hand_coded Presets.standard_text Rule_engine.Ruleset.default;
   [%expect {| parsed rules match the hand-coded ruleset |}]
 ;;
 
-(* no pass_after_draw_text here: the draw-until variant deliberately has
-   no pass rule, so playing a card is the only way to end the turn *)
 let%expect_test "parsed draw-until ruleset equals hand-coded variant" =
   check_against_hand_coded
-    (base_special_text ^ immediate_draw_text ^ generic_play_text
-     ^ draw_until_text)
+    Presets.draw_until_text
     Rule_engine.Ruleset.draw_until_variant;
   [%expect {| parsed rules match the hand-coded ruleset |}]
 ;;
 
 let%expect_test "parsed stacking ruleset equals hand-coded variant" =
   check_against_hand_coded
-    (stacking_special_text ^ deferred_draw_text ^ stacking_text
-     ^ draw_decide_text ^ pass_after_draw_text)
+    Presets.stacking_text
     Rule_engine.Ruleset.stacking_variant;
   [%expect {| parsed rules match the hand-coded ruleset |}]
 ;;
 
-let%expect_test "parsed stacking ruleset plays a real stacking turn" =
+let%expect_test "parsed combined ruleset equals hand-coded variant" =
+  check_against_hand_coded
+    Presets.stacking_draw_until_text
+    Rule_engine.Ruleset.stacking_draw_until_variant;
+  [%expect {| parsed rules match the hand-coded ruleset |}]
+;;
+
+(* `use <preset>` expands to the same rules as pasting the preset text *)
+let%expect_test "use expands presets, combines, extends, and overrides" =
+  let count text =
+    match Rule_parser.parse_ruleset text with
+    | Ok rules -> print_s [%message (List.length rules : int)]
+    | Error e -> print_s [%message "parse error" (e : Error.t)]
+  in
+  (match Rule_parser.parse_ruleset "use stacking" with
+   | Error e -> print_s [%message "parse error" (e : Error.t)]
+   | Ok rules ->
+     print_s
+       [%message
+         "use stacking = stacking preset"
+           ([%equal: Rule.t list]
+              (strip_ids rules)
+              (strip_ids Rule_engine.Ruleset.stacking_variant)
+            : bool)]);
+  (* extension: preset rules plus one custom rule *)
+  count
+    {|use stacking
+rule "sevens are wild" priority 115:
+  when card is plus four and your turn
+  do play the card, set color to declared, advance turn|};
+  (* override: redefining a preset rule by name replaces it *)
+  count
+    {|use stacking
+rule "pass on stack" priority 120:
+  when player passes and your turn and stack is open
+  do clear stack, skip next player|};
+  (match Rule_parser.parse_ruleset "use nonsense mode" with
+   | Ok _ -> print_endline "unexpectedly parsed"
+   | Error e -> print_s [%message (e : Error.t)]);
+  [%expect
+    {|
+    ("use stacking = stacking preset"
+     ( "([%equal : Rule.t list]) (strip_ids rules)\
+      \n  (strip_ids Rule_engine.Ruleset.stacking_variant)" true))
+    ("List.length rules" 12)
+    ("List.length rules" 11)
+    (e
+     "line 1: unknown preset 'nonsense mode' after 'use' (available: standard, stacking, draw until playable, stacking with draw until playable)")
+    |}]
+;;
+
+(* stacking + draw-until combined: when stuck you draw one card per click
+   (turn stays), you cannot draw mid-stack, and chaining still works *)
+let%expect_test "combined stacking and draw-until variant plays a turn" =
   let rules =
-    Rule_parser.parse_ruleset
-      (stacking_special_text ^ deferred_draw_text ^ stacking_text
-       ^ draw_decide_text ^ pass_after_draw_text)
+    Rule_parser.parse_ruleset "use stacking with draw until playable"
     |> Or_error.ok_exn
   in
+  let s1 = { Card.color = Red; value = Seven; id = 720 } in
+  let s2 = { Card.color = Blue; value = Seven; id = 721 } in
+  let top = { Card.color = Red; value = Three; id = 722 } in
+  let filler = { Card.color = Green; value = Zero; id = 723 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ s1; s2 ]; "b", [] ]
+      ~top_card:top
+      ~draw_pile:[ filler ]
+      ~pending_draws:0
+      ~turn:0
+  in
+  (* drawing with the stack closed takes one card and keeps the turn *)
+  let t = Rule_engine.apply_action rules t ~player_id:0 ~action:Draw |> Or_error.ok_exn in
+  print_s
+    [%message
+      "after draw"
+        (t.turn : int)
+        (List.length (Player.get_hand (List.nth_exn t.players 0)) : int)];
+  (* open and continue a stack *)
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0
+      ~action:(Play { card_id = 720; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  let mid_stack_draw = Rule_engine.apply_action rules t ~player_id:0 ~action:Draw in
+  print_s
+    [%message
+      "mid-stack" (t.stacking_value : Card.Value.t option)
+        (Or_error.is_error mid_stack_draw : bool)];
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0
+      ~action:(Play { card_id = 721; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  (* nothing left to continue: pass is the only move (the server auto-passes) *)
+  print_s
+    [%message
+      (Rule_engine.only_pass_available rules t : bool)];
+  let t = Rule_engine.apply_action rules t ~player_id:0 ~action:Pass |> Or_error.ok_exn in
+  print_s [%message "after pass" (t.turn : int) (t.stacking_value : Card.Value.t option)];
+  [%expect
+    {|
+    ("after draw" (t.turn 0)
+     ("List.length (Player.get_hand (List.nth_exn t.players 0))" 3))
+    (mid-stack (t.stacking_value (Seven))
+     ("Or_error.is_error mid_stack_draw" true))
+    ("Rule_engine.only_pass_available rules t" true)
+    ("after pass" (t.turn 1) (t.stacking_value ()))
+    |}]
+;;
+
+let%expect_test "parsed stacking ruleset plays a real stacking turn" =
+  let rules = Rule_parser.parse_ruleset Presets.stacking_text |> Or_error.ok_exn in
   let s1 = { Card.color = Red; value = Seven; id = 700 } in
   let s2 = { Card.color = Blue; value = Seven; id = 701 } in
   let top = { Card.color = Red; value = Three; id = 702 } in

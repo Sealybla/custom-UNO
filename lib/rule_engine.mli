@@ -7,6 +7,9 @@ module Ruleset : sig
   val draw_until_variant : t
   val stacking_variant : t
 
+  (* stacking play rules with draw-until drawing *)
+  val stacking_draw_until_variant : t
+
   (* true if any rule in the set can open a same-value stack *)
   val uses_stacking : t -> bool
 end

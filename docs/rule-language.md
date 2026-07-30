@@ -18,8 +18,33 @@ rule "play plus two" priority 100:
 - `when <condition>` — boolean expression over the trigger event + game state.
 - `do <effect>, <effect>, ...` — comma-separated effect list, applied in order.
 - `#` starts a comment to end of line. Keywords are case-insensitive.
-- A file is a sequence of `rule` blocks; the next `rule` keyword ends the
-  previous block, so no separators are needed.
+- A file is a sequence of `rule` blocks and `use` lines; the next `rule`
+  keyword ends the previous block, so no separators are needed.
+
+## Presets and `use`
+
+`use <preset>` expands, in place, to the full rule text of a built-in
+ruleset (canonical texts in `lib/presets.ml`), so a variant can start from
+a preset without retyping it:
+
+```
+use stacking
+
+# same name as the preset's rule, so this redefines it: a reverse now
+# also burns the next player for one card
+rule "play reverse" priority 100:
+  when card is reverse and (card matches color or card matches value) and your turn and not stack is open
+  do play the card, set color from card, reverse direction, next player draws 1 cards, advance turn
+```
+
+The presets are `standard`, `stacking`, `draw until playable`, and the
+combination `stacking with draw until playable` (stacking play rules with
+draw-until drawing). The lobby's preset toggles emit exactly these lines.
+
+Rule names are identities: a later rule with the same name as an earlier
+one (case-insensitive) **replaces** it in place. That is how an extension
+tweaks a preset rule — redefine it under the same name — and why `use`
+never duplicates anything. Ids are assigned after this merge.
 
 ## Conditions
 
@@ -196,6 +221,16 @@ rule "continue stack" priority 120:
 rule "pass on stack" priority 120:
   when player passes and your turn and stack is open
   do clear stack, advance turn
+```
+
+The combined variant (`use stacking with draw until playable`) is the
+stacking rules with the draw rule swapped for draw-until drawing, guarded
+so nobody draws mid-stack:
+
+```
+rule "draw until playable" priority 1:
+  when player draws and your turn and not stack is open
+  do draw 1 cards
 ```
 
 Every hand-coded rule is expressible, so the grammar covers the existing
