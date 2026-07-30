@@ -197,6 +197,11 @@ let html =
   .slot .card { transform:rotate(var(--rot,0deg)) translateY(calc(var(--ty,0px) + var(--lift,0px)));
     transform-origin:50% 130%; transition:transform .25s var(--ease-pop), box-shadow .25s, filter .25s; cursor:pointer; }
   .slot:hover { z-index:7; }
+  #hand .card { touch-action:none; cursor:grab; }
+  .slot.dragging { z-index:9; }
+  .slot.dragging .card, .slot.dragging:hover .card {
+    transform:translate(var(--dx,0px), calc(var(--dy,0px) - 24px)) scale(1.08);
+    transition:none; box-shadow:0 18px 34px rgba(0,0,0,.55); }
   .slot:hover .card { transform:rotate(var(--rot,0deg)) translateY(calc(var(--ty,0px) - 28px)) scale(1.12); }
   /* on your turn: playable cards lift with a white glow, unplayable dim */
   #hand.my-turn .slot:not(.playable) .card { filter:grayscale(.4) brightness(.72); }
@@ -756,7 +761,8 @@ function apply(ev, fx){
       break;
     case 'game_started':
       hideCountdown();
-      state.inGame = true; state.hand = ev.hand; state.top = ev.top_card;
+      handOrder = [];
+      state.inGame = true; state.hand = orderedHand(ev.hand); state.top = ev.top_card;
       state.color = ev.current_color; state.players = ev.players;
       state.current = ev.current_player; state.counts = {};
       state.pileStack = [ev.top_card]; state.pending = ev.pending || 0;
@@ -773,7 +779,7 @@ function apply(ev, fx){
           fresh.forEach((c, i) => fx.push({kind:'ownDraw', id:c.id, delay:i*90,
                                            from:rect($('draw-pile'))}));
       }
-      state.hand = ev.hand; dirty.hand = true;
+      state.hand = orderedHand(ev.hand); dirty.hand = true;
       break;
     }
     case 'pile': {
@@ -977,17 +983,94 @@ function renderPile(){
   badge.textContent = '+' + state.pending;
 }
 
+/* ---------- drag to rearrange your hand ---------- */
+// the display order belongs to the player: server hand updates are re-sorted
+// to match it, and never-seen cards (fresh draws) go on the right
+let handOrder = [];
+function orderedHand(hand){
+  const pos = new Map(handOrder.map((id, i) => [id, i]));
+  const known = hand.filter(c => pos.has(c.id))
+    .sort((a, b) => pos.get(a.id) - pos.get(b.id));
+  const out = known.concat(hand.filter(c => !pos.has(c.id)));
+  handOrder = out.map(c => c.id);
+  return out;
+}
+
+let drag = null; // {slot, startX, startY, moved}
+
+function dragStart(e, slot){
+  if (drag || !e.isPrimary || e.button > 0) return;
+  drag = { slot, startX: e.clientX, startY: e.clientY, moved: false };
+  e.currentTarget.setPointerCapture(e.pointerId);
+}
+function dragMove(e){
+  if (!drag) return;
+  let dx = e.clientX - drag.startX;
+  if (!drag.moved){
+    if (Math.abs(dx) < 8) return; // a click, not a drag (yet)
+    drag.moved = true;
+    e.currentTarget._dragged = true; // the ending click must not play
+    drag.slot.classList.add('dragging');
+  }
+  const handEl = $('hand');
+  const others = [...handEl.children].filter(s => s !== drag.slot);
+  // slide the slot to wherever the pointer sits among the other cards
+  let target = others.length;
+  for (let i = 0; i < others.length; i++){
+    const r = rect(others[i]);
+    if (e.clientX < r.left + r.width / 2){ target = i; break; }
+  }
+  if ([...handEl.children].indexOf(drag.slot) !== target){
+    const before = new Map(others.map(s => [s.dataset.cid, rect(s).left]));
+    const x0 = rect(drag.slot).left;
+    handEl.insertBefore(drag.slot, others[target] || null);
+    setFan();
+    drag.startX += rect(drag.slot).left - x0; // keep the card under the pointer
+    dx = e.clientX - drag.startX;
+    for (const s of others){
+      const d = before.get(s.dataset.cid) - rect(s).left;
+      if (Math.abs(d) > 1)
+        s.animate([{transform:'translateX(' + d + 'px)'}, {transform:'none'}],
+                  {duration:130, easing:'ease-out'});
+    }
+  }
+  const card = drag.slot.firstChild;
+  card.style.setProperty('--dx', dx + 'px');
+  card.style.setProperty('--dy', (e.clientY - drag.startY) + 'px');
+}
+// drop (or a mid-drag hand rebuild): commit the DOM order as the new one
+function settleDrag(){
+  if (!drag) return;
+  const { slot, moved } = drag;
+  drag = null;
+  if (!moved) return;
+  slot.classList.remove('dragging');
+  slot.firstChild.style.removeProperty('--dx');
+  slot.firstChild.style.removeProperty('--dy');
+  handOrder = [...$('hand').children].map(s => Number(s.dataset.cid));
+  state.hand = orderedHand(state.hand);
+  setFan();
+}
+
 function makeSlot(card){
   const slot = document.createElement('div');
   slot.className = 'slot';
   slot.dataset.cid = card.id;
   const el = cardEl(card);
-  el.onclick = () => playCard(card);
+  el.onclick = () => {
+    if (el._dragged){ el._dragged = false; return; }
+    playCard(card);
+  };
+  el.onpointerdown = e => dragStart(e, slot);
+  el.onpointermove = dragMove;
+  el.onpointerup = settleDrag;
+  el.onpointercancel = settleDrag;
   slot.append(el);
   return slot;
 }
 
 function renderHand(){
+  settleDrag(); // a mid-drag rebuild keeps whatever order the drag reached
   const handEl = $('hand');
   const have = new Map([...handEl.children].map(s => [s.dataset.cid, s]));
   const before = new Map();
@@ -1143,7 +1226,7 @@ async function leaveParty(){
   sessionStorage.removeItem('uno-code');
   name = null; code = null;
   state = freshState();
-  pendingWild = null; lastPlayedId = null;
+  pendingWild = null; lastPlayedId = null; handOrder = [];
   hideCountdown();
   $('win-overlay').hidden = true;
   $('color-modal').hidden = true;
