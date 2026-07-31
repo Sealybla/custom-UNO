@@ -42,12 +42,12 @@ let load_ruleset rules_file =
             path;
           rules))
 
-let run_server port rules_file =
+let run_server port rules_file users_file =
   let%bind ruleset = load_ruleset rules_file in
   (* registers an accept loop with Async's scheduler and returns a Deferred.t *)
   let%bind _game = Server.start ~ruleset ~port () in
   (* the web ui talks to the game as an rpc client on localhost *)
-  let bridge = Web.create ~rpc_port:port in
+  let%bind bridge = Web.create ~rpc_port:port ~users_file in
   (* another register on same loop *)
   let%bind _web =
     Cohttp_async.Server.create
@@ -72,7 +72,11 @@ let command =
       flag "-rules"
       (optional string)
       ~doc:"file Rule file to load (default: built-in standard rules)"
+    and users_file =
+      flag "-users"
+      (optional_with_default "uno-users.sexp" string)
+      ~doc:"file Player accounts and saved modes (default: uno-users.sexp)"
     in
-    fun () -> run_server port rules_file)
+    fun () -> run_server port rules_file users_file)
 
 let () = Command_unix.run command

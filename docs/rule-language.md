@@ -330,6 +330,17 @@ successful updates broadcast `Rules_updated` — carrying the accepted text
 text in their state snapshot, marked with an empty player name). The
 terminal client submits with `rules <file>`.
 
+Players can optionally log in on the join screen (`/api/login`; unknown
+usernames are signed up on the spot) to keep a personal library of saved
+rule "modes" — named snapshots of the rules editor's text. Logged-in
+players get a "My modes" row in the lobby: click a mode to load it into
+the editor (then submit as usual), save the current text under a name, or
+delete one. Accounts and modes persist in a sexp file (`-users` flag,
+default `uno-users.sexp`) handled entirely by the web bridge in
+`bin/web.ml` + `lib/accounts.ml`; passwords are salted-MD5 (a speed bump
+appropriate for a card game, not real security), and login tokens are
+in-memory only — a server restart just means logging in again.
+
 The lobby has a ready gate: `set_ready_rpc : bool -> unit Or_error.t`
 toggles the caller's flag, `Lobby_updated` carries `ready_players` (and
 `last_winner`, shown as a crown over that player in the lobby), and

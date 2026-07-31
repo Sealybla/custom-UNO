@@ -1156,3 +1156,61 @@ rule "strong" priority 90: when player passes and your turn do advance turn|};
      ("rule \"weak\" can never fire - rule \"strong\" has the same condition and always wins (higher priority first; a tie goes to the rule defined first)"))
     |}]
 ;;
+
+(* accounts: login auto-registers, verifies passwords case-insensitively on
+   the username, and keeps a per-user library of saved rule modes *)
+let%expect_test "accounts login, modes, and snapshot round-trip" =
+  let t = Accounts.create ~random_state:(Random.State.make [| 7 |]) () in
+  let show label result =
+    match result with
+    | Error e -> print_s [%message label ~error:(e : Error.t)]
+    | Ok (status, user, modes) ->
+      print_s
+        [%message
+          label
+            (status : [ `Created | `Logged_in ])
+            (user : string)
+            (List.map modes ~f:(fun m -> m.Accounts.Mode.name) : string list)]
+  in
+  show "first login" (Accounts.login t ~username:"Dani" ~password:"hunter2");
+  show "same name, different case" (Accounts.login t ~username:"dani" ~password:"hunter2");
+  show "wrong password" (Accounts.login t ~username:"dani" ~password:"nope");
+  let mode_names r =
+    match r with
+    | Error e -> Error.to_string_hum e
+    | Ok modes ->
+      String.concat ~sep:", " (List.map modes ~f:(fun m -> m.Accounts.Mode.name))
+  in
+  print_endline
+    (mode_names
+       (Accounts.save_mode t ~username:"dani" ~mode_name:"chaos" ~rules_text:"use stacking"));
+  print_endline
+    (mode_names
+       (Accounts.save_mode t ~username:"dani" ~mode_name:"calm" ~rules_text:"use standard"));
+  (* same name replaces in place *)
+  print_endline
+    (mode_names
+       (Accounts.save_mode t ~username:"dani" ~mode_name:"CHAOS" ~rules_text:"use draw until playable"));
+  (* the store survives a snapshot round-trip *)
+  let t2 =
+    Accounts.of_snapshot ~random_state:(Random.State.make [| 8 |]) (Accounts.snapshot t)
+  in
+  show "login after reload" (Accounts.login t2 ~username:"dani" ~password:"hunter2");
+  print_endline (mode_names (Accounts.delete_mode t2 ~username:"dani" ~mode_name:"chaos"));
+  print_endline (mode_names (Accounts.delete_mode t2 ~username:"dani" ~mode_name:"chaos"));
+  [%expect
+    {|
+    ("first login" (status Created) (user Dani)
+     ("List.map modes ~f:(fun m -> m.Accounts.Mode.name)" ()))
+    ("same name, different case" (status Logged_in) (user Dani)
+     ("List.map modes ~f:(fun m -> m.Accounts.Mode.name)" ()))
+    ("wrong password" (error "Wrong password for that username"))
+    chaos
+    chaos, calm
+    CHAOS, calm
+    ("login after reload" (status Logged_in) (user Dani)
+     ("List.map modes ~f:(fun m -> m.Accounts.Mode.name)" (CHAOS calm)))
+    calm
+    No saved mode named "chaos"
+    |}]
+;;
