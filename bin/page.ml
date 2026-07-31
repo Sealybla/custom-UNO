@@ -103,8 +103,16 @@ let html =
   #rules-status:empty { display:none; }
   ul#lobby-players { list-style:none; padding:0; margin:.2rem 0 1rem; display:flex;
     flex-wrap:wrap; gap:.5rem; }
+  ul#lobby-players li.ready { box-shadow:0 0 0 2.5px var(--c-green); }
+  ul#lobby-players li .tag { margin-left:.45rem; font-size:.78rem; opacity:.7; }
+  ul#lobby-players li.ready .tag { color:#8fe3a8; opacity:1; }
+  ul#lobby-players li .crown { position:absolute; top:-1.15em; left:50%;
+    transform:translateX(-50%) rotate(-14deg); font-size:1.05em;
+    filter:drop-shadow(0 2px 2px rgba(0,0,0,.4)); }
+  #ready-btn.active { background:var(--c-green); color:#fff; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
   ul#lobby-players li { background:rgba(255,255,255,.14); border-radius:999px;
-    padding:.35rem .9rem; font-weight:700; }
+    padding:.35rem .9rem; font-weight:700; position:relative; margin-top:.9em; }
   /* rules editor helpers */
   .preset-row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.5rem; }
   button.preset, button.small { padding:.3rem .8rem; font-size:.82rem;
@@ -374,9 +382,11 @@ let html =
         <span id="copy-done" class="ok"></span>
       </p>
       <ul id="lobby-players"></ul>
-      <button id="start-btn">Start game</button>
+      <button id="ready-btn">I'm ready</button>
+      <button id="start-btn" disabled>Start game</button>
       <button id="leave-lobby" class="leave">Leave lobby</button>
-      <div id="lobby-status" class="ok" style="margin-top:.6rem"></div>
+      <div id="start-hint" style="margin-top:.5rem; font-size:.85rem; opacity:.8"></div>
+      <div id="lobby-status" class="ok" style="margin-top:.3rem"></div>
     </div>
     <div class="panel">
       <h2>House rules</h2>
@@ -482,7 +492,7 @@ let html =
             <code>advance turn</code>
           </div>
         </div>
-        <p style="opacity:.75; font-size:.82rem">Join conditions with <b>and</b> / <b>or</b> / <b>not</b>, parentheses to group. Higher priority wins when several rules match.</p>
+        <p style="opacity:.75; font-size:.82rem">Join conditions with <b>and</b> / <b>or</b> / <b>not</b>, parentheses to group. When several rules match, the highest priority wins; on a tie, the rule defined first wins (so built-ins pulled in by <b>use</b> beat same-priority rules below them — replace them by name or use a higher priority).</p>
       </details>
 
       <p style="margin:.7rem 0 0"><button id="rules-btn">Submit rules</button></p>
@@ -597,7 +607,8 @@ let name = null;
 let code = null;
 const freshState = () => ({ players:[], hand:[], top:null, color:null, current:null,
               counts:{}, inGame:false, pileStack:[], pending:0,
-              canPass:false, stackValue:null, stacking:false });
+              canPass:false, stackValue:null, stacking:false,
+              ready:[], lastWinner:null });
 let state = freshState();
 let pendingWild = null;
 let lastPlayedId = null;
@@ -718,7 +729,10 @@ async function api(path, opts = {}){
 function apply(ev, fx){
   switch (ev.type){
     case 'lobby':
-      state.players = ev.players; dirty.lobby = true;
+      state.players = ev.players;
+      state.ready = ev.ready || [];
+      state.lastWinner = ev.last_winner || null;
+      dirty.lobby = true;
       if (!state.inGame) setView('lobby');
       break;
     case 'game_started':
@@ -811,9 +825,19 @@ function apply(ev, fx){
       showWin(ev.winner);
       break;
     case 'rules_updated':
-      $('rules-status').textContent = ev.player + ' set ' + ev.num_rules + ' house rules';
-      $('rules-status').className = 'ok';
-      logLine(ev.player + ' updated the rules');
+      // everyone's editor mirrors the room's accepted rules; an empty
+      // player marks a state snapshot rather than a fresh edit
+      if (ev.rules_text && ev.rules_text !== $('rules-text').value){
+        $('rules-text').value = ev.rules_text;
+        lastLoaded = ev.rules_text;
+        scheduleCheck();
+      }
+      if (ev.player){
+        $('rules-status').textContent = ev.player + ' set ' + ev.num_rules + ' house rules';
+        $('rules-status').className = 'ok';
+        logLine(ev.player + ' updated the rules');
+        if (ev.player !== name) toast(ev.player + ' updated the rules');
+      }
       break;
     case 'rejected': toast(ev.reason); break;
   }
@@ -868,9 +892,33 @@ function renderLobby(){
   const lp = $('lobby-players'); lp.innerHTML = '';
   for (const p of state.players){
     const li = document.createElement('li');
-    li.textContent = p === name ? p + ' (you)' : p;
+    const rdy = state.ready.includes(p);
+    li.classList.toggle('ready', rdy);
+    if (p === state.lastWinner){
+      const c = document.createElement('span');
+      c.className = 'crown'; c.textContent = '👑';
+      c.title = 'won the last game';
+      li.append(c);
+    }
+    li.append(document.createTextNode(p === name ? p + ' (you)' : p));
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = rdy ? '✔ ready' : '· not ready';
+    li.append(tag);
     lp.append(li);
   }
+  const meReady = state.ready.includes(name);
+  const rb = $('ready-btn');
+  rb.textContent = meReady ? 'Not ready' : 'I’m ready';
+  rb.classList.toggle('active', meReady);
+  const allReady = state.players.length >= 2 &&
+    state.players.every(p => state.ready.includes(p));
+  $('start-btn').disabled = !allReady;
+  const waiting = state.players.filter(p => !state.ready.includes(p));
+  $('start-hint').textContent =
+    state.players.length < 2 ? 'Waiting for more players to join…'
+    : allReady ? 'Everyone is ready - anyone can start the game!'
+    : 'Waiting for: ' + waiting.join(', ');
 }
 
 function seatOf(player){
@@ -1190,6 +1238,10 @@ $('draw-pile').onclick = async () => {
 };
 $('pass-btn').onclick = async () => {
   const r = await api('/api/pass', {method:'POST'}); if (!r.ok) toast(r.error);
+};
+$('ready-btn').onclick = async () => {
+  const r = await api('/api/ready?on=' + !state.ready.includes(name), {method:'POST'});
+  if (!r.ok) toast(r.error);
 };
 $('start-btn').onclick = async () => {
   const r = await api('/api/start', {method:'POST'}); if (!r.ok) toast(r.error);

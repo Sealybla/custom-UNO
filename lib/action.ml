@@ -15,7 +15,11 @@ end
 (* Updates sent from the server to update the local Bonsai UI *)
 module Server_to_client = struct
   type t =
-    | Lobby_updated of { players : String.t List.t }
+    | Lobby_updated of
+        { players : String.t List.t
+        ; ready_players : String.t List.t (* subset of players who clicked ready *)
+        ; last_winner : String.t Option.t (* winner of this room's last game *)
+        }
     | Game_started of { your_hand : Card.t List.t;
                         top_card : Card.t;
                         current_color : Card.Color.t;
@@ -40,7 +44,11 @@ module Server_to_client = struct
     (* the current player is running out of turn time; at zero the server
        plays for them *)
     | Turn_countdown of { player_name : String.t; seconds : Int.t }
-    | Rules_updated of { player_name : String.t; num_rules : Int.t }
+    | Rules_updated of
+        { player_name : String.t
+        ; num_rules : Int.t
+        ; rules_text : String.t (* the submitted text, so every editor can sync *)
+        }
     | Action_rejected of { reason : String.t }
     (* pure-notification events driving the table animations *)
     | Player_skipped of { player_name : String.t }

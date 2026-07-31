@@ -25,10 +25,13 @@ module Room = struct
     ; clients : Client_connection.t String.Table.t
     ; mutable game_state : Game_state.t option
     ; mutable ruleset : Rule_engine.Ruleset.t
+    ; mutable rules_text : string (* last submitted text; "" = never set *)
     ; request_writer : Queued_request.t Pipe.Writer.t
     ; mutable action_seq : int (* bumped per applied action; stales timers *)
     ; mutable autopilot : string option (* player whose turn timed out *)
     ; mutable auto_passes : int (* consecutive server-made formality passes *)
+    ; ready : String.Hash_set.t (* lobby members who clicked ready *)
+    ; mutable last_winner : string option (* winner of this room's last game *)
     }
 end
 
@@ -52,6 +55,16 @@ let broadcast (room : Room.t) event =
   Hashtbl.iter room.clients ~f:(fun client ->
     if not (Pipe.is_closed client.writer)
     then Pipe.write_without_pushback client.writer event)
+;;
+
+(* the lobby roster with ready flags and the reigning champion *)
+let lobby_event (room : Room.t) =
+  Action.Server_to_client.Lobby_updated
+    { players = Hashtbl.keys room.clients
+    ; ready_players =
+        List.filter (Hashtbl.keys room.clients) ~f:(Hash_set.mem room.ready)
+    ; last_winner = room.last_winner
+    }
 ;;
 
 let player_id_of_name state name =
@@ -444,12 +457,10 @@ let start_engine_loop t (room : Room.t) request_reader =
                          room
                          (Action.Server_to_client.Game_over { winner_name });
                        room.game_state <- None;
+                       room.last_winner <- Some winner_name;
                        Hashtbl.filter_inplace room.clients ~f:(fun client ->
                          not client.is_bot);
-                       broadcast
-                         room
-                         (Action.Server_to_client.Lobby_updated
-                            { players = Hashtbl.keys room.clients });
+                       broadcast room (lobby_event room);
                        maybe_remove_room t room
                      | None -> ())
                   | None -> drive_or_auto_pass room next_state)))))
@@ -477,10 +488,13 @@ let create_room t =
     ; clients = String.Table.create ()
     ; game_state = None
     ; ruleset = t.default_ruleset
+    ; rules_text = ""
     ; request_writer
     ; action_seq = 0
     ; autopilot = None
     ; auto_passes = 0
+    ; ready = String.Hash_set.create ()
+    ; last_winner = None
     }
   in
   Hashtbl.set t.rooms ~key:code ~data:room;
@@ -547,10 +561,7 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                            "Lobby Registration"
                              (room.code : string)
                              (name : string)];
-                       broadcast
-                         room
-                         (Action.Server_to_client.Lobby_updated
-                            { players = Hashtbl.keys room.clients });
+                       broadcast room (lobby_event room);
                        return (Ok ()))))
         ; Rpc.Pipe_rpc.implement
             Rpc_protocol.game_stream_rpc
@@ -571,19 +582,24 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                    in
                    Hashtbl.set room.clients ~key:name ~data:connection;
                    (* everyone in the room learns about the newcomer *)
-                   broadcast
-                     room
-                     (Action.Server_to_client.Lobby_updated
-                        { players = Hashtbl.keys room.clients });
+                   broadcast room (lobby_event room);
                    return (Ok reader)))
         ; Rpc.Rpc.implement Rpc_protocol.get_state_rpc (fun state () ->
             match in_room state with
             | Error e -> return (Error e)
             | Ok (name, room) ->
               let lobby_snapshot () =
-                [ Action.Server_to_client.Lobby_updated
-                    { players = Hashtbl.keys room.clients }
-                ]
+                lobby_event room
+                :: (if String.is_empty room.rules_text
+                    then []
+                    else
+                      (* empty player_name marks a snapshot, not a fresh edit *)
+                      [ Action.Server_to_client.Rules_updated
+                          { player_name = ""
+                          ; num_rules = List.length room.ruleset
+                          ; rules_text = room.rules_text
+                          }
+                      ])
               in
               (match room.game_state with
                | None -> return (Ok (lobby_snapshot ()))
@@ -630,6 +646,7 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                    | Error e -> return (Error e)
                    | Ok rules ->
                      room.ruleset <- rules;
+                     room.rules_text <- rules_text;
                      let num_rules = List.length rules in
                      Core.print_s
                        [%message
@@ -640,7 +657,7 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                      broadcast
                        room
                        (Action.Server_to_client.Rules_updated
-                          { player_name; num_rules });
+                          { player_name; num_rules; rules_text });
                      return (Ok ())))
         ; Rpc.Rpc.implement Rpc_protocol.take_action_rpc (fun state action ->
             match in_room state with
@@ -663,8 +680,18 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
               then return (Or_error.error_string "Game already in progress")
               else (
                 let player_names = Hashtbl.keys room.clients in
+                let not_ready =
+                  List.filter player_names ~f:(fun name ->
+                    not (Hash_set.mem room.ready name))
+                in
                 if List.length player_names < 2
                 then return (Or_error.error_string "Need at least 2 players")
+                else if not (List.is_empty not_ready)
+                then
+                  return
+                    (Or_error.errorf
+                       "Waiting for %s to ready up"
+                       (String.concat ~sep:", " not_ready))
                 else (
                   match Game_state.create ~player_names ~hand_size:7 () with
                   | Error e -> return (Error e)
@@ -672,10 +699,26 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                     room.game_state <- Some initial_state;
                     room.autopilot <- None;
                     room.auto_passes <- 0;
+                    (* a rematch needs everyone to ready up again *)
+                    Hash_set.clear room.ready;
                     broadcast_game_started room initial_state;
                     (* the first player's turn timer starts now *)
                     drive_or_auto_pass room initial_state;
                     return (Ok ()))))
+        ; Rpc.Rpc.implement Rpc_protocol.set_ready_rpc (fun state is_ready ->
+            match in_room state with
+            | Error e -> return (Error e)
+            | Ok (player_name, room) ->
+              if Option.is_some room.game_state
+              then
+                return
+                  (Or_error.error_string "Game already in progress")
+              else (
+                if is_ready
+                then Hash_set.add room.ready player_name
+                else Hash_set.remove room.ready player_name;
+                broadcast room (lobby_event room);
+                return (Ok ())))
         ]
       ~on_unknown_rpc:`Close_connection
       ~on_exception:Log_on_background_exn
@@ -706,6 +749,7 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                       so the game ends and the room can be forgotten *)
                    room.game_state <- None;
                    Hashtbl.clear room.clients;
+                   Hash_set.clear room.ready;
                    Core.print_s
                      [%message
                        "All players left. Game abandoned."
@@ -722,15 +766,13 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                    | _ -> ()))
              else (
                Hashtbl.remove room.clients name;
+               Hash_set.remove room.ready name;
                Core.print_s
                  [%message
                    "Player left the lobby"
                      (room.code : string)
                      (name : string)];
-               broadcast
-                 room
-                 (Action.Server_to_client.Lobby_updated
-                    { players = Hashtbl.keys room.clients });
+               broadcast room (lobby_event room);
                maybe_remove_room t room);
              Deferred.unit
            | _ -> Deferred.unit);

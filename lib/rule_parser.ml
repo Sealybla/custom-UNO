@@ -360,6 +360,7 @@ module Lint = struct
     type t =
       | Missing_play
       | Missing_advance
+      | Dead_rule (* an identical condition always wins over this rule *)
     [@@deriving sexp, compare, equal]
   end
 
@@ -411,8 +412,36 @@ let lint (named : (string * Rule.t) list) : Lint.t list =
       ])
 ;;
 
+(* a rule with the exact same condition as another rule that always beats
+   it (higher priority anywhere, or equal priority defined earlier) can
+   never fire. Overlapping-but-different conditions are a semantic question
+   the linter stays out of; identical ones are a plain mistake. *)
+let dead_rule_warnings (named : (string * Rule.t) list) : Lint.t list =
+  List.filter_mapi named ~f:(fun i (name, rule) ->
+    let killer =
+      List.find_mapi named ~f:(fun j (other_name, other) ->
+        if j <> i
+           && Rule.Condition.equal other.condition rule.condition
+           && (other.priority > rule.priority
+               || (other.priority = rule.priority && j < i))
+        then Some other_name
+        else None)
+    in
+    Option.map killer ~f:(fun killer ->
+      { Lint.rule_name = name
+      ; kind = Dead_rule
+      ; message =
+          sprintf
+            "rule \"%s\" can never fire - rule \"%s\" has the same \
+             condition and always wins (higher priority first; a tie goes \
+             to the rule defined first)"
+            name
+            killer
+      }))
+;;
+
 (* parse plus the lint warnings, for editor feedback *)
 let parse_ruleset_checked src : (Rule.t list * Lint.t list) Or_error.t =
   let%map named = parse_ruleset_named src in
-  List.map named ~f:snd, lint named
+  List.map named ~f:snd, lint named @ dead_rule_warnings named
 ;;

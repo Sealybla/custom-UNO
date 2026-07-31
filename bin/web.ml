@@ -66,10 +66,12 @@ let card_json (card : Card.t) =
 
 let event_json (event : Action.Server_to_client.t) =
   match event with
-  | Lobby_updated { players } ->
+  | Lobby_updated { players; ready_players; last_winner } ->
     sprintf
-      {|{"type":"lobby","players":%s}|}
+      {|{"type":"lobby","players":%s,"ready":%s,"last_winner":%s}|}
       (jlist (List.map players ~f:jstr))
+      (jlist (List.map ready_players ~f:jstr))
+      (match last_winner with Some w -> jstr w | None -> "null")
   | Game_started
       { your_hand
       ; top_card
@@ -119,11 +121,12 @@ let event_json (event : Action.Server_to_client.t) =
       {|{"type":"countdown","player":%s,"seconds":%d}|}
       (jstr player_name)
       seconds
-  | Rules_updated { player_name; num_rules } ->
+  | Rules_updated { player_name; num_rules; rules_text } ->
     sprintf
-      {|{"type":"rules_updated","player":%s,"num_rules":%d}|}
+      {|{"type":"rules_updated","player":%s,"num_rules":%d,"rules_text":%s}|}
       (jstr player_name)
       num_rules
+      (jstr rules_text)
   | Action_rejected { reason } ->
     sprintf {|{"type":"rejected","reason":%s}|} (jstr reason)
   | Player_skipped { player_name } ->
@@ -250,6 +253,11 @@ let submit_rules t ~code ~name ~text =
     rpc_result (Rpc.Rpc.dispatch Rpc_protocol.submit_rules_rpc session.conn text))
 ;;
 
+let set_ready t ~code ~name ~is_ready =
+  with_session t ~code ~name ~f:(fun session ->
+    rpc_result (Rpc.Rpc.dispatch Rpc_protocol.set_ready_rpc session.conn is_ready))
+;;
+
 let poll t ~code ~name =
   with_session t ~code ~name ~f:(fun session ->
     let events = Queue.to_list session.events in
@@ -317,7 +325,8 @@ let handle t ~body req =
            (jstr
               (match w.kind with
                | Missing_play -> "missing_play"
-               | Missing_advance -> "missing_advance"))
+               | Missing_advance -> "missing_advance"
+               | Dead_rule -> "dead_rule"))
            (jstr w.message)
        in
        respond_json
@@ -355,6 +364,14 @@ let handle t ~body req =
         respond_json (sprintf {|{"ok":true,"events":%s}|} (jlist events)))
   | "/api/start" ->
     with_ident (fun ~code ~name -> respond_result (start_game t ~code ~name))
+  | "/api/ready" ->
+    with_ident (fun ~code ~name ->
+      let is_ready =
+        match Uri.get_query_param uri "on" with
+        | Some "false" -> false
+        | _ -> true
+      in
+      respond_result (set_ready t ~code ~name ~is_ready))
   | "/api/draw" ->
     with_ident (fun ~code ~name ->
       respond_result (take_action t ~code ~name ~action:Action.Client_to_server.Draw))

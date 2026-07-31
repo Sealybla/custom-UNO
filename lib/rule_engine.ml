@@ -436,9 +436,15 @@ let rec process_event
     | Some w -> Or_error.error_s [%message "Game is over" ~winner:(w : int)]
     | None -> Ok ()
   in
+  (* highest priority first; among equal priorities the lower id wins, and
+     the parser assigns ids in definition order - so "priority first, then
+     the rule defined first" is guaranteed explicitly, not via sort
+     stability *)
   let sorted_rules =
     List.sort rules ~compare:(fun r1 r2 ->
-      Int.compare r2.priority r1.priority)
+      match Int.compare r2.priority r1.priority with
+      | 0 -> Int.compare r1.id r2.id
+      | c -> c)
   in
   let matching_rules =
     List.filter sorted_rules ~f:(fun rule ->

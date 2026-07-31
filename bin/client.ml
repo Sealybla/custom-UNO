@@ -4,8 +4,13 @@ open! Custom_uno
 
 let print_event (event : Action.Server_to_client.t) =
   match event with
-  | Lobby_updated { players } ->
-    print_s [%message "lobby" (players : string list)]
+  | Lobby_updated { players; ready_players; last_winner } ->
+    print_s
+      [%message
+        "lobby"
+          (players : string list)
+          (ready_players : string list)
+          (last_winner : string option)]
   | Game_started
       { your_hand; top_card; current_color; player_names; current_player_name
       ; pending_draws; stacking_enabled
@@ -41,7 +46,7 @@ let print_event (event : Action.Server_to_client.t) =
     print_s [%message "UNO!" (player_name : string)]
   | Turn_countdown { player_name; seconds } ->
     print_s [%message "turn countdown" (player_name : string) (seconds : int)]
-  | Rules_updated { player_name; num_rules } ->
+  | Rules_updated { player_name; num_rules; rules_text = _ } ->
     print_s [%message "rules updated" (player_name : string) (num_rules : int)]
   | Action_rejected { reason } -> print_s [%message "rejected" (reason : string)]
   | Player_skipped { player_name } ->
@@ -77,6 +82,16 @@ let handle_line conn line =
   | [ "pass" ] ->
     let%map result =
       Rpc.Rpc.dispatch_exn Rpc_protocol.take_action_rpc conn Action.Client_to_server.Pass
+    in
+    (match result with
+     | Ok () -> ()
+     | Error e -> print_s [%message "error" (e : Error.t)])
+  | [ (("ready" | "unready") as word) ] ->
+    let%map result =
+      Rpc.Rpc.dispatch_exn
+        Rpc_protocol.set_ready_rpc
+        conn
+        (String.equal word "ready")
     in
     (match result with
      | Ok () -> ()
@@ -120,7 +135,7 @@ let handle_line conn line =
   | [ "" ] -> Deferred.unit
   | _ ->
     print_endline
-      "commands: start | draw | pass | play <card_id> [red|green|blue|yellow] | rules <file>";
+      "commands: ready | unready | start | draw | pass | play <card_id> [red|green|blue|yellow] | rules <file>";
     Deferred.unit
 ;;
 
@@ -153,7 +168,7 @@ let run ~host ~port ~name ~room ~create_room =
     Rpc.Pipe_rpc.dispatch_exn Rpc_protocol.game_stream_rpc conn ()
   in
   don't_wait_for (Pipe.iter_without_pushback reader ~f:print_event);
-  print_endline "commands: start | draw | pass | play <card_id> [color] | rules <file>";
+  print_endline "commands: ready | unready | start | draw | pass | play <card_id> [color] | rules <file>";
   Pipe.iter (Reader.lines (Lazy.force Reader.stdin)) ~f:(handle_line conn)
 ;;
 

@@ -1080,3 +1080,79 @@ let%expect_test "close stack parses as clear stack" =
   print_s [%message (Rule_engine.Ruleset.equal close clear : bool)];
   [%expect {| ("Rule_engine.Ruleset.equal close clear" true) |}]
 ;;
+
+(* ties are broken by definition order - explicitly, via ids, not sort
+   stability. Pinned so a refactor cannot silently flip which rule wins. *)
+let%expect_test "equal-priority ties go to the rule defined first" =
+  let color_after text =
+    let rules = Rule_parser.parse_ruleset text |> Or_error.ok_exn in
+    let rev = { Card.color = Green; value = Reverse; id = 960 } in
+    let top = { Card.color = Green; value = Five; id = 961 } in
+    let t =
+      Game_state.for_testing
+        ~player_hands:[ "a", [ rev ]; "b", []; "c", [] ]
+        ~top_card:top
+        ~draw_pile:[]
+        ~pending_draws:0
+        ~turn:0
+    in
+    let t =
+      Rule_engine.apply_action rules t ~player_id:0
+        ~action:(Play { card_id = 960; declared_color = None })
+      |> Or_error.ok_exn
+    in
+    t.current_color
+  in
+  let red_first =
+    color_after
+      {|rule "a": when card is reverse and your turn do play the card, set color to red, advance turn
+rule "b": when card is reverse and your turn do play the card, set color to blue, advance turn|}
+  in
+  let blue_first =
+    color_after
+      {|rule "b": when card is reverse and your turn do play the card, set color to blue, advance turn
+rule "a": when card is reverse and your turn do play the card, set color to red, advance turn|}
+  in
+  (* and a same-priority custom rule loses its tie against a preset special,
+     because `use` expands at the top of the text *)
+  let vs_preset =
+    color_after
+      {|use standard
+rule "my red reverse" priority 100:
+  when card is reverse and your turn
+  do play the card, set color to red, reverse direction, advance turn|}
+  in
+  print_s
+    [%message
+      (red_first : Card.Color.t)
+        (blue_first : Card.Color.t)
+        (vs_preset : Card.Color.t)];
+  [%expect {| ((red_first Red) (blue_first Blue) (vs_preset Green)) |}]
+;;
+
+(* the checker calls out a rule that can never fire because an identical
+   condition always beats it - by priority or by definition order *)
+let%expect_test "lint flags dead rules with identical conditions" =
+  let check text =
+    match Rule_parser.parse_ruleset_checked text with
+    | Error e -> print_s [%message (e : Error.t)]
+    | Ok (_, warnings) ->
+      print_s
+        [%message (List.map warnings ~f:(fun w -> w.Rule_parser.Lint.message) : string list)]
+  in
+  (* same priority: the later twin is dead *)
+  check
+    {|rule "a": when card is reverse and your turn do play the card, set color to red, advance turn
+rule "b": when card is reverse and your turn do play the card, set color to blue, advance turn|};
+  (* higher priority elsewhere: the weaker twin is dead regardless of order *)
+  check
+    {|rule "weak" priority 10: when player passes and your turn do advance turn
+rule "strong" priority 90: when player passes and your turn do advance turn|};
+  [%expect
+    {|
+    ("List.map warnings ~f:(fun w -> w.Rule_parser.Lint.message)"
+     ("rule \"b\" can never fire - rule \"a\" has the same condition and always wins (higher priority first; a tie goes to the rule defined first)"))
+    ("List.map warnings ~f:(fun w -> w.Rule_parser.Lint.message)"
+     ("rule \"weak\" can never fire - rule \"strong\" has the same condition and always wins (higher priority first; a tie goes to the rule defined first)"))
+    |}]
+;;
