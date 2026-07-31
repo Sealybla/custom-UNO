@@ -870,15 +870,20 @@ function apply(ev, fx){
 const NUMBER_VALUES = new Set(['Zero','One','Two','Three','Four','Five',
                                'Six','Seven','Eight','Nine']);
 
+// mirrors Game_rules.matches_color: no colour in force (the game opened on a
+// flipped wild) means every card satisfies the colour test
+const matchesColor = (card) =>
+  state.color === 'NoColor' || card.color === state.color;
+
 function isPlayable(card){
   if (state.stackValue) return card.value === state.stackValue;
   if (state.pending > 0)
     // only stacking another +2/+4 dodges a pending penalty
     return card.value === 'Wild4' ||
            (card.value === 'Plus' &&
-            (card.color === state.color || (state.top && state.top.value === 'Plus')));
+            (matchesColor(card) || (state.top && state.top.value === 'Plus')));
   if (card.value === 'Wild' || card.value === 'Wild4') return true;
-  return card.color === state.color || (state.top && card.value === state.top.value);
+  return matchesColor(card) || (state.top && card.value === state.top.value);
 }
 
 // lift + glow every playable card; gold-pulse the ones that can be chained

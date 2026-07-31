@@ -770,6 +770,69 @@ let%expect_test "wild cannot dodge pending draws" =
     |}]
 ;;
 
+(* A game that opens on a flipped wild has no colour in force, so the first
+   player leads with whatever they like - including specials. *)
+let%expect_test "any card opens the game on a flipped wild" =
+  let wild_top = { Card.color = NoColor; value = Wild; id = 990 } in
+  let candidates =
+    [ { Card.color = Red; value = Seven; id = 991 }
+    ; { Card.color = Blue; value = Skip; id = 992 }
+    ; { Card.color = Green; value = Plus; id = 993 }
+    ; { Card.color = NoColor; value = Wild4; id = 994 }
+    ]
+  in
+  List.iter candidates ~f:(fun (card : Card.t) ->
+    let t =
+      Game_state.for_testing
+        ~player_hands:[ "a", [ card ]; "b", [] ]
+        ~top_card:wild_top
+        ~draw_pile:(Game_state.create_card_deck ())
+        ~pending_draws:0
+        ~turn:0
+    in
+    let declared_color =
+      match card.value with Wild | Wild4 -> Some Card.Color.Red | _ -> None
+    in
+    let result =
+      Rule_engine.apply_action
+        Rule_engine.Ruleset.default
+        t
+        ~player_id:0
+        ~action:(Play { card_id = card.id; declared_color })
+    in
+    let value = card.value in
+    let accepted = Or_error.is_ok result in
+    print_s [%message (value : Card.Value.t) (accepted : bool)]);
+  (* once a real colour is in force the usual matching rules apply again *)
+  let red_top = { Card.color = Red; value = Three; id = 995 } in
+  let mismatch = { Card.color = Blue; value = Seven; id = 996 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ mismatch ]; "b", [] ]
+      ~top_card:red_top
+      ~draw_pile:(Game_state.create_card_deck ())
+      ~pending_draws:0
+      ~turn:0
+  in
+  let rejected =
+    Or_error.is_error
+      (Rule_engine.apply_action
+         Rule_engine.Ruleset.default
+         t
+         ~player_id:0
+         ~action:(Play { card_id = 996; declared_color = None }))
+  in
+  print_s [%message "blue seven on a red three" (rejected : bool)];
+  [%expect
+    {|
+    ((value Seven) (accepted true))
+    ((value Skip) (accepted true))
+    ((value Plus) (accepted true))
+    ((value Wild4) (accepted true))
+    ("blue seven on a red three" (rejected true))
+    |}]
+;;
+
 (* ---------- the UNO button ---------- *)
 
 (* Three players. "a" is one card away from UNO and holds a spare so that
