@@ -267,16 +267,45 @@ module Ruleset = struct
     }
   ;;
 
+  (* The UNO button, in three rules ordered by priority: claiming your own
+     UNO beats catching someone else's, which beats a bare press.
+
+     These sit above every other priority in the game on purpose. A few
+     conditions (PendingDrawsGreaterThan, IsPlayerTurn) never look at the
+     event, so a rule like "take penalty" would happily match an UNO press
+     if it ever outranked these. The last rule matches any UNO press at all,
+     so a press is always resolved here and never falls through. *)
+  let uno_rules : t =
+    [ { id = 30
+      ; priority = 200
+      ; condition = And (IsUnoCall, CallerHasUno)
+      ; actions = [ Mutate MarkUnoCalled ]
+      }
+    ; { id = 31
+      ; priority = 190
+      ; condition = And (IsUnoCall, SomeoneElseHasUno)
+      ; actions = [ Mutate (PenalizeUnoTarget 2) ]
+      }
+    ; { id = 32
+      ; priority = 180
+      ; condition = IsUnoCall
+      ; actions = [ Mutate (PenalizeUnoCaller 2) ]
+      }
+    ]
+  ;;
+
   let default : t =
     base_special_rules
     @ immediate_draw_rules
     @ [ generic_play_rule; draw_decide_rule; pass_after_draw_rule ]
+    @ uno_rules
   ;;
 
   let draw_until_variant : t =
     base_special_rules
     @ immediate_draw_rules
     @ [ generic_play_rule; draw_until_rule; pass_after_draw_rule ]
+    @ uno_rules
   ;;
 
   let stacking_variant : t =
@@ -288,6 +317,7 @@ module Ruleset = struct
       ; draw_decide_rule
       ; pass_after_draw_rule
       ]
+    @ uno_rules
   ;;
 
   (* does any rule open a stack? tells the UI to mark stackable cards *)
@@ -317,6 +347,7 @@ let event_of_client_action
     Event.CardPlayed { player; card; declared_color }
   | Draw -> Ok (DrawRequested { player })
   | Pass -> Ok (Event.PassRequested { player })
+  | Call_uno -> Ok (Event.UnoCalled { player })
   | Join_lobby _ | Quit ->
     Or_error.error_s
       [%message "Non-gameplay action" (action : Action.Client_to_server.t)]
@@ -350,8 +381,9 @@ let rec eval_condition
     (match evt with
      | CardPlayed { player; _ }
      | DrawRequested { player }
-     | PassRequested { player } ->
-       Int.equal (Player.get_id player) state.turn)
+     | PassRequested { player }
+     (* an UNO press is not turn-gated, but asking is still meaningful *)
+     | UnoCalled { player } -> Int.equal (Player.get_id player) state.turn)
   | IsSkip ->
     (match evt with
      | CardPlayed { card; _ } -> Card.Value.equal (Card.get_value card) Skip
@@ -380,6 +412,22 @@ let rec eval_condition
   | StackIsOpen -> Option.is_some state.stacking_value
   | DrewPlayableCard -> state.drew_playable
   | IsPassAction -> (match evt with PassRequested _ -> true | _ -> false)
+  | IsUnoCall -> (match evt with UnoCalled _ -> true | _ -> false)
+  | CallerHasUno ->
+    (* deliberately "holds one card", not "is catchable": a player whose
+       window already closed should still be able to press the button
+       without being fined for it *)
+    (match evt with
+     | UnoCalled { player } ->
+       Int.equal (Game_state.hand_size state (Player.get_id player)) 1
+     | _ -> false)
+  | SomeoneElseHasUno ->
+    (match evt with
+     | UnoCalled { player } ->
+       (match state.uno_vulnerable with
+        | Some victim -> not (Int.equal victim (Player.get_id player))
+        | None -> false)
+     | _ -> false)
   | And (c1, c2) ->
     eval_condition state evt c1 && eval_condition state evt c2
   | Or (c1, c2) -> eval_condition state evt c1 || eval_condition state evt c2
@@ -469,5 +517,8 @@ let apply_action
       Or_error.error_s [%message "Player ID not found" (player_id : int)]
   in
   let%bind evt = event_of_client_action state ~player ~action in
-  process_event rules state evt
+  let%map next_state = process_event rules state evt in
+  (* window bookkeeping sits outside the ruleset on purpose - see
+     Game_state.update_uno_window *)
+  Game_state.update_uno_window next_state ~actor_id:player_id ~event:evt
 ;;

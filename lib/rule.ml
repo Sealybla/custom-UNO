@@ -23,6 +23,12 @@ module Condition = struct
     | StackIsOpen
     | DrewPlayableCard
     | IsPassAction
+    (* the UNO button was pressed *)
+    | IsUnoCall
+    (* whoever pressed it is down to a single card *)
+    | CallerHasUno
+    (* somebody else is sitting on one card with their window still open *)
+    | SomeoneElseHasUno
     | And of t * t
     | Or of t * t
     | Not of t

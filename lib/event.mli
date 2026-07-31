@@ -9,4 +9,5 @@ type t =
       }
   | DrawRequested of { player : Player.t }
   | PassRequested of { player : Player.t }
+  | UnoCalled of { player : Player.t }
 [@@deriving sexp, compare, equal, bin_io]

@@ -128,6 +128,11 @@ let parse_atom (toks : tokens) : (Rule.Condition.t * tokens) Or_error.t =
     Ok (DrewPlayableCard, rest)
   | (Word "player", _) :: (Word "draws", _) :: rest -> Ok (IsDrawAction, rest)
   | (Word "player", _) :: (Word "passes", _) :: rest -> Ok (IsPassAction, rest)
+  | (Word "player", _) :: (Word "calls", _) :: (Word "uno", _) :: rest ->
+    Ok (IsUnoCall, rest)
+  | (Word "someone", _) :: (Word "has", _) :: (Word "uno", _) :: rest ->
+    Ok (SomeoneElseHasUno, rest)
+  | (Word "has", _) :: (Word "uno", _) :: rest -> Ok (CallerHasUno, rest)
   | _ -> Or_error.errorf "unknown condition (%s)" (where toks)
 ;;
 
@@ -210,6 +215,12 @@ let parse_effect (toks : tokens) : (Game_state.Effect.t list * tokens) Or_error.
   | (Word "advance", _) :: (Word "turn", _) :: rest -> Ok ([ AdvanceTurn ], rest)
   | (Word "skip", _) :: (Word "next", _) :: (Word "player", _) :: rest ->
     Ok ([ AdvanceTurn; AdvanceTurn ], rest)
+  | (Word "mark", _) :: (Word "uno", _) :: (Word "called", _) :: rest ->
+    Ok ([ MarkUnoCalled ], rest)
+  | (Word "penalize", _) :: (Word "caller", _) :: (Int n, _)
+    :: (Word ("card" | "cards"), _) :: rest -> Ok ([ PenalizeUnoCaller n ], rest)
+  | (Word "penalize", _) :: (Word "uncalled", _) :: (Word "player", _) :: (Int n, _)
+    :: (Word ("card" | "cards"), _) :: rest -> Ok ([ PenalizeUnoTarget n ], rest)
   | _ -> Or_error.errorf "unknown effect (%s)" (where toks)
 ;;
 

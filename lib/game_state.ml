@@ -34,6 +34,12 @@ module Effect = struct
     | ClearStackingValue
     | AdvanceTurn
     | CheckWinner
+    (* the caller is safe: shuts their own catch window *)
+    | MarkUnoCalled
+    (* the caller pressed UNO with nothing to claim *)
+    | PenalizeUnoCaller of int
+    (* the caller caught somebody sitting on one card *)
+    | PenalizeUnoTarget of int
   [@@deriving sexp, compare, equal, bin_io]
 end
 
@@ -54,6 +60,11 @@ type t =
        the server how many seats the turn moved (2+ means someone was
        skipped), which drives the "you got skipped" notifications *)
   ; turn : int
+  ; uno_vulnerable : int Option.t
+    (* the one player who can currently be caught for not calling UNO: they
+       played down to a single card and nobody has taken a gameplay turn
+       since. At most one player can be in this position at a time, because
+       only the actor's own hand can shrink on their move. *)
   ; card_registry : Card_registry.t
   ; winner : int Option.t
   }
@@ -80,6 +91,7 @@ let for_testing ~player_hands ~top_card ~draw_pile ~pending_draws ~turn =
   ; drew_playable = false
   ; turns_advanced = 0
   ; turn
+  ; uno_vulnerable = None
   ; card_registry = Card_registry.of_cards all_cards
   ; winner = None
   }
@@ -166,6 +178,27 @@ let player_of_event (event : Event.t) =
   | CardPlayed { player; _ } -> Ok player
   | DrawRequested { player } -> Ok player
   | PassRequested { player } -> Ok player
+  | UnoCalled { player } -> Ok player
+;;
+
+(* a gameplay move consumes a turn; an UNO press does not. Only the former
+   closes an opponent's catch window. *)
+let is_gameplay_event (event : Event.t) =
+  match event with
+  | CardPlayed _ | DrawRequested _ | PassRequested _ -> true
+  | UnoCalled _ -> false
+;;
+
+let hand_size t player_id =
+  match List.nth t.players player_id with
+  | Some p -> List.length (Player.get_hand p)
+  | None -> 0
+;;
+
+(* [n] cards off the top of the pile into one player's hand *)
+let draw_n t player_id n =
+  List.fold_result (List.init n ~f:Fn.id) ~init:t ~f:(fun s _ ->
+    draw_card_player s player_id)
 ;;
 
 (* Builds the initial game state: creates and shuffles a full deck, makes one
@@ -191,6 +224,7 @@ let create ?random_state ~player_names ~hand_size () : t Or_error.t =
     ; drew_playable = false
     ; turns_advanced = 0
     ; turn = 0
+    ; uno_vulnerable = None
     ; card_registry = Card_registry.of_cards deck
     ; winner = None
     }
@@ -319,6 +353,26 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
     let%map card = card_of_event event in
     { t with stacking_value = Some (Card.get_value card) }
   | ClearStackingValue -> Ok { t with stacking_value = None }
+  | MarkUnoCalled ->
+    (* only clears the caller's own window. Calling while safe (or while
+       holding a full hand) is a harmless no-op here; the rule that lets a
+       bare press through is what decides whether it costs cards. *)
+    let%map player = player_of_event event in
+    let id = Player.get_id player in
+    if Option.exists t.uno_vulnerable ~f:(Int.equal id)
+    then { t with uno_vulnerable = None }
+    else t
+  | PenalizeUnoCaller n ->
+    let%bind player = player_of_event event in
+    draw_n t (Player.get_id player) n
+  | PenalizeUnoTarget n ->
+    (match t.uno_vulnerable with
+     | None ->
+       Or_error.error_string "No player is open to an UNO catch right now"
+     | Some victim ->
+       (* the catch is spent whether or not it stung *)
+       let%map t = draw_n t victim n in
+       { t with uno_vulnerable = None })
   | AdvanceTurn -> Ok (advance_turn t)
   | CheckWinner ->
     let%map player = player_of_event event in
@@ -332,4 +386,36 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
       | _ -> None
     in
     { t with winner }
+;;
+
+(* Bookkeeping for the UNO catch window, run by Rule_engine.apply_action once
+   per action, after the rules have had their say. Deliberately not an Effect:
+   a player editing the rules in the browser must not be able to rewrite the
+   window out from under everyone else.
+
+   [actor_id] is whoever took the action and [event] is what they did.
+   Returns the state with [uno_vulnerable] brought up to date. *)
+let update_uno_window t ~(actor_id : int) ~(event : Event.t) : t =
+  if not (is_gameplay_event event)
+  then
+    (* an UNO press is not a turn. The effects own the window here:
+       MarkUnoCalled shuts it, PenalizeUnoTarget spends it. Recomputing
+       would immediately re-open the window on the caller and undo the very
+       call they just made. *)
+    t
+  else (
+    (* One assignment covers both halves of "vulnerable until the next
+       player acts". Only the actor's own hand can shrink on their move, so
+       any window that was standing belonged to someone whose turn has now
+       been followed by a gameplay action - it closes no matter whose it
+       was - and the only player who can be newly catchable is the actor.
+
+       Falls out of this for free: playing your last card wins rather than
+       leaving you catchable (hand 0), drawing back up to two closes your
+       own window, and acting twice in one turn mid-stack keeps it open,
+       since nobody else has acted in between. *)
+    let vulnerable =
+      if Int.equal (hand_size t actor_id) 1 then Some actor_id else None
+    in
+    { t with uno_vulnerable = vulnerable })
 ;;

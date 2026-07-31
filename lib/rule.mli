@@ -23,6 +23,9 @@ module Condition : sig
     | StackIsOpen
     | DrewPlayableCard
     | IsPassAction
+    | IsUnoCall
+    | CallerHasUno
+    | SomeoneElseHasUno
     | And of t * t
     | Or of t * t
     | Not of t

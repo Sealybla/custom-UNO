@@ -40,6 +40,9 @@ rule "play plus two" priority 100:
 | `drew playable card` | `DrewPlayableCard` |
 | `player draws` | `IsDrawAction` |
 | `player passes` | `IsPassAction` |
+| `player calls uno` | `IsUnoCall` |
+| `has uno` | `CallerHasUno` (the presser holds exactly one card) |
+| `someone has uno` | `SomeoneElseHasUno` (another player is catchable) |
 | `<c> and <c>` / `<c> or <c>` / `not <c>` / `( <c> )` | `And` / `Or` / `Not` / grouping |
 
 Precedence: `not` binds tightest, then `and`, then `or` (conventional).
@@ -64,6 +67,9 @@ Parentheses override.
 | `clear stack` | `ClearStackingValue` |
 | `advance turn` | `AdvanceTurn` |
 | `skip next player` | sugar for `AdvanceTurn; AdvanceTurn` |
+| `mark uno called` | `MarkUnoCalled` (shuts the presser's own catch window) |
+| `penalize caller N cards` | `PenalizeUnoCaller N` |
+| `penalize uncalled player N cards` | `PenalizeUnoTarget N` |
 
 Each effect becomes a `Mutate` in `Rule.t.actions`. `Sequence` and
 `Chain_event` are not exposed in v1: the flat effect list already is a
@@ -73,6 +79,44 @@ text can't name.
 **Implicit `CheckWinner`:** the parser appends `Mutate CheckWinner`
 immediately after every `play the card`. Forgetting it would mean wins
 silently never register — too sharp a footgun to leave to users.
+
+## The UNO button
+
+Pressing UNO is its own action, separate from playing/drawing/passing. It
+never consumes a turn and anyone may press at any time, so the three UNO
+rules are resolved purely by priority:
+
+```
+rule "call uno" priority 200:
+  when player calls uno and has uno
+  do mark uno called
+
+rule "catch uno" priority 190:
+  when player calls uno and someone has uno
+  do penalize uncalled player 2 cards
+
+rule "false uno call" priority 180:
+  when player calls uno
+  do penalize caller 2 cards
+```
+
+Read top to bottom, that says: protecting yourself beats catching somebody
+else, and catching somebody beats a press with nothing behind it. The last
+rule matches *any* press, so a press is always resolved by these rules and
+never falls through to a turn rule — keep these priorities above everything
+else, because conditions like `pending draws > N` and `your turn` do not
+look at what the player actually did and would otherwise match a press.
+
+**Who is catchable.** A player becomes catchable the moment they play down
+to one card, and stops being catchable as soon as *another* player takes a
+gameplay turn. Only one player can be catchable at a time, since only the
+acting player's hand can shrink on their own move. This window is tracked by
+`Game_state.update_uno_window` and is deliberately *not* an effect — rules
+can spend the window but cannot redefine it.
+
+`has uno` means "holds exactly one card", not "is catchable". A player whose
+window has already closed can still press the button harmlessly rather than
+being fined for it.
 
 ## EBNF
 

@@ -218,6 +218,75 @@ let maybe_schedule_bot (room : Room.t) next_state current_player_name =
   | _ -> ()
 ;;
 
+(* A bot that just played down to one card has to press the button like
+   everyone else, or every bot seat would be a free catch. It calls after a
+   beat, which is what leaves humans a real window to beat it to the press.
+   The re-check on wake matters: by then somebody may already have caught it,
+   in which case the window is shut and calling would be a fineable
+   false alarm. *)
+let maybe_bot_calls_uno (room : Room.t) (next_state : Game_state.t) =
+  match next_state.uno_vulnerable with
+  | None -> ()
+  | Some player_id ->
+    (match name_of_player_id next_state player_id with
+     | None -> ()
+     | Some player_name ->
+       (match Hashtbl.find room.clients player_name with
+        | Some client when client.is_bot ->
+          don't_wait_for
+            (let%map () = Clock_ns.after (Time_ns.Span.of_sec 2.0) in
+             match room.game_state with
+             | None -> ()
+             | Some verified_state ->
+               if Option.exists verified_state.Game_state.uno_vulnerable
+                    ~f:(Int.equal player_id)
+               then
+                 Pipe.write_without_pushback
+                   room.request_writer
+                   { Queued_request.player_name
+                   ; action = Action.Client_to_server.Call_uno
+                   ; enqueued_at = Time_ns.now ()
+                   })
+        | _ -> ()))
+;;
+
+(* An UNO press never moves the turn and never triggers an ordinary draw, so
+   it reports itself rather than going through the skip/forced-draw diffing
+   below. Whoever gained cards paid a penalty; if nobody did, the call stood.
+   [caught] separates "you sat on one card too long" from "you pressed it for
+   no reason", which the UI phrases differently. *)
+let broadcast_uno_result
+  (room : Room.t)
+  ~(before : Game_state.t)
+  ~(after : Game_state.t)
+  ~caller_name
+  =
+  let penalized =
+    List.filter_mapi after.players ~f:(fun idx p ->
+      let was =
+        match List.nth before.players idx with
+        | Some q -> List.length (Player.get_hand q)
+        | None -> 0
+      in
+      let grew = List.length (Player.get_hand p) - was in
+      if grew > 0 then Some (Player.get_name p, grew) else None)
+  in
+  match penalized with
+  | [] ->
+    broadcast
+      room
+      (Action.Server_to_client.Uno_called { player_name = caller_name })
+  | penalized ->
+    List.iter penalized ~f:(fun (player_name, count) ->
+      broadcast
+        room
+        (Action.Server_to_client.Uno_penalty
+           { player_name
+           ; count
+           ; caught = not (String.equal player_name caller_name)
+           }))
+;;
+
 (* Compare the states around one action and broadcast what happened to whom:
    who was skipped, who was forced to draw, and direction flips. These are
    pure notifications - the UI turns them into splashes and seat badges. *)
@@ -339,19 +408,23 @@ let start_engine_loop t (room : Room.t) request_reader =
                       });
                  send_hands room next_state;
                  broadcast room (hand_counts_event next_state);
-                 broadcast_notifications
-                   room
-                   ~before:current_state
-                   ~after:next_state
-                   ~actor_id:player_id;
-                 (match List.nth next_state.players player_id with
-                  | Some p when Int.equal (List.length (Player.get_hand p)) 1
-                    ->
-                    broadcast
+                 (* an UNO press is not a gameplay move; announcing it as one
+                    would also announce who is catchable, which is exactly
+                    the information the button is a race for *)
+                 (match action with
+                  | Action.Client_to_server.Call_uno ->
+                    broadcast_uno_result
                       room
-                      (Action.Server_to_client.Uno_called
-                         { player_name = Player.get_name p })
-                  | _ -> ());
+                      ~before:current_state
+                      ~after:next_state
+                      ~caller_name:player_name
+                  | _ ->
+                    broadcast_notifications
+                      room
+                      ~before:current_state
+                      ~after:next_state
+                      ~actor_id:player_id);
+                 maybe_bot_calls_uno room next_state;
                  (match next_state.winner with
                   | Some winner_id ->
                     (match name_of_player_id next_state winner_id with

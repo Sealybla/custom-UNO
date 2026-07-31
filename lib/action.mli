@@ -7,6 +7,7 @@ module Client_to_server : sig
                 declared_color : Card.Color.t Option.t }
     | Draw
     | Pass
+    | Call_uno
     | Quit
   [@@deriving sexp, compare, equal, bin_io]
 end
@@ -35,6 +36,11 @@ module Server_to_client : sig
     | Hand_counts of { counts : (String.t * Int.t) List.t }
     | Game_over of { winner_name : String.t }
     | Uno_called of { player_name : String.t }
+    | Uno_penalty of
+        { player_name : String.t
+        ; count : Int.t
+        ; caught : Bool.t
+        }
     | Rules_updated of { player_name : String.t; num_rules : Int.t }
     | Action_rejected of { reason : String.t }
     | Player_skipped of { player_name : String.t }

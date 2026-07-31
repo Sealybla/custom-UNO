@@ -39,6 +39,12 @@ let print_event (event : Action.Server_to_client.t) =
     print_s [%message "hand counts" (counts : (string * int) list)]
   | Uno_called { player_name } ->
     print_s [%message "UNO!" (player_name : string)]
+  | Uno_penalty { player_name; count; caught } ->
+    print_s
+      [%message
+        (if caught then "caught without calling UNO" else "bad UNO call")
+          (player_name : string)
+          (count : int)]
   | Rules_updated { player_name; num_rules } ->
     print_s [%message "rules updated" (player_name : string) (num_rules : int)]
   | Action_rejected { reason } -> print_s [%message "rejected" (reason : string)]
@@ -75,6 +81,16 @@ let handle_line conn line =
   | [ "pass" ] ->
     let%map result =
       Rpc.Rpc.dispatch_exn Rpc_protocol.take_action_rpc conn Action.Client_to_server.Pass
+    in
+    (match result with
+     | Ok () -> ()
+     | Error e -> print_s [%message "error" (e : Error.t)])
+  | [ "uno" ] ->
+    let%map result =
+      Rpc.Rpc.dispatch_exn
+        Rpc_protocol.take_action_rpc
+        conn
+        Action.Client_to_server.Call_uno
     in
     (match result with
      | Ok () -> ()

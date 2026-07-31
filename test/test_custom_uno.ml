@@ -770,6 +770,202 @@ let%expect_test "wild cannot dodge pending draws" =
     |}]
 ;;
 
+(* ---------- the UNO button ---------- *)
+
+(* Three players. "a" is one card away from UNO and holds a spare so that
+   playing does not win outright. "b" and "c" hold two cards each: a player
+   sitting on an empty hand would hit exactly one card the moment they drew
+   and become catchable themselves, which is real behaviour but not what
+   these tests are about. *)
+let uno_setup () =
+  let playable = { Card.color = Red; value = Seven; id = 940 } in
+  let spare = { Card.color = Blue; value = Two; id = 941 } in
+  let top = { Card.color = Red; value = Three; id = 942 } in
+  let filler n = { Card.color = Green; value = Four; id = 943 + n } in
+  Game_state.for_testing
+    ~player_hands:
+      [ "a", [ playable; spare ]
+      ; "b", [ filler 0; filler 1 ]
+      ; "c", [ filler 2; filler 3 ]
+      ]
+    ~top_card:top
+    ~draw_pile:(Game_state.create_card_deck ())
+    ~pending_draws:0
+    ~turn:0
+;;
+
+let rules = Rule_engine.Ruleset.default
+
+let hand_of (t : Game_state.t) id =
+  List.length (Player.get_hand (List.nth_exn t.players id))
+;;
+
+(* playing down to one card opens the window on the player who did it *)
+let%expect_test "playing to one card makes you catchable" =
+  let t = uno_setup () in
+  print_s [%message "before" (t.uno_vulnerable : int option)];
+  let t =
+    Rule_engine.apply_action
+      rules
+      t
+      ~player_id:0
+      ~action:(Play { card_id = 940; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message "after playing" (t.uno_vulnerable : int option) (t.turn : int)];
+  [%expect
+    {|
+    (before (t.uno_vulnerable ()))
+    ("after playing" (t.uno_vulnerable (0)) (t.turn 1))
+    |}]
+;;
+
+let%expect_test "calling your own UNO closes the window and costs nothing" =
+  let t = uno_setup () in
+  let t =
+    Rule_engine.apply_action
+      rules
+      t
+      ~player_id:0
+      ~action:(Play { card_id = 940; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0 ~action:Call_uno
+    |> Or_error.ok_exn
+  in
+  (* an UNO press is not a turn: it must not move play along *)
+  let hand = hand_of t 0 in
+  print_s
+    [%message (t.uno_vulnerable : int option) (hand : int) (t.turn : int)];
+  [%expect {| ((t.uno_vulnerable ()) (hand 1) (t.turn 1)) |}]
+;;
+
+let%expect_test "catching a silent player costs them the penalty" =
+  let t = uno_setup () in
+  let t =
+    Rule_engine.apply_action
+      rules
+      t
+      ~player_id:0
+      ~action:(Play { card_id = 940; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  (* "b" pounces before "a" says anything *)
+  let t =
+    Rule_engine.apply_action rules t ~player_id:1 ~action:Call_uno
+    |> Or_error.ok_exn
+  in
+  let victim = hand_of t 0 in
+  let catcher = hand_of t 1 in
+  print_s
+    [%message (victim : int) (catcher : int) (t.uno_vulnerable : int option)];
+  (* the catch is spent: a second pounce is now a false call and stings *)
+  let t =
+    Rule_engine.apply_action rules t ~player_id:2 ~action:Call_uno
+    |> Or_error.ok_exn
+  in
+  let caller = hand_of t 2 in
+  print_s [%message "second catch" (caller : int)];
+  [%expect
+    {|
+    ((victim 3) (catcher 2) (t.uno_vulnerable ()))
+    ("second catch" (caller 4))
+    |}]
+;;
+
+let%expect_test "calling UNO with nothing to claim costs you cards" =
+  let t = uno_setup () in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:1 ~action:Call_uno
+    |> Or_error.ok_exn
+  in
+  let caller = hand_of t 1 in
+  print_s [%message (caller : int) (t.turn : int)];
+  [%expect {| ((caller 4) (t.turn 0)) |}]
+;;
+
+(* the window shuts as soon as somebody else takes a real turn *)
+let%expect_test "the catch window closes when the next player acts" =
+  let t = uno_setup () in
+  let t =
+    Rule_engine.apply_action
+      rules
+      t
+      ~player_id:0
+      ~action:(Play { card_id = 940; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:1 ~action:Draw
+    |> Or_error.ok_exn
+  in
+  print_s [%message "after b draws" (t.uno_vulnerable : int option)];
+  (* too late: "c" pressing now is a false call, and "a" keeps her one card *)
+  let t =
+    Rule_engine.apply_action rules t ~player_id:2 ~action:Call_uno
+    |> Or_error.ok_exn
+  in
+  let a = hand_of t 0 in
+  let c = hand_of t 2 in
+  print_s [%message "late catch" (a : int) (c : int)];
+  [%expect
+    {|
+    ("after b draws" (t.uno_vulnerable ()))
+    ("late catch" (a 1) (c 4))
+    |}]
+;;
+
+(* a player whose window already closed is not fined for pressing late -
+   "has uno" asks how many cards you hold, not whether you are catchable *)
+let%expect_test "calling UNO late is harmless while you still hold one card" =
+  let t = uno_setup () in
+  let t =
+    Rule_engine.apply_action
+      rules
+      t
+      ~player_id:0
+      ~action:(Play { card_id = 940; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:1 ~action:Draw
+    |> Or_error.ok_exn
+  in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0 ~action:Call_uno
+    |> Or_error.ok_exn
+  in
+  let a = hand_of t 0 in
+  print_s [%message (a : int)];
+  [%expect {| (a 1) |}]
+;;
+
+(* winning must not leave a phantom catch open on the winner *)
+let%expect_test "playing your last card wins instead of exposing you" =
+  let last = { Card.color = Red; value = Seven; id = 950 } in
+  let top = { Card.color = Red; value = Three; id = 951 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ last ]; "b", []; "c", [] ]
+      ~top_card:top
+      ~draw_pile:(Game_state.create_card_deck ())
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action
+      rules
+      t
+      ~player_id:0
+      ~action:(Play { card_id = 950; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  print_s [%message (t.winner : int option) (t.uno_vulnerable : int option)];
+  [%expect {| ((t.winner (0)) (t.uno_vulnerable ())) |}]
+;;
+
 (* ---------- rule parser: round-trips against the hand-coded rulesets
    ---------- *)
 
@@ -825,7 +1021,6 @@ rule "play reverse" priority 100:
 let deferred_draw_text =
   {|
 rule "play plus two" priority 100:
-  when card is plus two and (card matches color or card matches value) and your turn
   when card is plus two and (card matches color or card matches value) and your turn and not stack is open
   do play the card, set color from card, add 2 pending draws, advance turn
 
@@ -860,6 +1055,23 @@ let pass_after_draw_text =
 rule "pass after draw" priority 1:
   when player passes and your turn and drew playable card
   do advance turn
+|}
+;;
+
+(* the UNO button; shared by every variant *)
+let uno_text =
+  {|
+rule "call uno" priority 200:
+  when player calls uno and has uno
+  do mark uno called
+
+rule "catch uno" priority 190:
+  when player calls uno and someone has uno
+  do penalize uncalled player 2 cards
+
+rule "false uno call" priority 180:
+  when player calls uno
+  do penalize caller 2 cards
 |}
 ;;
 
@@ -910,7 +1122,8 @@ let%expect_test "parsed default ruleset equals hand-coded default" =
      ^ immediate_draw_text
      ^ generic_play_text
      ^ draw_decide_text
-     ^ pass_after_draw_text)
+     ^ pass_after_draw_text
+     ^ uno_text)
     Rule_engine.Ruleset.default;
   [%expect {| parsed rules match the hand-coded ruleset |}]
 ;;
@@ -921,7 +1134,8 @@ let%expect_test "parsed draw-until ruleset equals hand-coded variant" =
      ^ immediate_draw_text
      ^ generic_play_text
      ^ draw_until_text
-     ^ pass_after_draw_text)
+     ^ pass_after_draw_text
+     ^ uno_text)
     Rule_engine.Ruleset.draw_until_variant;
   [%expect {| parsed rules match the hand-coded ruleset |}]
 ;;
@@ -932,7 +1146,8 @@ let%expect_test "parsed stacking ruleset equals hand-coded variant" =
      ^ deferred_draw_text
      ^ stacking_text
      ^ draw_decide_text
-     ^ pass_after_draw_text)
+     ^ pass_after_draw_text
+     ^ uno_text)
     Rule_engine.Ruleset.stacking_variant;
   [%expect {| parsed rules match the hand-coded ruleset |}]
 ;;
@@ -944,7 +1159,8 @@ let%expect_test "parsed stacking ruleset plays a real stacking turn" =
        ^ deferred_draw_text
        ^ stacking_text
        ^ draw_decide_text
-       ^ pass_after_draw_text)
+       ^ pass_after_draw_text
+     ^ uno_text)
     |> Or_error.ok_exn
   in
   let s1 = { Card.color = Red; value = Seven; id = 700 } in

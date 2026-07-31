@@ -23,7 +23,10 @@ module Effect : sig
     | SetStackingValue 
     | ClearStackingValue
     | AdvanceTurn
-    | CheckWinner 
+    | CheckWinner
+    | MarkUnoCalled
+    | PenalizeUnoCaller of int
+    | PenalizeUnoTarget of int
   [@@deriving sexp, compare, equal, bin_io]
 end
 
@@ -39,6 +42,7 @@ type t =
   ; drew_playable : bool
   ; turns_advanced : int
   ; turn : int
+  ; uno_vulnerable : int option
   ; card_registry : Card_registry.t
   ; winner : int option
   }
@@ -68,4 +72,12 @@ val create
   -> unit
   -> t Or_error.t
 
+val hand_size : t -> int -> int
+
+(* a gameplay move consumes a turn; an UNO press does not *)
+val is_gameplay_event : Event.t -> bool
 val apply_effect : t -> event:Event.t -> Effect.t -> t Or_error.t
+
+(* recomputes who can be caught for not calling UNO; called once per action
+   by Rule_engine.apply_action, never from a rule *)
+val update_uno_window : t -> actor_id:int -> event:Event.t -> t

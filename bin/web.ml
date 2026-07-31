@@ -114,6 +114,12 @@ let event_json (event : Action.Server_to_client.t) =
     sprintf {|{"type":"game_over","winner":%s}|} (jstr winner_name)
   | Uno_called { player_name } ->
     sprintf {|{"type":"uno","player":%s}|} (jstr player_name)
+  | Uno_penalty { player_name; count; caught } ->
+    sprintf
+      {|{"type":"uno_penalty","player":%s,"count":%d,"caught":%b}|}
+      (jstr player_name)
+      count
+      caught
   | Rules_updated { player_name; num_rules } ->
     sprintf
       {|{"type":"rules_updated","player":%s,"num_rules":%d}|}
@@ -333,6 +339,10 @@ let handle t ~body req =
   | "/api/pass" ->
     with_ident (fun ~code ~name ->
       respond_result (take_action t ~code ~name ~action:Action.Client_to_server.Pass))
+  | "/api/uno" ->
+    with_ident (fun ~code ~name ->
+      respond_result
+        (take_action t ~code ~name ~action:Action.Client_to_server.Call_uno))
   | "/api/play" ->
     with_ident (fun ~code ~name ->
       match Option.bind (Uri.get_query_param uri "card_id") ~f:Int.of_string_opt with

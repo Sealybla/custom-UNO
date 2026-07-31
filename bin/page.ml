@@ -154,24 +154,24 @@ let html =
   .pile { position:relative; width:var(--card-w); height:calc(var(--card-w)*1.5); }
   .pile .card { position:absolute; inset:0; }
   #draw-pile { cursor:pointer; }
-  #draw-pile .card:nth-child(1){ transform:translate(-4px,4px) rotate(-4deg); }
-  #draw-pile .card:nth-child(2){ transform:translate(2px,-1px) rotate(2deg); }
-  #draw-pile:hover .card:nth-child(3){ transform:translateY(-8px); }
+  /* of-type, not nth-child: #pending-badge is a <span> sibling in here and
+     would otherwise shift every card back by one */
+  #draw-pile .card:nth-of-type(1){ transform:translate(-4px,4px) rotate(-4deg); }
+  #draw-pile .card:nth-of-type(2){ transform:translate(2px,-1px) rotate(2deg); }
+  #draw-pile:hover .card:nth-of-type(3){ transform:translateY(-8px); }
   #draw-pile .card { transition:transform .15s; }
   #discard { border-radius:calc(var(--card-w)*.13);
     box-shadow:0 0 0 5px var(--cur,#333), 0 0 26px var(--cur,transparent);
     transition:box-shadow .35s; }
   #discard .card { transform:rotate(var(--tilt,0deg)); }
-<<<<<<< HEAD
   .pile-wrap { display:flex; flex-direction:column; align-items:center; gap:.45rem; }
   .pile-label { font-size:.6rem; font-weight:900; font-style:italic; letter-spacing:.14em;
     text-transform:uppercase; color:rgba(255,255,255,.82); text-shadow:0 1px 2px rgba(0,0,0,.6); }
-=======
+  /* anchors to #draw-pile, which is .pile { position:relative } */
   #pending-badge { position:absolute; top:-12px; right:-12px; z-index:5;
     background:var(--c-red); color:#fff; font-weight:900; font-size:1rem;
     border-radius:999px; padding:.25rem .6rem; border:3px solid #fff;
     box-shadow:0 4px 8px rgba(0,0,0,.4); animation:pulse 1s ease-in-out infinite; }
->>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
   #seats { position:absolute; inset:0; z-index:3; pointer-events:none; }
   .seat { position:absolute; transform:translate(-50%,-50%); text-align:center; }
   .seat .fan { display:flex; justify-content:center; align-items:flex-end;
@@ -215,6 +215,22 @@ let html =
   @keyframes stackpulse { 50% { box-shadow:0 8px 16px rgba(0,0,0,.45),
       0 0 0 5px var(--c-yellow), 0 0 34px rgba(255,206,0,1); } }
   #pass-btn { margin-bottom:calc(var(--card-w)*.4); }
+  /* deliberately always live, never greyed: pressing it at the wrong moment
+     is a real move with a real cost, and dimming it would leak who is
+     currently catchable */
+  #uno-btn { margin-bottom:calc(var(--card-w)*.4); background:var(--c-yellow);
+    color:var(--ink); font-weight:900; font-style:italic; font-size:1.15rem;
+    letter-spacing:.06em; padding:.5rem 1.15rem; border:3px solid var(--ink);
+    border-radius:999px; box-shadow:0 4px 0 rgba(0,0,0,.45); cursor:pointer;
+    transition:transform .12s var(--ease-pop), box-shadow .12s; }
+  #uno-btn:hover { transform:translateY(-2px) scale(1.05);
+    box-shadow:0 6px 0 rgba(0,0,0,.45); }
+  #uno-btn:active { transform:translateY(2px); box-shadow:0 1px 0 rgba(0,0,0,.45); }
+  /* flashes when you are the one holding a single card - a nudge, not a
+     disclosure: it never reveals anyone else's hand */
+  #uno-btn.armed { animation:unopulse .8s ease-in-out infinite; }
+  @keyframes unopulse { 50% { box-shadow:0 4px 0 rgba(0,0,0,.45),
+      0 0 22px 6px rgba(255,206,0,.85); } }
   #leave-game { position:absolute; top:12px; right:14px; z-index:6;
     background:rgba(0,0,0,.5); color:#fff; font-size:.85rem; font-weight:800;
     box-shadow:0 3px 0 rgba(0,0,0,.35); }
@@ -452,26 +468,22 @@ let html =
   <div id="table-oval"></div>
   <div id="seats"></div>
   <div class="table-center">
-<<<<<<< HEAD
     <div class="pile-wrap">
-      <div id="draw-pile" class="pile" title="click to draw a card"></div>
+      <div id="draw-pile" class="pile" title="click to draw a card">
+        <span id="pending-badge" hidden></span>
+      </div>
       <span class="pile-label">Draw Pile</span>
     </div>
     <div class="pile-wrap">
       <div id="discard" class="pile"></div>
       <span class="pile-label">Discard</span>
     </div>
-=======
-    <div id="draw-pile" class="pile" title="draw a card">
-      <span id="pending-badge" hidden></span>
-    </div>
-    <div id="discard" class="pile"></div>
->>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
   </div>
   <div id="turn-banner" hidden>YOUR TURN</div>
   <div id="hand-area">
     <div id="hand"></div>
     <button id="pass-btn" hidden>Pass</button>
+    <button id="uno-btn" title="claim your UNO - or catch someone who forgot">UNO!</button>
   </div>
   <ul id="log"></ul>
 </div>
@@ -506,13 +518,6 @@ const BASE_SPECIALS = `rule "play wild" priority 100:
   when card is wild and your turn
   do play the card, set color to declared, advance turn
 
-<<<<<<< HEAD
-rule "play plus two" priority 100:
-  when card is plus two and (card matches color or card matches value) and your turn
-  do play the card, set color from card, next player draws 2 cards, skip next player
-
-=======
->>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
 rule "play skip" priority 100:
   when card is skip and (card matches color or card matches value) and your turn
   do play the card, set color from card, skip next player
@@ -522,11 +527,6 @@ rule "play reverse" priority 100:
   do play the card, set color from card, reverse direction, advance turn
 `;
 
-<<<<<<< HEAD
-rule "play plus four" priority 110:
-  when card is plus four and your turn
-  do play the card, set color to declared, next player draws 4 cards, skip next player
-=======
 const STACKING_SPECIALS = `rule "play wild" priority 100:
   when card is wild and your turn and not stack is open
   do play the card, set color to declared, advance turn
@@ -556,7 +556,6 @@ const DEFERRED_DRAWS = `rule "play plus two" priority 100:
 rule "play plus four" priority 110:
   when card is plus four and your turn and not stack is open
   do play the card, set color to declared, add 4 pending draws, advance turn
->>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
 
 rule "take penalty" priority 105:
   when pending draws > 0 and your turn and not (card is plus two or card is plus four)
@@ -575,6 +574,22 @@ const PASS_AFTER_DRAW = `rule "pass after draw" priority 1:
   do advance turn
 `;
 
+// The UNO button. Priorities decide the race: claiming your own UNO beats
+// catching someone else's, which beats a press with nothing behind it.
+// Change the 2s to make forgetting cost more (or less).
+const UNO_RULES = `rule "call uno" priority 200:
+  when player calls uno and has uno
+  do mark uno called
+
+rule "catch uno" priority 190:
+  when player calls uno and someone has uno
+  do penalize uncalled player 2 cards
+
+rule "false uno call" priority 180:
+  when player calls uno
+  do penalize caller 2 cards
+`;
+
 const RULES_TEMPLATE =
   '# Standard Uno. Edit these rules to make your own variant.\n\n' +
   BASE_SPECIALS + '\n' + IMMEDIATE_DRAWS + '\n' +
@@ -582,47 +597,15 @@ const RULES_TEMPLATE =
   when (card matches color or card matches value) and your turn
   do play the card, set color from card, advance turn
 
-` + DRAW_RULE + '\n' + PASS_AFTER_DRAW;
+` + DRAW_RULE + '\n' + PASS_AFTER_DRAW + '\n' + UNO_RULES;
 
-<<<<<<< HEAD
 // Stacking keeps the DEFERRED +2/+4 model (a shared pending counter the victim
-// can add to), unlike the standard template's immediate draw-and-skip — so it
-// is spelled out in full rather than derived from RULES_TEMPLATE.
-const STACKING_TEMPLATE = `# Stacking variant: chain same-value cards in one turn, pass to end it.
-
-rule "play wild" priority 100:
-  when card is wild and your turn
-  do play the card, set color to declared, advance turn
-
-rule "play plus two" priority 100:
-  when card is plus two and (card matches color or card matches value) and your turn
-  do play the card, set color from card, add 2 pending draws, advance turn
-
-rule "play skip" priority 100:
-  when card is skip and (card matches color or card matches value) and your turn
-  do play the card, set color from card, skip next player
-
-rule "play reverse" priority 100:
-  when card is reverse and (card matches color or card matches value) and your turn
-  do play the card, set color from card, reverse direction, advance turn
-
-rule "take penalty" priority 90:
-  when pending draws > 0 and your turn
-  do apply pending draws, advance turn
-
-rule "play plus four" priority 110:
-  when card is plus four and your turn
-  do play the card, set color to declared, add 4 pending draws, advance turn
-
-rule "open stack" priority 10:
-  when (card matches color or card matches value) and your turn
-=======
+// can add to), unlike the standard template's immediate draw-and-skip.
 const STACKING_TEMPLATE =
   '# Stacking variant: chain same-value cards in one turn, pass to end it.\n\n' +
   STACKING_SPECIALS + '\n' + DEFERRED_DRAWS + '\n' +
 `rule "open stack" priority 10:
   when (card matches color or card matches value) and your turn and not stack is open
->>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
   do play the card, set color from card, open stack
 
 rule "continue stack" priority 120:
@@ -633,14 +616,7 @@ rule "pass on stack" priority 120:
   when player passes and your turn and stack is open
   do clear stack, advance turn
 
-<<<<<<< HEAD
-rule "draw a card" priority 1:
-  when player draws and your turn
-  do draw 1 card, advance turn
-`;
-=======
-` + DRAW_RULE + '\n' + PASS_AFTER_DRAW;
->>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
+` + DRAW_RULE + '\n' + PASS_AFTER_DRAW + '\n' + UNO_RULES;
 
 const DRAWUNTIL_TEMPLATE = RULES_TEMPLATE.replace(DRAW_RULE,
 `rule "draw until playable" priority 1:
@@ -664,6 +640,9 @@ const WHEN_OPTIONS = [
   ['stack is open', 'a stack is open'],
   ['drew playable card', 'the drawn card is playable'],
   ['pending draws > N', 'penalty draws are pending'],
+  ['player calls uno', 'the UNO button was pressed'],
+  ['has uno', 'the presser is down to one card'],
+  ['someone has uno', 'someone else is catchable'],
   ['always', 'always (any action)'],
 ];
 const EFF_OPTIONS = [
@@ -673,20 +652,18 @@ const EFF_OPTIONS = [
   ['set color to declared', 'set color to the declared color (wilds)'],
   ['set color to C', 'set color to a specific color'],
   ['draw N cards', 'draw some cards'],
-<<<<<<< HEAD
-  ['next player draws N cards', 'make the next player draw'],
-  ['add N pending draws', 'add penalty draws'],
-=======
   ['draw and decide', 'draw 1; keep turn if playable'],
   ['next player draws N cards', 'next player draws cards now'],
   ['add N pending draws', 'add penalty draws (stackable)'],
->>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
   ['apply pending draws', 'apply the pending penalty'],
   ['draw until playable', 'keep drawing until playable'],
   ['reverse direction', 'reverse direction'],
   ['skip next player', 'skip the next player'],
   ['open stack', 'open a stack'],
   ['clear stack', 'clear the stack'],
+  ['mark uno called', 'the presser is safe'],
+  ['penalize caller N cards', 'fine the presser'],
+  ['penalize uncalled player N cards', 'fine the player who got caught'],
 ];
 
 let name = null;
@@ -857,6 +834,12 @@ function apply(ev, fx){
       break;
     }
     case 'uno': unoSplash(ev.player); logLine('UNO! ' + ev.player); break;
+    case 'uno_penalty':
+      logLine((ev.player === name ? 'you' : ev.player) +
+              (ev.caught ? ' got caught without calling UNO, +'
+                         : ' called UNO for nothing, +') + ev.count);
+      if (fx) fx.push({kind:'penalty', player:ev.player, count:ev.count});
+      break;
     case 'skipped':
       logLine((ev.player === name ? 'you were' : ev.player + ' was') + ' skipped');
       if (fx) fx.push({kind:'skipped', player:ev.player});
@@ -914,6 +897,9 @@ function updateHighlights(){
   }
   $('hand').classList.toggle('my-turn', myTurn);
   $('pass-btn').hidden = !(myTurn && state.canPass);
+  // only ever keys off your OWN hand, so it cannot tell you when an
+  // opponent is catchable - that is the part you are supposed to notice
+  $('uno-btn').classList.toggle('armed', state.hand.length === 1);
 }
 
 /* ---------- targeted renderers ---------- */
@@ -1001,18 +987,16 @@ function renderPile(){
     d.append(el);
   }
   d.style.setProperty('--cur', COLOR_CSS[state.color] || '#333');
-<<<<<<< HEAD
   // give the draw pile a visible face-down stack (3 backs = what the CSS
   // nth-child rules style). Build once; rebuilding each pile update would
-  // interrupt the hover-lift animation.
+  // interrupt the hover-lift animation. NOTE: test for card children, not
+  // any children - #pending-badge lives in here too and is always present.
   const dp = $('draw-pile');
-  if (!dp.children.length)
+  if (!dp.querySelector('.card'))
     for (let i = 0; i < 3; i++) dp.append(cardBackEl());
-=======
   const badge = $('pending-badge');
   badge.hidden = !(state.pending > 0);
   badge.textContent = '+' + state.pending;
->>>>>>> 3da629a2340e8a92608a431cf1b557692f82aa16
 }
 
 function makeSlot(card){
@@ -1165,6 +1149,9 @@ $('draw-pile').onclick = async () => {
 };
 $('pass-btn').onclick = async () => {
   const r = await api('/api/pass', {method:'POST'}); if (!r.ok) toast(r.error);
+};
+$('uno-btn').onclick = async () => {
+  const r = await api('/api/uno', {method:'POST'}); if (!r.ok) toast(r.error);
 };
 $('start-btn').onclick = async () => {
   const r = await api('/api/start', {method:'POST'}); if (!r.ok) toast(r.error);
