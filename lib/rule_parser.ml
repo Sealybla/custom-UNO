@@ -211,7 +211,10 @@ let parse_effect (toks : tokens) : (Game_state.Effect.t list * tokens) Or_error.
   | (Word "draw", _) :: (Int n, _) :: rest -> Ok ([ ExecuteDraw n ], rest)
   | (Word "reverse", _) :: (Word "direction", _) :: rest -> Ok ([ ReverseDirection ], rest)
   | (Word "open", _) :: (Word "stack", _) :: rest -> Ok ([ SetStackingValue ], rest)
-  | (Word "clear", _) :: (Word "stack", _) :: rest -> Ok ([ ClearStackingValue ], rest)
+  (* "clear stack" is the historical spelling; "close stack" reads as the
+     natural opposite of "open stack", so both are accepted *)
+  | (Word ("close" | "clear"), _) :: (Word "stack", _) :: rest ->
+    Ok ([ ClearStackingValue ], rest)
   | (Word "advance", _) :: (Word "turn", _) :: rest -> Ok ([ AdvanceTurn ], rest)
   | (Word "skip", _) :: (Word "next", _) :: (Word "player", _) :: rest ->
     Ok ([ AdvanceTurn; AdvanceTurn ], rest)
@@ -235,8 +238,9 @@ let rec parse_effects toks : (Game_state.Effect.t list * tokens) Or_error.t =
 
 let default_priority = 50
 
-(* called with the tokens after the leading "rule" keyword *)
-let parse_rule (toks : tokens) ~id : (Rule.t * tokens) Or_error.t =
+(* called with the tokens after the leading "rule" keyword; ids are
+   assigned later, after name-based merging *)
+let parse_rule (toks : tokens) : ((string * Rule.t) * tokens) Or_error.t =
   let%bind name, toks =
     match toks with
     | (Token.Str name, _) :: rest -> Ok (name, rest)
@@ -261,21 +265,165 @@ let parse_rule (toks : tokens) ~id : (Rule.t * tokens) Or_error.t =
      let%bind toks = expect_word toks "do" in
      let%map effects, toks = parse_effects toks in
      let actions = List.map effects ~f:(fun e -> Rule.Action_AST.Mutate e) in
-     { Rule.id; priority; condition; actions }, toks)
+     (name, { Rule.id = 0; priority; condition; actions }), toks)
+;;
+
+let parse_ruleset_named src : (string * Rule.t) list Or_error.t =
+  let%bind toks = tokenize src in
+  let rec go toks acc ~allow_use =
+    match toks with
+    | [] -> Ok (List.rev acc)
+    | (Token.Word "rule", _) :: rest ->
+      let%bind named, rest = parse_rule rest in
+      go rest (named :: acc) ~allow_use
+    | (Token.Word "use", line) :: rest when allow_use ->
+      (* the preset name is every word to the end of the line *)
+      let name_words, rest =
+        List.split_while rest ~f:(fun (tok, l) ->
+          match tok with
+          | Token.Word _ -> l = line
+          | _ -> false)
+      in
+      let name =
+        String.concat
+          ~sep:" "
+          (List.map name_words ~f:(fun (tok, _) -> Token.to_string tok))
+      in
+      (match Presets.find name with
+       | None ->
+         Or_error.errorf
+           "line %d: unknown preset '%s' after 'use' (available: %s)"
+           line
+           name
+           (String.concat ~sep:", " Presets.names)
+       | Some text ->
+         let%bind preset_toks = tokenize text in
+         let%bind included = go preset_toks [] ~allow_use:false in
+         go rest (List.rev included @ acc) ~allow_use)
+    | _ ->
+      Or_error.errorf
+        "expected 'rule' or 'use <preset>' to start a line (%s)"
+        (where toks)
+  in
+  let%bind named = go toks [] ~allow_use:true in
+  (* a later rule with the same name replaces the earlier one in place, so
+     rules pulled in by `use` can be redefined without duplicating them *)
+  let merged =
+    List.fold named ~init:[] ~f:(fun acc (name, rule) ->
+      if List.exists acc ~f:(fun (n, _) -> String.Caseless.equal n name)
+      then
+        List.map acc ~f:(fun (n, r) ->
+          if String.Caseless.equal n name then n, rule else n, r)
+      else acc @ [ name, rule ])
+  in
+  match merged with
+  | [] -> Or_error.error_string "no rules found"
+  | _ ->
+    Ok
+      (List.mapi merged ~f:(fun i (name, rule) ->
+         name, { rule with Rule.id = i + 1 }))
 ;;
 
 let parse_ruleset src : Rule.t list Or_error.t =
-  let%bind toks = tokenize src in
-  let rec go toks acc next_id =
-    match toks with
-    | [] ->
-      (match acc with
-       | [] -> Or_error.error_string "no rules found"
-       | _ -> Ok (List.rev acc))
-    | (Token.Word "rule", _) :: rest ->
-      let%bind rule, rest = parse_rule rest ~id:next_id in
-      go rest (rule :: acc) (next_id + 1)
-    | _ -> Or_error.errorf "expected 'rule' to start a rule (%s)" (where toks)
-  in
-  go toks [] 1
+  Or_error.map (parse_ruleset_named src) ~f:(List.map ~f:snd)
+;;
+
+(* -------- lint: authoring footguns worth warning about, not rejecting.
+   The engine runs exactly ONE rule per action - the highest-priority match -
+   so a rule that wins a card play decides everything that happens to that
+   click. Forgetting [play the card] or [advance turn] silently swallows it. *)
+
+(* does the condition positively require an atom satisfying [f]? Atoms under
+   an odd number of [not]s don't count: "not (card is plus two)" is a guard,
+   not a card-play requirement. *)
+let rec condition_requires (cond : Rule.Condition.t) ~positive ~f =
+  match cond with
+  | And (a, b) | Or (a, b) ->
+    condition_requires a ~positive ~f || condition_requires b ~positive ~f
+  | Not c -> condition_requires c ~positive:(not positive) ~f
+  | atom -> positive && f atom
+;;
+
+let is_card_play_atom : Rule.Condition.t -> bool = function
+  | MatchesTopColor | MatchesTopValue | IsWildCard | IsSkip | IsReverse
+  | IsPlusTwo | IsPlusFour | ContinuesStack -> true
+  | _ -> false
+;;
+
+(* mid-stack rules keep the turn on purpose, so they are exempt from the
+   "never ends the turn" warning *)
+let is_mid_stack_atom : Rule.Condition.t -> bool = function
+  | ContinuesStack | StackIsOpen -> true
+  | _ -> false
+;;
+
+let rec action_uses (act : Rule.Action_AST.t) ~f =
+  match act with
+  | Mutate eff -> f eff
+  | Chain_event _ -> false
+  | Sequence acts -> List.exists acts ~f:(action_uses ~f)
+;;
+
+(* structured warnings so the editor can offer a one-click fix: the kind
+   says which effect is missing, the rule name says where to insert it *)
+module Lint = struct
+  module Kind = struct
+    type t =
+      | Missing_play
+      | Missing_advance
+    [@@deriving sexp, compare, equal]
+  end
+
+  type t =
+    { rule_name : string
+    ; kind : Kind.t
+    ; message : string
+    }
+  [@@deriving sexp, compare, equal]
+end
+
+let lint (named : (string * Rule.t) list) : Lint.t list =
+  List.concat_map named ~f:(fun (name, rule) ->
+    let uses f = List.exists rule.actions ~f:(action_uses ~f) in
+    let requires f = condition_requires rule.condition ~positive:true ~f in
+    let plays =
+      uses (function Game_state.Effect.PlayTriggeringCard -> true | _ -> false)
+    in
+    let ends_turn =
+      uses (function
+        | Game_state.Effect.AdvanceTurn | SetStackingValue -> true
+        | _ -> false)
+    in
+    List.filter_opt
+      [ (if requires is_card_play_atom && not plays
+         then
+           Some
+             { Lint.rule_name = name
+             ; kind = Missing_play
+             ; message =
+                 sprintf
+                   "rule \"%s\" fires when a card is played but has no \
+                    'play the card' effect - the card will stay in the hand"
+                   name
+             }
+         else None)
+      ; (if plays && (not ends_turn) && not (requires is_mid_stack_atom)
+         then
+           Some
+             { Lint.rule_name = name
+             ; kind = Missing_advance
+             ; message =
+                 sprintf
+                   "rule \"%s\" plays the card but has no 'advance turn' \
+                    effect - the turn will never end"
+                   name
+             }
+         else None)
+      ])
+;;
+
+(* parse plus the lint warnings, for editor feedback *)
+let parse_ruleset_checked src : (Rule.t list * Lint.t list) Or_error.t =
+  let%map named = parse_ruleset_named src in
+  List.map named ~f:snd, lint named
 ;;

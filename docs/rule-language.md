@@ -18,8 +18,33 @@ rule "play plus two" priority 100:
 - `when <condition>` — boolean expression over the trigger event + game state.
 - `do <effect>, <effect>, ...` — comma-separated effect list, applied in order.
 - `#` starts a comment to end of line. Keywords are case-insensitive.
-- A file is a sequence of `rule` blocks; the next `rule` keyword ends the
-  previous block, so no separators are needed.
+- A file is a sequence of `rule` blocks and `use` lines; the next `rule`
+  keyword ends the previous block, so no separators are needed.
+
+## Presets and `use`
+
+`use <preset>` expands, in place, to the full rule text of a built-in
+ruleset (canonical texts in `lib/presets.ml`), so a variant can start from
+a preset without retyping it:
+
+```
+use stacking
+
+# same name as the preset's rule, so this redefines it: a reverse now
+# also burns the next player for one card
+rule "play reverse" priority 100:
+  when card is reverse and (card matches color or card matches value) and your turn and not stack is open
+  do play the card, set color from card, reverse direction, next player draws 1 cards, advance turn
+```
+
+The presets are `standard`, `stacking`, `draw until playable`, and the
+combination `stacking with draw until playable` (stacking play rules with
+draw-until drawing). The lobby's preset toggles emit exactly these lines.
+
+Rule names are identities: a later rule with the same name as an earlier
+one (case-insensitive) **replaces** it in place. That is how an extension
+tweaks a preset rule — redefine it under the same name — and why `use`
+never duplicates anything. Ids are assigned after this merge.
 
 ## Conditions
 
@@ -60,11 +85,11 @@ Parentheses override.
 | `apply pending draws` | `ApplyPendingDraws` |
 | `draw N` / `draw N cards` | `ExecuteDraw N` |
 | `next player draws N cards` | `DrawForNextPlayer N` (turn unchanged) |
-| `draw until playable` | `DrawUntilPlayable` (sets the drew-playable flag) |
+| `draw until playable` | `DrawUntilPlayable` (draw 1, turn stays; a playable draw sets the drew-playable flag) |
 | `draw and decide` | `DrawAndDecide` (draw 1; playable → keep turn + set flag, else advance) |
 | `reverse direction` | `ReverseDirection` (with 2 players also skips the opponent, per official Uno) |
 | `open stack` | `SetStackingValue` |
-| `clear stack` | `ClearStackingValue` |
+| `close stack` (or `clear stack`) | `ClearStackingValue` |
 | `advance turn` | `AdvanceTurn` |
 | `skip next player` | sugar for `AdvanceTurn; AdvanceTurn` |
 | `mark uno called` | `MarkUnoCalled` (shuts the presser's own catch window) |
@@ -191,9 +216,10 @@ rule "take penalty" priority 105:
   do apply pending draws, advance turn
 ```
 
-Every variant handles drawing the same way — one card, and a playable
-draw keeps the turn open so the player can play it or pass (this is the
-only time a bare pass is legal in the non-stacking variants):
+The standard and stacking variants handle drawing the same way — one
+card, and a playable draw keeps the turn open so the player can play it
+or pass via the "Done" button (this is the only time a bare pass is
+legal outside the stacking rules):
 
 ```
 rule "draw a card" priority 1:
@@ -213,13 +239,16 @@ rule "play matching card" priority 10:
   do play the card, set color from card, advance turn
 ```
 
-Draw-until variant replaces "draw a card" with (`draw until playable`
-also sets the drew-playable flag when it stops on a playable card):
+Draw-until variant replaces "draw a card" with the rule below and has
+no pass rule at all, so the Done button never appears. Each draw click
+takes one card and never ends the turn: a drawn playable card may be
+kept and the drawing continued — the only way to end the turn is to
+actually play a card:
 
 ```
 rule "draw until playable" priority 1:
-  when player draws and your turn and not drew playable card
-  do draw until playable
+  when player draws and your turn
+  do draw 1 cards
 ```
 
 Stacking variant replaces "play matching card" with:
@@ -235,12 +264,55 @@ rule "continue stack" priority 120:
 
 rule "pass on stack" priority 120:
   when player passes and your turn and stack is open
-  do clear stack, advance turn
+  do close stack, advance turn
+```
+
+The stack lifecycle: `open stack` records the played card's value and the
+rule deliberately omits `advance turn`, so the player stays on turn and may
+keep playing cards of that value (`continues stack`). `close stack` forgets
+the recorded value — clicking Done fires it and ends the turn. While the
+stack is open (`stack is open`), every other rule is guarded off, which is
+why the specials above all carry `not stack is open`. (`clear stack` is an
+accepted synonym for `close stack`.)
+
+The combined variant (`use stacking with draw until playable`) is the
+stacking rules with the draw rule swapped for draw-until drawing, guarded
+so nobody draws mid-stack:
+
+```
+rule "draw until playable" priority 1:
+  when player draws and your turn and not stack is open
+  do draw 1 cards
 ```
 
 Every hand-coded rule is expressible, so the grammar covers the existing
 engine. These texts become the round-trip test fixtures: parse them and
 assert equality with the hand-coded `Rule.t` values.
+
+## Overriding a built-in rule
+
+The engine runs exactly ONE rule per click — the highest-priority match —
+so a custom rule never layers onto normal play; it competes with it. The
+way to change how a card behaves is to redefine the preset's rule under
+its own name (rules merge by name, later definition wins) with the full
+effect list:
+
+```
+use standard
+
+rule "play reverse" priority 100:
+  when card is reverse and (card matches color or card matches value) and your turn
+  do play the card, set color to red, reverse direction, advance turn
+```
+
+The lobby editor's "Change a built-in rule" panel copies any preset rule's
+text into the editor for tweaking. The checker
+(`Rule_parser.parse_ruleset_checked`, surfaced by `/api/check-rules`)
+warns about the two easy mistakes: a rule that fires on a card play but
+lacks `play the card` (the card would stay in the hand), and one that
+plays the card but lacks `advance turn` (the turn would never end) —
+mid-stack rules are exempt from the latter since keeping the turn is the
+point.
 
 ## Decisions made (revisit if needed)
 
@@ -298,13 +370,25 @@ page whether the ruleset can open stacks via `stacking_enabled` on
 `Game_started`). The pass button only appears when a pass is actually
 legal: `Turn_changed` carries `can_pass` (the server dry-runs the rule
 conditions against a Pass) and `stack_value` (the open stack's value, if
-any). A "Leave game" button (and the tab-close beacon) hands the seat to
+any). The top discard always wears the active color: when a wild's
+declaration or a recoloring rule moves the color away from the card's
+printed one, the card face itself is repainted (plus a pop animation on
+the pile), not just the glow ring around it. A "Leave game" button (and the tab-close beacon) hands the seat to
 a bot mid-game — bots continue stacks, stack +2/+4s onto pending
 penalties, and pass when a stack runs dry; when the last human leaves,
 the game is abandoned and the room closes. The lobby's house-rules editor
 is the one typing surface — it
 starts from the standard-rules template and submits to `/api/rules`,
-rendering parse errors inline. Browsers reach the game through the HTTP
+rendering parse errors inline. Two click-only helpers feed it: "Change a
+built-in rule" copies a preset rule's text in for tweaking, and the
+composer ("Compose a new rule without typing") builds a brand-new rule
+from chips — any number of and-joined conditions, each optionally negated,
+plus ordered effects — showing a live preview of the rule text as it
+grows. Picking a card-play condition pre-adds the standard play effects
+(`play the card`, `set color from card`, `advance turn` — no advance for
+`continues stack`) as removable chips, so composed card rules handle the
+whole play by default; later effects slot in before the trailing turn
+ender, and adding a second turn ender replaces the first. Browsers reach the game through the HTTP
 → RPC bridge in `bin/web.ml` (per-player RPC connection + polled JSON
 event queue). Illegal actions come back to the acting player as an
 `Action_rejected` event and show as a toast.

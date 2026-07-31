@@ -7,6 +7,9 @@ module Ruleset : sig
   val draw_until_variant : t
   val stacking_variant : t
 
+  (* stacking play rules with draw-until drawing *)
+  val stacking_draw_until_variant : t
+
   (* true if any rule in the set can open a same-value stack *)
   val uses_stacking : t -> bool
 end
@@ -47,3 +50,7 @@ val apply_action
   -> player_id:int
   -> action:Action.Client_to_server.t
   -> Game_state.t Or_error.t
+
+(* true when a pass is the current player's only legal move (no card play
+   and no draw would be accepted) - the server then passes for them *)
+val only_pass_available : Ruleset.t -> Game_state.t -> bool

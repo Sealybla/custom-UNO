@@ -46,6 +46,9 @@ module Server_to_client = struct
         ; count : Int.t
         ; caught : Bool.t
         }
+    (* the current player is running out of turn time; at zero the server
+       plays for them *)
+    | Turn_countdown of { player_name : String.t; seconds : Int.t }
     | Rules_updated of { player_name : String.t; num_rules : Int.t }
     | Action_rejected of { reason : String.t }
     (* pure-notification events driving the table animations *)

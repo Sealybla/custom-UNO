@@ -26,7 +26,7 @@ rule "play matching card" priority 10:
   do play the card, set color from card, advance turn
 
 # drawing keeps your turn only when the drawn card is playable;
-# then you may play it or pass
+# then you may play it or click Done
 rule "draw a card" priority 1:
   when player draws and your turn and not stack is open and not drew playable card
   do draw and decide

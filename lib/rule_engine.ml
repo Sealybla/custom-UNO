@@ -258,12 +258,24 @@ module Ruleset = struct
     }
   ;;
 
-  (* keep drawing until a playable card appears, then stop (turn stays) *)
+  (* each draw click takes one card and never ends the turn; drawn playable
+     cards may be kept and drawing continued — with no pass rule in the
+     variant, only actually playing a card ends the turn *)
   let draw_until_rule : Rule.t =
     { id = 7
     ; priority = 1
-    ; condition = And (IsDrawAction, And (IsPlayerTurn, Not DrewPlayableCard))
-    ; actions = [ Mutate DrawUntilPlayable ]
+    ; condition = And (IsDrawAction, IsPlayerTurn)
+    ; actions = [ Mutate (ExecuteDraw 1) ]
+    }
+  ;;
+
+  (* draw-until inside the stacking variant: same idea, but no drawing
+     while a stack is open *)
+  let draw_until_stack_rule : Rule.t =
+    { id = 7
+    ; priority = 1
+    ; condition = And (IsDrawAction, And (IsPlayerTurn, Not StackIsOpen))
+    ; actions = [ Mutate (ExecuteDraw 1) ]
     }
   ;;
 
@@ -304,7 +316,7 @@ module Ruleset = struct
   let draw_until_variant : t =
     base_special_rules
     @ immediate_draw_rules
-    @ [ generic_play_rule; draw_until_rule; pass_after_draw_rule ]
+    @ [ generic_play_rule; draw_until_rule ]
     @ uno_rules
   ;;
 
@@ -316,6 +328,19 @@ module Ruleset = struct
       ; stack_pass_rule
       ; draw_decide_rule
       ; pass_after_draw_rule
+      ]
+    @ uno_rules
+  ;;
+
+  (* stacking play rules combined with draw-until drawing: chain same-value
+     cards, and when stuck draw one card per click until you can play *)
+  let stacking_draw_until_variant : t =
+    stacking_special_rules
+    @ deferred_draw_rules
+    @ [ stack_open_rule
+      ; stack_continue_rule
+      ; stack_pass_rule
+      ; draw_until_stack_rule
       ]
     @ uno_rules
   ;;
@@ -525,4 +550,23 @@ let apply_action
   (* window bookkeeping sits outside the ruleset on purpose - see
      Game_state.update_uno_window *)
   Game_state.update_uno_window next_state ~actor_id:player_id ~event:evt
+;;
+
+(* Simulates every move the current player could make. When a pass is legal
+   but no card play and no draw is, pressing the done button is a formality
+   the server performs for them (e.g. mid-stack with nothing to continue). *)
+let only_pass_available (rules : Ruleset.t) (state : Game_state.t) : bool =
+  pass_available rules state
+  &&
+  match List.nth state.players state.turn with
+  | None -> false
+  | Some player ->
+    let try_action action =
+      apply_action rules state ~player_id:state.turn ~action |> Or_error.is_ok
+    in
+    (not
+       (List.exists (Player.get_hand player) ~f:(fun card_id ->
+          (* any real color works for simulating a wild's declaration *)
+          try_action (Play { card_id; declared_color = Some Red }))))
+    && not (try_action Draw)
 ;;

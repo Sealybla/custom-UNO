@@ -45,6 +45,8 @@ let print_event (event : Action.Server_to_client.t) =
         (if caught then "caught without calling UNO" else "bad UNO call")
           (player_name : string)
           (count : int)]
+  | Turn_countdown { player_name; seconds } ->
+    print_s [%message "turn countdown" (player_name : string) (seconds : int)]
   | Rules_updated { player_name; num_rules } ->
     print_s [%message "rules updated" (player_name : string) (num_rules : int)]
   | Action_rejected { reason } -> print_s [%message "rejected" (reason : string)]

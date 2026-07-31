@@ -109,9 +109,19 @@ let html =
   .preset-row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.5rem; }
   button.preset, button.small { padding:.3rem .8rem; font-size:.82rem;
     background:rgba(255,255,255,.92); box-shadow:0 2px 0 rgba(0,0,0,.3); }
+  button.preset.toggle { background:rgba(255,255,255,.45); }
+  button.preset.toggle.active { background:var(--c-yellow);
+    box-shadow:inset 0 2px 2px rgba(0,0,0,.25); }
+  button.preset.toggle.active::before { content:'\2713  '; font-weight:900; }
   #check-status { font-size:.83rem; margin:.25rem 0 .35rem; min-height:1.1rem;
     font-family:ui-monospace,monospace; white-space:pre-wrap; }
   #check-status.ok { color:#8fe3a8; } #check-status.err { color:#ffb0b0; }
+  #check-status.warn { color:#ffd97a; white-space:pre-line; }
+  #check-status button { margin-left:.5rem; padding:.05rem .5rem; font-size:.72rem; }
+  #override-list { display:flex; flex-wrap:wrap; gap:.35rem; margin-top:.5rem; font-size:.83rem; }
+  #override-list code { cursor:pointer; padding:.14rem .45rem; border-radius:6px;
+    background:rgba(255,255,255,.1); }
+  #override-list code:hover { background:rgba(255,206,0,.35); }
   .panel details { margin:.7rem 0 0; background:rgba(0,0,0,.28); border-radius:12px;
     padding:.55rem .9rem; }
   .panel summary { cursor:pointer; font-weight:800; }
@@ -124,6 +134,9 @@ let html =
   #b-name { flex:1; min-width:8rem; }
   .chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:.2rem 0 .2rem 3.9rem; }
   .chips:empty { display:none; }
+  #b-preview { background:rgba(255,255,255,.08); border-radius:8px; padding:.5rem .7rem;
+    margin:.5rem 0 0; font-size:.8rem; white-space:pre-wrap; }
+  #b-preview:empty { display:none; }
   .chips span { background:var(--c-yellow); color:var(--ink); font-weight:700;
     font-size:.78rem; border-radius:999px; padding:.2rem .6rem; cursor:pointer; }
   .chips span::after { content:' ✕'; opacity:.6; }
@@ -167,6 +180,8 @@ let html =
   .pile-wrap { display:flex; flex-direction:column; align-items:center; gap:.45rem; }
   .pile-label { font-size:.6rem; font-weight:900; font-style:italic; letter-spacing:.14em;
     text-transform:uppercase; color:rgba(255,255,255,.82); text-shadow:0 1px 2px rgba(0,0,0,.6); }
+  #discard.color-pop { animation:colorpop .55s var(--ease-pop); }
+  @keyframes colorpop { 35% { transform:scale(1.16); } }
   /* anchors to #draw-pile, which is .pile { position:relative } */
   #pending-badge { position:absolute; top:-12px; right:-12px; z-index:5;
     background:var(--c-red); color:#fff; font-weight:900; font-size:1rem;
@@ -203,6 +218,11 @@ let html =
   .slot .card { transform:rotate(var(--rot,0deg)) translateY(calc(var(--ty,0px) + var(--lift,0px)));
     transform-origin:50% 130%; transition:transform .25s var(--ease-pop), box-shadow .25s, filter .25s; cursor:pointer; }
   .slot:hover { z-index:7; }
+  #hand .card { touch-action:none; cursor:grab; }
+  .slot.dragging { z-index:9; }
+  .slot.dragging .card, .slot.dragging:hover .card {
+    transform:translate(var(--dx,0px), calc(var(--dy,0px) - 24px)) scale(1.08);
+    transition:none; box-shadow:0 18px 34px rgba(0,0,0,.55); }
   .slot:hover .card { transform:rotate(var(--rot,0deg)) translateY(calc(var(--ty,0px) - 28px)) scale(1.12); }
   /* on your turn: playable cards lift with a white glow, unplayable dim */
   #hand.my-turn .slot:not(.playable) .card { filter:grayscale(.4) brightness(.72); }
@@ -254,6 +274,16 @@ let html =
     border-radius:999px; box-shadow:0 6px 0 rgba(0,0,0,.3); z-index:70;
     transition:transform .3s var(--ease-pop); pointer-events:none; max-width:88vw; }
   #toast.show { transform:translateX(-50%) translateY(0); }
+  #turn-countdown { position:fixed; top:14px; left:50%; transform:translateX(-50%);
+    background:var(--ink); color:#fff; font-weight:800; padding:.5rem 1.1rem .5rem .7rem;
+    border-radius:999px; border:3px solid var(--c-red); z-index:65;
+    display:flex; align-items:center; gap:.55rem;
+    box-shadow:0 6px 0 rgba(0,0,0,.3), 0 0 22px rgba(224,51,44,.55);
+    animation:cdpop .25s var(--ease-pop); pointer-events:none; max-width:88vw; }
+  #turn-countdown .num { background:var(--c-red); color:#fff; font-weight:900;
+    font-size:1.15rem; width:2rem; height:2rem; border-radius:50%; flex:none;
+    display:grid; place-items:center; animation:pulse .5s ease-in-out infinite; }
+  @keyframes cdpop { from { transform:translateX(-50%) scale(.6); opacity:0; } }
   #color-modal { position:fixed; inset:0; background:rgba(0,0,0,.65);
     display:flex; align-items:center; justify-content:center; z-index:30; }
   #color-modal .wheel { width:min(300px,74vw); aspect-ratio:1; border-radius:50%;
@@ -373,21 +403,24 @@ let html =
     <div class="panel">
       <h2>House rules</h2>
       <div class="preset-row">
-        <span style="opacity:.8">Start from:</span>
-        <button class="preset" data-preset="standard">Standard</button>
-        <button class="preset" data-preset="stacking">Stacking</button>
-        <button class="preset" data-preset="drawuntil">Draw until playable</button>
+        <span style="opacity:.8">Preset:</span>
+        <button class="preset" id="preset-standard">Standard</button>
+        <span style="opacity:.8">+ toggles:</span>
+        <button class="preset toggle" id="toggle-stacking">Stacking</button>
+        <button class="preset toggle" id="toggle-drawuntil">Draw until playable</button>
       </div>
       <div id="check-status"></div>
       <textarea id="rules-text" rows="12" spellcheck="false"></textarea>
 
       <details id="builder">
-        <summary>🛠 Build a rule without typing</summary>
+        <summary>🛠 Compose a new rule without typing</summary>
         <div class="b-row"><label>When</label>
           <select id="b-when"></select>
           <input id="b-when-n" type="number" value="0" min="0" hidden>
-          <label class="b-check"><input id="b-turn" type="checkbox" checked> only on your turn</label>
+          <label class="b-check"><input id="b-not" type="checkbox"> not</label>
+          <button id="b-add-cond" class="small">+ add condition</button>
         </div>
+        <div id="b-conds" class="chips"></div>
         <div class="b-row"><label>Then</label>
           <select id="b-eff"></select>
           <input id="b-eff-n" type="number" value="2" min="1" hidden>
@@ -398,15 +431,29 @@ let html =
           <button id="b-add-eff" class="small">+ add effect</button>
         </div>
         <div id="b-effs" class="chips"></div>
+        <pre id="b-preview"></pre>
         <div class="b-row"><label>Extras</label>
           <select id="b-prio">
             <option value="50" selected>normal priority</option>
+            <option value="100">same as the special cards</option>
             <option value="115">high — beats the special cards</option>
             <option value="5">low — a fallback rule</option>
           </select>
           <input id="b-name" placeholder="rule name (optional)">
           <button id="b-append">Add to ruleset</button>
         </div>
+        <p style="opacity:.7; font-size:.8rem; margin:.3rem 0 0">Stack as many conditions
+        as you like — they must all hold ("and"). Tick "not" to require the opposite of
+        the next condition. Picking a card condition pre-adds the usual play effects.
+        Click any chip to remove it.</p>
+      </details>
+
+      <details id="override">
+        <summary>🔁 Change a built-in rule</summary>
+        <p style="opacity:.75; font-size:.82rem; margin:.3rem 0 0">Click a rule to copy it
+        into the editor, then tweak its effects. Your copy keeps the same name, so it
+        replaces the built-in version.</p>
+        <div id="override-list"></div>
       </details>
 
       <details>
@@ -416,7 +463,12 @@ let html =
   do &lt;effect&gt;, &lt;effect&gt;</pre>
         <div class="cheat">
           <div>
-            <h4>Conditions (click to insert)</h4>
+            <h4>Presets (click to insert)</h4>
+            <code>use standard</code>
+            <code>use stacking</code>
+            <code>use draw until playable</code>
+            <code>use stacking with draw until playable</code>
+            <h4 style="margin-top:.6rem">Conditions (click to insert)</h4>
             <code>card matches color</code>
             <code>card matches value</code>
             <code>card is wild</code>
@@ -448,7 +500,7 @@ let html =
             <code>reverse direction</code>
             <code>skip next player</code>
             <code>open stack</code>
-            <code>clear stack</code>
+            <code>close stack</code>
             <code>advance turn</code>
           </div>
         </div>
@@ -480,9 +532,10 @@ let html =
     </div>
   </div>
   <div id="turn-banner" hidden>YOUR TURN</div>
+  <div id="turn-countdown" hidden><span class="num"></span><span class="msg"></span></div>
   <div id="hand-area">
     <div id="hand"></div>
-    <button id="pass-btn" hidden>Pass</button>
+    <button id="pass-btn" hidden>Done</button>
     <button id="uno-btn" title="claim your UNO - or catch someone who forgot">UNO!</button>
   </div>
   <ul id="log"></ul>
@@ -509,133 +562,42 @@ const VALUE_LABEL = {Zero:'0',One:'1',Two:'2',Three:'3',Four:'4',Five:'5',Six:'6
   Seven:'7',Eight:'8',Nine:'9',Skip:'⊘',Reverse:'⇄',Plus:'+2',Wild:'W',Wild4:'+4'};
 const COLOR_CSS = {Red:'#e0332c',Green:'#18a850',Blue:'#0a6bbd',Yellow:'#ffce00',NoColor:'#333'};
 
-// shared building blocks: wild/skip/reverse are the same in the standard
-// variants, but the stacking variant blocks them while a stack is open
-// (mid-stack only same-value continuations are legal). +2/+4 also differ
-// (standard = victim draws immediately and is skipped; stacking = a
-// pending counter the victim can stack onto or cash out).
-const BASE_SPECIALS = `rule "play wild" priority 100:
-  when card is wild and your turn
-  do play the card, set color to declared, advance turn
-
-rule "play skip" priority 100:
-  when card is skip and (card matches color or card matches value) and your turn
-  do play the card, set color from card, skip next player
-
-rule "play reverse" priority 100:
-  when card is reverse and (card matches color or card matches value) and your turn
-  do play the card, set color from card, reverse direction, advance turn
-`;
-
-const STACKING_SPECIALS = `rule "play wild" priority 100:
-  when card is wild and your turn and not stack is open
-  do play the card, set color to declared, advance turn
-
-rule "play skip" priority 100:
-  when card is skip and (card matches color or card matches value) and your turn and not stack is open
-  do play the card, set color from card, skip next player
-
-rule "play reverse" priority 100:
-  when card is reverse and (card matches color or card matches value) and your turn and not stack is open
-  do play the card, set color from card, reverse direction, advance turn
-`;
-
-const IMMEDIATE_DRAWS = `rule "play plus two" priority 100:
-  when card is plus two and (card matches color or card matches value) and your turn
-  do play the card, set color from card, next player draws 2 cards, skip next player
-
-rule "play plus four" priority 110:
-  when card is plus four and your turn
-  do play the card, set color to declared, next player draws 4 cards, skip next player
-`;
-
-const DEFERRED_DRAWS = `rule "play plus two" priority 100:
-  when card is plus two and (card matches color or card matches value) and your turn and not stack is open
-  do play the card, set color from card, add 2 pending draws, advance turn
-
-rule "play plus four" priority 110:
-  when card is plus four and your turn and not stack is open
-  do play the card, set color to declared, add 4 pending draws, advance turn
-
-rule "take penalty" priority 105:
-  when pending draws > 0 and your turn and not (card is plus two or card is plus four)
-  do apply pending draws, advance turn
-`;
-
-// drawing keeps your turn only when the drawn card is playable; then you
-// may play it or pass
-const DRAW_RULE = `rule "draw a card" priority 1:
-  when player draws and your turn and not stack is open and not drew playable card
-  do draw and decide
-`;
-
-const PASS_AFTER_DRAW = `rule "pass after draw" priority 1:
-  when player passes and your turn and drew playable card
-  do advance turn
-`;
-
-// The UNO button. Priorities decide the race: claiming your own UNO beats
-// catching someone else's, which beats a press with nothing behind it.
-// Change the 2s to make forgetting cost more (or less).
-const UNO_RULES = `rule "call uno" priority 200:
-  when player calls uno and has uno
-  do mark uno called
-
-rule "catch uno" priority 190:
-  when player calls uno and someone has uno
-  do penalize uncalled player 2 cards
-
-rule "false uno call" priority 180:
-  when player calls uno
-  do penalize caller 2 cards
-`;
-
-const RULES_TEMPLATE =
-  '# Standard Uno. Edit these rules to make your own variant.\n\n' +
-  BASE_SPECIALS + '\n' + IMMEDIATE_DRAWS + '\n' +
-`rule "play matching card" priority 10:
-  when (card matches color or card matches value) and your turn
-  do play the card, set color from card, advance turn
-
-` + DRAW_RULE + '\n' + PASS_AFTER_DRAW + '\n' + UNO_RULES;
-
-// Stacking keeps the DEFERRED +2/+4 model (a shared pending counter the victim
-// can add to), unlike the standard template's immediate draw-and-skip.
-const STACKING_TEMPLATE =
-  '# Stacking variant: chain same-value cards in one turn, pass to end it.\n\n' +
-  STACKING_SPECIALS + '\n' + DEFERRED_DRAWS + '\n' +
-`rule "open stack" priority 10:
-  when (card matches color or card matches value) and your turn and not stack is open
-  do play the card, set color from card, open stack
-
-rule "continue stack" priority 120:
-  when continues stack and your turn
-  do play the card, set color from card
-
-rule "pass on stack" priority 120:
-  when player passes and your turn and stack is open
-  do clear stack, advance turn
-
-` + DRAW_RULE + '\n' + PASS_AFTER_DRAW + '\n' + UNO_RULES;
-
-const DRAWUNTIL_TEMPLATE = RULES_TEMPLATE.replace(DRAW_RULE,
-`rule "draw until playable" priority 1:
-  when player draws and your turn and not drew playable card
-  do draw until playable
-`);
-
-const TEMPLATES = { standard: RULES_TEMPLATE, stacking: STACKING_TEMPLATE,
-                    drawuntil: DRAWUNTIL_TEMPLATE };
+// the preset toggles compose the ruleset through the server-side `use`
+// shortcut; the rules a `use` line expands to live in lib/presets.ml and
+// are documented in docs/rule-language.md
+const PRESET_DESC = {
+  'standard': 'Standard Uno.',
+  'stacking': 'Stacking: chain same-value cards in one turn, click Done to end it.',
+  'draw until playable':
+    'Draw-until: when you cannot play, keep drawing (one card per click) until you can.',
+  'stacking with draw until playable':
+    'Stacking + draw-until: chain same-value cards; when stuck, keep drawing until you can play.',
+};
+function presetName(){
+  const s = $('toggle-stacking').classList.contains('active');
+  const d = $('toggle-drawuntil').classList.contains('active');
+  return s && d ? 'stacking with draw until playable'
+       : s ? 'stacking' : d ? 'draw until playable' : 'standard';
+}
+function presetText(){
+  const name = presetName();
+  return '# ' + PRESET_DESC[name] + '\n' +
+    'use ' + name + '\n\n' +
+    '# Add house rules below - they combine with the preset above.\n' +
+    '# Redefining a rule with the same name replaces the preset version.\n';
+}
 
 const WHEN_OPTIONS = [
   ['card matches color or card matches value', 'a matching card is played'],
+  ['card matches color', 'the played card matches the color'],
+  ['card matches value', 'the played card matches the value'],
   ['card is plus two', 'a +2 is played'],
   ['card is plus four', 'a +4 is played'],
   ['card is skip', 'a skip is played'],
   ['card is reverse', 'a reverse is played'],
   ['card is wild', 'a wild is played'],
   ['player draws', 'the player clicks draw'],
-  ['player passes', 'the player clicks pass'],
+  ['player passes', 'the player clicks done'],
   ['continues stack', 'a card continues the stack'],
   ['stack is open', 'a stack is open'],
   ['drew playable card', 'the drawn card is playable'],
@@ -656,11 +618,11 @@ const EFF_OPTIONS = [
   ['next player draws N cards', 'next player draws cards now'],
   ['add N pending draws', 'add penalty draws (stackable)'],
   ['apply pending draws', 'apply the pending penalty'],
-  ['draw until playable', 'keep drawing until playable'],
+  ['draw until playable', 'draw 1; flag a playable draw'],
   ['reverse direction', 'reverse direction'],
   ['skip next player', 'skip the next player'],
-  ['open stack', 'open a stack'],
-  ['clear stack', 'clear the stack'],
+  ['open stack', 'open a stack: stay on turn, chain that value'],
+  ['close stack', 'close the stack (Done does this)'],
   ['mark uno called', 'the presser is safe'],
   ['penalize caller N cards', 'fine the presser'],
   ['penalize uncalled player N cards', 'fine the player who got caught'],
@@ -684,7 +646,10 @@ const rect = el => el.getBoundingClientRect();
 /* ---------- card factories ---------- */
 function cardEl(card, mini){
   const el = document.createElement('div');
-  el.className = 'card ' + card.color + (mini ? ' mini' : '');
+  // a played card wears the active color (card.declared) when it differs
+  // from the printed one - declared wilds, or a rule that recolors the pile
+  const color = card.declared || card.color;
+  el.className = 'card ' + color + (mini ? ' mini' : '');
   el.dataset.cid = card.id;
   const label = VALUE_LABEL[card.value] || card.value;
   el.innerHTML = '<span class="ix tl"></span><span class="ellipse"></span>' +
@@ -721,6 +686,23 @@ function setView(v){
 function unoSplash(who){
   const s = $('uno-splash'); s.textContent = 'UNO! ' + who; s.hidden = false;
   clearTimeout(s._h); s._h = setTimeout(() => { s.hidden = true; }, 1700);
+}
+// server-driven turn countdown: ticks locally, cleared by the next action
+let cdTimer = null;
+function showCountdown(player, seconds){
+  const el = $('turn-countdown');
+  const render = s => {
+    el.querySelector('.num').textContent = s;
+    el.querySelector('.msg').textContent = player === name
+      ? 'play now or a card is played for you!'
+      : player + ' is out of time soon…';
+  };
+  clearInterval(cdTimer);
+  let s = seconds; render(s); el.hidden = false;
+  cdTimer = setInterval(() => { s--; if (s < 1) hideCountdown(); else render(s); }, 1000);
+}
+function hideCountdown(){
+  clearInterval(cdTimer); cdTimer = null; $('turn-countdown').hidden = true;
 }
 // big center-stage event splash (symbol + label); delay staggers a batch
 function bigSplash(sym, label, cls, delay){
@@ -775,7 +757,10 @@ function apply(ev, fx){
       if (!state.inGame) setView('lobby');
       break;
     case 'game_started':
-      state.inGame = true; state.hand = ev.hand; state.top = ev.top_card;
+      hideCountdown();
+      handOrder = [];
+      lastPileColor = null; lastPileTopId = null;
+      state.inGame = true; state.hand = orderedHand(ev.hand); state.top = ev.top_card;
       state.color = ev.current_color; state.players = ev.players;
       state.current = ev.current_player; state.counts = {};
       state.pileStack = [ev.top_card]; state.pending = ev.pending || 0;
@@ -792,10 +777,12 @@ function apply(ev, fx){
           fresh.forEach((c, i) => fx.push({kind:'ownDraw', id:c.id, delay:i*90,
                                            from:rect($('draw-pile'))}));
       }
-      state.hand = ev.hand; dirty.hand = true;
+      state.hand = orderedHand(ev.hand); dirty.hand = true;
       break;
     }
     case 'pile': {
+      if (ev.current_color !== 'NoColor' && ev.top_card.color !== ev.current_color)
+        ev.top_card.declared = ev.current_color;
       const changed = !state.top || state.top.id !== ev.top_card.id;
       if (changed){
         if (fx){
@@ -820,7 +807,13 @@ function apply(ev, fx){
       state.current = ev.player;
       state.canPass = !!ev.can_pass;
       state.stackValue = ev.stack_value || null;
+      hideCountdown(); // an action landed, so the clock restarted
       dirty.turn = dirty.seats = true;
+      break;
+    case 'countdown':
+      showCountdown(ev.player, ev.seconds);
+      logLine((ev.player === name ? 'you have' : ev.player + ' has') +
+              ' ' + ev.seconds + 's left');
       break;
     case 'hand_counts': {
       if (fx){
@@ -854,6 +847,7 @@ function apply(ev, fx){
       break;
     case 'game_over':
       state.inGame = false;
+      hideCountdown();
       $('lobby-status').textContent = 'Last game: ' + ev.winner + ' won';
       showWin(ev.winner);
       break;
@@ -983,9 +977,18 @@ function renderSeats(){
   layoutSeats();
 }
 
+let lastPileColor = null, lastPileTopId = null;
 function renderPile(){
   const d = $('discard');
   d.innerHTML = '';
+  // the color can change while the same card stays on top (custom rules):
+  // the top card always wears the active color, so re-dress it here
+  const top = state.pileStack[state.pileStack.length - 1];
+  if (top){
+    if (state.color && state.color !== 'NoColor' && top.color !== state.color)
+      top.declared = state.color;
+    else delete top.declared;
+  }
   for (const c of state.pileStack){
     const el = cardEl(c);
     el.style.setProperty('--tilt', tiltOf(c.id) + 'deg');
@@ -999,9 +1002,90 @@ function renderPile(){
   const dp = $('draw-pile');
   if (!dp.querySelector('.card'))
     for (let i = 0; i < 3; i++) dp.append(cardBackEl());
+  // pop the pile when the color was CHANGED rather than followed - a wild,
+  // a recoloring rule, or a mid-turn recolor with the same card on top.
+  // Ordinary plays (printed color, new card) stay quiet.
+  const recolored = lastPileColor && lastPileColor !== state.color &&
+    top && (top.declared || top.id === lastPileTopId);
+  if (recolored && !snapshotMode){
+    d.classList.remove('color-pop');
+    void d.offsetWidth; // restart the animation
+    d.classList.add('color-pop');
+  }
+  lastPileColor = state.color;
+  lastPileTopId = top ? top.id : null;
   const badge = $('pending-badge');
   badge.hidden = !(state.pending > 0);
   badge.textContent = '+' + state.pending;
+}
+
+/* ---------- drag to rearrange your hand ---------- */
+// the display order belongs to the player: server hand updates are re-sorted
+// to match it, and never-seen cards (fresh draws) go on the right
+let handOrder = [];
+function orderedHand(hand){
+  const pos = new Map(handOrder.map((id, i) => [id, i]));
+  const known = hand.filter(c => pos.has(c.id))
+    .sort((a, b) => pos.get(a.id) - pos.get(b.id));
+  const out = known.concat(hand.filter(c => !pos.has(c.id)));
+  handOrder = out.map(c => c.id);
+  return out;
+}
+
+let drag = null; // {slot, startX, startY, moved}
+
+function dragStart(e, slot){
+  if (drag || !e.isPrimary || e.button > 0) return;
+  drag = { slot, startX: e.clientX, startY: e.clientY, moved: false };
+  e.currentTarget.setPointerCapture(e.pointerId);
+}
+function dragMove(e){
+  if (!drag) return;
+  let dx = e.clientX - drag.startX;
+  if (!drag.moved){
+    if (Math.abs(dx) < 8) return; // a click, not a drag (yet)
+    drag.moved = true;
+    e.currentTarget._dragged = true; // the ending click must not play
+    drag.slot.classList.add('dragging');
+  }
+  const handEl = $('hand');
+  const others = [...handEl.children].filter(s => s !== drag.slot);
+  // slide the slot to wherever the pointer sits among the other cards
+  let target = others.length;
+  for (let i = 0; i < others.length; i++){
+    const r = rect(others[i]);
+    if (e.clientX < r.left + r.width / 2){ target = i; break; }
+  }
+  if ([...handEl.children].indexOf(drag.slot) !== target){
+    const before = new Map(others.map(s => [s.dataset.cid, rect(s).left]));
+    const x0 = rect(drag.slot).left;
+    handEl.insertBefore(drag.slot, others[target] || null);
+    setFan();
+    drag.startX += rect(drag.slot).left - x0; // keep the card under the pointer
+    dx = e.clientX - drag.startX;
+    for (const s of others){
+      const d = before.get(s.dataset.cid) - rect(s).left;
+      if (Math.abs(d) > 1)
+        s.animate([{transform:'translateX(' + d + 'px)'}, {transform:'none'}],
+                  {duration:130, easing:'ease-out'});
+    }
+  }
+  const card = drag.slot.firstChild;
+  card.style.setProperty('--dx', dx + 'px');
+  card.style.setProperty('--dy', (e.clientY - drag.startY) + 'px');
+}
+// drop (or a mid-drag hand rebuild): commit the DOM order as the new one
+function settleDrag(){
+  if (!drag) return;
+  const { slot, moved } = drag;
+  drag = null;
+  if (!moved) return;
+  slot.classList.remove('dragging');
+  slot.firstChild.style.removeProperty('--dx');
+  slot.firstChild.style.removeProperty('--dy');
+  handOrder = [...$('hand').children].map(s => Number(s.dataset.cid));
+  state.hand = orderedHand(state.hand);
+  setFan();
 }
 
 function makeSlot(card){
@@ -1009,12 +1093,20 @@ function makeSlot(card){
   slot.className = 'slot';
   slot.dataset.cid = card.id;
   const el = cardEl(card);
-  el.onclick = () => playCard(card);
+  el.onclick = () => {
+    if (el._dragged){ el._dragged = false; return; }
+    playCard(card);
+  };
+  el.onpointerdown = e => dragStart(e, slot);
+  el.onpointermove = dragMove;
+  el.onpointerup = settleDrag;
+  el.onpointercancel = settleDrag;
   slot.append(el);
   return slot;
 }
 
 function renderHand(){
+  settleDrag(); // a mid-drag rebuild keeps whatever order the drag reached
   const handEl = $('hand');
   const have = new Map([...handEl.children].map(s => [s.dataset.cid, s]));
   const before = new Map();
@@ -1173,7 +1265,8 @@ async function leaveParty(){
   sessionStorage.removeItem('uno-code');
   name = null; code = null;
   state = freshState();
-  pendingWild = null; lastPlayedId = null;
+  pendingWild = null; lastPlayedId = null; handOrder = [];
+  hideCountdown();
   $('win-overlay').hidden = true;
   $('color-modal').hidden = true;
   $('join-err').textContent = '';
@@ -1192,7 +1285,7 @@ $('rules-btn').onclick = async () => {
 };
 
 /* ---------- rules editor helpers ---------- */
-let lastLoaded = RULES_TEMPLATE;
+let lastLoaded = '';
 let checkT = null;
 
 async function checkRules(){
@@ -1201,21 +1294,71 @@ async function checkRules(){
   if (!text.trim()){ st.textContent = ''; return; }
   try {
     const r = await api('/api/check-rules', {method:'POST', body:text});
-    if (r.ok){ st.textContent = '✓ ' + r.num_rules + ' rules ready'; st.className = 'ok'; }
+    if (r.ok){
+      const warns = r.warnings || [];
+      st.textContent = '✓ ' + r.num_rules + ' rules ready';
+      st.className = warns.length ? 'warn' : 'ok';
+      const FIXES = {missing_play: 'play the card', missing_advance: 'advance turn'};
+      for (const w of warns){
+        const line = document.createElement('div');
+        line.textContent = '⚠ ' + w.message;
+        if (FIXES[w.kind]){
+          const b = document.createElement('button');
+          b.className = 'small';
+          b.textContent = 'add ‘' + FIXES[w.kind] + '’';
+          b.onclick = () => applyFix(w);
+          line.append(b);
+        }
+        st.append(line);
+      }
+    }
     else { st.textContent = '✗ ' + r.error; st.className = 'err'; }
   } catch (e){ st.textContent = ''; }
 }
 function scheduleCheck(){ clearTimeout(checkT); checkT = setTimeout(checkRules, 600); }
 $('rules-text').addEventListener('input', scheduleCheck);
 
-document.querySelectorAll('button.preset').forEach(b => b.onclick = () => {
+/* one-click warning fix: splice the missing effect into the named rule's
+   "do" line. 'play the card' goes first (like every built-in), 'advance
+   turn' goes last. Duplicate names: the LAST definition is the live one. */
+function applyFix(w){
+  const ta = $('rules-text');
+  const src = ta.value;
+  const headRe = new RegExp('rule\\s*"' +
+    w.rule.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"', 'gi');
+  let head = null, m;
+  while ((m = headRe.exec(src))) head = m;
+  const doMatch = head && /\bdo\b[ \t]*/.exec(src.slice(head.index));
+  if (!doMatch){ toast('could not find that rule anymore - re-checking'); checkRules(); return; }
+  if (w.kind === 'missing_play'){
+    const at = head.index + doMatch.index + doMatch[0].length;
+    ta.value = src.slice(0, at) + 'play the card, ' + src.slice(at);
+  } else {
+    const lineEnd = src.indexOf('\n', head.index + doMatch.index);
+    const at = lineEnd === -1 ? src.length : lineEnd;
+    ta.value = src.slice(0, at).replace(/[ \t]+$/, '') + ', advance turn' + src.slice(at);
+  }
+  checkRules();
+}
+
+// the toggles compose: stacking and draw-until can be on together
+function setPreset(stacking, drawuntil){
   const ta = $('rules-text');
   if (ta.value.trim() !== lastLoaded.trim() &&
       !confirm('Replace the current rule text?')) return;
-  ta.value = TEMPLATES[b.dataset.preset];
+  $('toggle-stacking').classList.toggle('active', stacking);
+  $('toggle-drawuntil').classList.toggle('active', drawuntil);
+  ta.value = presetText();
   lastLoaded = ta.value;
   checkRules();
-});
+  loadOverrideList();
+}
+const toggleOn = id => $(id).classList.contains('active');
+$('preset-standard').onclick = () => setPreset(false, false);
+$('toggle-stacking').onclick = () =>
+  setPreset(!toggleOn('toggle-stacking'), toggleOn('toggle-drawuntil'));
+$('toggle-drawuntil').onclick = () =>
+  setPreset(toggleOn('toggle-stacking'), !toggleOn('toggle-drawuntil'));
 
 document.querySelectorAll('.cheat code').forEach(c => c.onclick = () => {
   const ta = $('rules-text');
@@ -1224,7 +1367,39 @@ document.querySelectorAll('.cheat code').forEach(c => c.onclick = () => {
   scheduleCheck();
 });
 
-/* rule builder */
+/* the current preset's rules, offered for copy-and-customize: clicking one
+   appends its full text, and the same name makes the copy replace the
+   built-in when the ruleset is parsed */
+async function loadOverrideList(){
+  const box = $('override-list');
+  try {
+    const r = await api('/api/preset-rules?name=' + encodeURIComponent(presetName()));
+    if (!r.ok) return;
+    box.innerHTML = '';
+    for (const raw of r.text.split(/\n\s*\n/)){
+      const block = raw.trim();
+      const m = block.match(/^rule "([^"]+)"/);
+      if (!m) continue;
+      const c = document.createElement('code');
+      c.textContent = m[1];
+      c.title = block;
+      c.onclick = () => {
+        const ta = $('rules-text');
+        ta.value = ta.value.replace(/\s*$/, '\n\n') +
+          '# your version of "' + m[1] + '" - it replaces the built-in rule\n' +
+          block + '\n';
+        ta.scrollTop = ta.scrollHeight;
+        checkRules();
+      };
+      box.append(c);
+    }
+  } catch (e){ /* lobby page not connected yet; retried on preset change */ }
+}
+loadOverrideList();
+
+/* rule builder: conditions and effects both stack as removable chips,
+   all joined by clicks, with a live preview of the rule being composed */
+let builderConds = ['your turn'];   // the usual guard, removable like any chip
 let builderEffs = [];
 let customRuleN = 0;
 
@@ -1248,37 +1423,85 @@ $('b-when').onchange = syncBuilderInputs;
 $('b-eff').onchange = syncBuilderInputs;
 syncBuilderInputs();
 
-function renderChips(){
-  const box = $('b-effs'); box.innerHTML = '';
-  builderEffs.forEach((t, i) => {
+function builderName(){
+  return $('b-name').value.trim() || 'my rule ' + (customRuleN + 1);
+}
+function builderText(){
+  const cond = builderConds.length ? builderConds.join(' and ') : 'always';
+  return 'rule "' + builderName() + '" priority ' + $('b-prio').value + ':\n' +
+         '  when ' + cond + '\n' +
+         '  do ' + (builderEffs.join(', ') || '(add at least one effect)') + '\n';
+}
+function renderChipList(box, arr){
+  box.innerHTML = '';
+  arr.forEach((t, i) => {
     const s = document.createElement('span');
     s.textContent = t;
     s.title = 'remove';
-    s.onclick = () => { builderEffs.splice(i, 1); renderChips(); };
+    s.onclick = () => { arr.splice(i, 1); renderChips(); };
     box.append(s);
   });
 }
+function renderChips(){
+  renderChipList($('b-conds'), builderConds);
+  renderChipList($('b-effs'), builderEffs);
+  // preview only once the rule differs from the untouched default
+  $('b-preview').textContent =
+    (builderEffs.length || builderConds.join() !== 'your turn' ||
+     $('b-name').value.trim()) ? builderText() : '';
+}
+// a positive card-play condition means this rule will WIN the card click,
+// so it must handle the whole play - pre-add the usual effects (once per
+// composition, only into an empty effect list; all removable like any chip)
+let autoFilled = false;
+function isCardCond(t){
+  return !t.startsWith('not ') &&
+    (t.startsWith('card ') || t.startsWith('(card ') || t === 'continues stack');
+}
+$('b-add-cond').onclick = () => {
+  let t = WHEN_OPTIONS[$('b-when').value][0].replace('N', $('b-when-n').value || '0');
+  if (t.includes(' or ')) t = '(' + t + ')';
+  if ($('b-not').checked) t = 'not ' + t;
+  $('b-not').checked = false;
+  if (!builderConds.includes(t)) builderConds.push(t);
+  if (!autoFilled && !builderEffs.length && isCardCond(t)){
+    autoFilled = true;
+    // mid-stack plays keep the turn, so no advance for "continues stack"
+    builderEffs = t === 'continues stack'
+      ? ['play the card', 'set color from card']
+      : ['play the card', 'set color from card', 'advance turn'];
+    toast('Added the usual play effects - remove any chip you don’t want');
+  }
+  renderChips();
+};
+// 'advance turn' / 'skip next player' end the turn, so keep exactly one of
+// them at the tail: other effects slot in before it, a second one replaces it
+const TURN_END = new Set(['advance turn', 'skip next player']);
 $('b-add-eff').onclick = () => {
   let t = EFF_OPTIONS[$('b-eff').value][0];
   t = t.replace('N', $('b-eff-n').value || '1').replace('C', $('b-eff-color').value);
-  builderEffs.push(t);
+  const last = builderEffs[builderEffs.length - 1];
+  if (TURN_END.has(t) && TURN_END.has(last)) builderEffs[builderEffs.length - 1] = t;
+  else if (TURN_END.has(last) && !TURN_END.has(t))
+    builderEffs.splice(builderEffs.length - 1, 0, t);
+  else builderEffs.push(t);
   renderChips();
 };
+$('b-prio').onchange = renderChips;
+$('b-name').addEventListener('input', renderChips);
 $('b-append').onclick = () => {
   if (!builderEffs.length){ toast('Add at least one effect first'); return; }
-  let cond = WHEN_OPTIONS[$('b-when').value][0].replace('N', $('b-when-n').value || '0');
-  if ($('b-turn').checked)
-    cond = (cond.includes(' or ') ? '(' + cond + ')' : cond) + ' and your turn';
-  const rname = $('b-name').value.trim() || 'my rule ' + (++customRuleN);
-  const text = 'rule "' + rname + '" priority ' + $('b-prio').value + ':\n' +
-               '  when ' + cond + '\n' +
-               '  do ' + builderEffs.join(', ') + '\n';
+  const text = builderText();
+  if ($('b-name').value.trim() === '') customRuleN++;
   const ta = $('rules-text');
   ta.value = ta.value.replace(/\s*$/, '\n\n') + text;
   ta.scrollTop = ta.scrollHeight;
-  builderEffs = []; renderChips(); $('b-name').value = '';
+  builderConds = ['your turn']; builderEffs = []; autoFilled = false;
+  $('b-name').value = '';
+  renderChips();
   checkRules();
 };
+renderChips();
 
 /* ---------- join / snapshot / polling ---------- */
 async function refreshState(){
@@ -1370,7 +1593,8 @@ window.addEventListener('resize', () => {
 for (let i = 0; i < 3; i++)
   $('draw-pile').insertBefore(cardBackEl(), $('pending-badge'));
 
-$('rules-text').value = RULES_TEMPLATE;
+$('rules-text').value = presetText();
+lastLoaded = $('rules-text').value;
 checkRules();
 
 // invite links carry ?code=XXXX; a saved session (per-tab) wins unless the

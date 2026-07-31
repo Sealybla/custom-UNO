@@ -1,7 +1,34 @@
 open! Core
 
 (* Parses the user-facing rule language (see docs/rule-language.md) into
-   engine rules. Rule ids are assigned sequentially in file order and
-   priority defaults to 50 when omitted. The result is compatible with
-   Rule_engine.Ruleset.t. *)
+   engine rules. `use <preset>` lines expand to the named Presets text, and
+   a later rule with the same name as an earlier one replaces it in place,
+   so preset rules can be redefined without duplication. Ids are assigned
+   sequentially after that merge; priority defaults to 50 when omitted.
+   The result is compatible with Rule_engine.Ruleset.t. *)
 val parse_ruleset : string -> Rule.t List.t Or_error.t
+
+(* parse_ruleset plus lint warnings for editor feedback. Warnings flag
+   authoring footguns without rejecting the ruleset: since the engine runs
+   only the single highest-priority matching rule per action, a rule that
+   wins a card play but omits [play the card] (or [advance turn]) silently
+   swallows the click. Warnings are structured so the editor can offer a
+   one-click fix: [kind] names the missing effect, [rule_name] the rule to
+   insert it into. *)
+module Lint : sig
+  module Kind : sig
+    type t =
+      | Missing_play
+      | Missing_advance
+    [@@deriving sexp, compare, equal]
+  end
+
+  type t =
+    { rule_name : string
+    ; kind : Kind.t
+    ; message : string
+    }
+  [@@deriving sexp, compare, equal]
+end
+
+val parse_ruleset_checked : string -> (Rule.t List.t * Lint.t List.t) Or_error.t

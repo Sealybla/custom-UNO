@@ -1,5 +1,5 @@
 # Stacking variant: playing a card opens a same-value stack, so you can
-# play several cards of the same value in one turn; pass to end your turn.
+# play several cards of the same value in one turn; click Done to end your turn.
 # While a stack is open, only same-value continuations (or a pass) are legal.
 # Reference: docs/rule-language.md
 

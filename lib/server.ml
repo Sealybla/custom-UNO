@@ -6,6 +6,7 @@ module Queued_request = struct
     { player_name : string
     ; action : Action.Client_to_server.t
     ; enqueued_at : Time_ns.t
+    ; from_timer : bool (* enqueued by a turn timer, not a real client *)
     }
 end
 
@@ -25,6 +26,9 @@ module Room = struct
     ; mutable game_state : Game_state.t option
     ; mutable ruleset : Rule_engine.Ruleset.t
     ; request_writer : Queued_request.t Pipe.Writer.t
+    ; mutable action_seq : int (* bumped per applied action; stales timers *)
+    ; mutable autopilot : string option (* player whose turn timed out *)
+    ; mutable auto_passes : int (* consecutive server-made formality passes *)
     }
 end
 
@@ -192,30 +196,104 @@ let bot_action (state : Game_state.t) player_name =
            | Some card -> play_card hand card)))
 ;;
 
-let maybe_schedule_bot (room : Room.t) next_state current_player_name =
-  match Hashtbl.find room.clients current_player_name with
-  | Some client when client.is_bot ->
-    let bot_turn = next_state.Game_state.turn in
-    don't_wait_for
-      (let%map () = Clock_ns.after (Time_ns.Span.of_sec 5.0) in
-       match room.game_state with
-       | None -> ()
-       | Some verified_state ->
-         if Int.equal verified_state.Game_state.turn bot_turn
-            && Option.is_none verified_state.Game_state.winner
-         then (
+let bot_move_delay = Time_ns.Span.of_sec 5.0
+let turn_timeout = Time_ns.Span.of_sec 20.0
+let countdown_seconds = 5
+let autopilot_delay = Time_ns.Span.of_sec 1.5
+
+(* run f later unless another action lands (or the game ends) first *)
+let after_if_idle (room : Room.t) span ~f =
+  let seq = room.action_seq in
+  don't_wait_for
+    (let%map () = Clock_ns.after span in
+     match room.game_state with
+     | None -> ()
+     | Some state ->
+       if Int.equal room.action_seq seq
+          && Option.is_none state.Game_state.winner
+       then f state)
+;;
+
+let enqueue_auto_action (room : Room.t) (state : Game_state.t) player_name =
+  don't_wait_for
+    (Pipe.write_if_open
+       room.request_writer
+       { Queued_request.player_name
+       ; action = bot_action state player_name
+       ; enqueued_at = Time_ns.now ()
+       ; from_timer = true
+       })
+;;
+
+(* Arm whatever drives the seat whose turn it is: bots move after a short
+   delay; a human gets a room-wide countdown warning near the deadline and
+   an auto-played move at it, after which their turn is finished at bot
+   pace until it moves on. After a rejection only re-arm the automated
+   drivers - an idle human's original timers are still pending. *)
+let schedule_turn_driver ?(after_rejection = false) (room : Room.t) state =
+  match name_of_player_id state state.Game_state.turn with
+  | None -> ()
+  | Some current ->
+    (match Hashtbl.find room.clients current with
+     | None -> ()
+     | Some client when client.is_bot ->
+       after_if_idle room bot_move_delay ~f:(fun st ->
+         Core.print_s
+           [%message
+             "Bot execution triggered" (room.code : string) (current : string)];
+         enqueue_auto_action room st current)
+     | Some _ ->
+       if Option.exists room.autopilot ~f:(String.equal current)
+       then after_if_idle room autopilot_delay ~f:(fun st ->
+         enqueue_auto_action room st current)
+       else if not after_rejection
+       then (
+         room.autopilot <- None;
+         after_if_idle
+           room
+           Time_ns.Span.(turn_timeout - of_int_sec countdown_seconds)
+           ~f:(fun _ ->
+             broadcast
+               room
+               (Action.Server_to_client.Turn_countdown
+                  { player_name = current; seconds = countdown_seconds }));
+         after_if_idle room turn_timeout ~f:(fun st ->
            Core.print_s
              [%message
-               "Bot execution triggered"
+               "Turn timed out; playing for the player"
                  (room.code : string)
-                 (current_player_name : string)];
-           Pipe.write_without_pushback
-             room.request_writer
-             { Queued_request.player_name = current_player_name
-             ; action = bot_action verified_state current_player_name
-             ; enqueued_at = Time_ns.now ()
-             }))
-  | _ -> ()
+                 (current : string)];
+           room.autopilot <- Some current;
+           enqueue_auto_action room st current)))
+;;
+
+(* The seat whose turn it is either has real choices - broadcast the turn
+   and arm its driver - or can only click done, a formality the server
+   performs at once (e.g. mid-stack with nothing left to continue). The
+   cap stops a pathological all-pass ruleset from looping forever. *)
+let drive_or_auto_pass (room : Room.t) state =
+  match name_of_player_id state state.Game_state.turn with
+  | None -> ()
+  | Some current ->
+    if Rule_engine.only_pass_available room.ruleset state
+       && room.auto_passes < List.length state.Game_state.players
+    then (
+      room.auto_passes <- room.auto_passes + 1;
+      Core.print_s
+        [%message
+          "Auto-pass: only legal move" (room.code : string) (current : string)];
+      don't_wait_for
+        (Pipe.write_if_open
+           room.request_writer
+           { Queued_request.player_name = current
+           ; action = Action.Client_to_server.Pass
+           ; enqueued_at = Time_ns.now ()
+           ; from_timer = true
+           }))
+    else (
+      room.auto_passes <- 0;
+      broadcast room (turn_changed_event room state);
+      schedule_turn_driver room state)
 ;;
 
 (* A bot that just played down to one card has to press the button like
@@ -246,6 +324,9 @@ let maybe_bot_calls_uno (room : Room.t) (next_state : Game_state.t) =
                    { Queued_request.player_name
                    ; action = Action.Client_to_server.Call_uno
                    ; enqueued_at = Time_ns.now ()
+                     (* server-generated, like the turn timer's moves: it
+                        must not count as the player retaking their seat *)
+                   ; from_timer = true
                    })
         | _ -> ()))
 ;;
@@ -362,13 +443,18 @@ let start_engine_loop t (room : Room.t) request_reader =
   don't_wait_for
     (Pipe.iter_without_pushback
        request_reader
-       ~f:(fun { Queued_request.player_name; action; enqueued_at = _ } ->
+       ~f:(fun { Queued_request.player_name; action; enqueued_at = _; from_timer }
+          ->
          Core.print_s
            [%message
              "Processing Action"
                (room.code : string)
                (player_name : string)
                (action : Action.Client_to_server.t)];
+         (* the player acting for themselves takes their seat back *)
+         if (not from_timer)
+            && Option.exists room.autopilot ~f:(String.equal player_name)
+         then room.autopilot <- None;
          match room.game_state with
          | None -> ()
          | Some current_state ->
@@ -394,10 +480,11 @@ let start_engine_loop t (room : Room.t) request_reader =
                       (Action.Server_to_client.Action_rejected
                          { reason = Error.to_string_hum e })
                   | _ -> ());
-                 (* a bot whose move was rejected must get another shot, or
-                    its seat would freeze the game *)
-                 maybe_schedule_bot room current_state player_name
+                 (* a bot or autopilot whose move was rejected must get
+                    another shot, or its seat would freeze the game *)
+                 schedule_turn_driver ~after_rejection:true room current_state
                | Ok next_state ->
+                 room.action_seq <- room.action_seq + 1;
                  room.game_state <- Some next_state;
                  broadcast
                    room
@@ -441,12 +528,7 @@ let start_engine_loop t (room : Room.t) request_reader =
                             { players = Hashtbl.keys room.clients });
                        maybe_remove_room t room
                      | None -> ())
-                  | None ->
-                    (match name_of_player_id next_state next_state.turn with
-                     | None -> ()
-                     | Some current_player_name ->
-                       broadcast room (turn_changed_event room next_state);
-                       maybe_schedule_bot room next_state current_player_name))))))
+                  | None -> drive_or_auto_pass room next_state)))))
 ;;
 
 let code_alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -472,6 +554,9 @@ let create_room t =
     ; game_state = None
     ; ruleset = t.default_ruleset
     ; request_writer
+    ; action_seq = 0
+    ; autopilot = None
+    ; auto_passes = 0
     }
   in
   Hashtbl.set t.rooms ~key:code ~data:room;
@@ -641,6 +726,7 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                 { Queued_request.player_name
                 ; action
                 ; enqueued_at = Time_ns.now ()
+                ; from_timer = false
                 }
               in
               let%map () = Pipe.write_if_open room.request_writer queued in
@@ -660,7 +746,11 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                   | Error e -> return (Error e)
                   | Ok initial_state ->
                     room.game_state <- Some initial_state;
+                    room.autopilot <- None;
+                    room.auto_passes <- 0;
                     broadcast_game_started room initial_state;
+                    (* the first player's turn timer starts now *)
+                    drive_or_auto_pass room initial_state;
                     return (Ok ()))))
         ]
       ~on_unknown_rpc:`Close_connection
@@ -704,7 +794,7 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                             String.equal
                             (name_of_player_id game game.Game_state.turn)
                             (Some name) ->
-                     maybe_schedule_bot room game name
+                     schedule_turn_driver room game
                    | _ -> ()))
              else (
                Hashtbl.remove room.clients name;
