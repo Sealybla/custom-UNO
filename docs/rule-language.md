@@ -86,7 +86,7 @@ Parentheses override.
 | `draw and decide` | `DrawAndDecide` (draw 1; playable → keep turn + set flag, else advance) |
 | `reverse direction` | `ReverseDirection` (with 2 players also skips the opponent, per official Uno) |
 | `open stack` | `SetStackingValue` |
-| `clear stack` | `ClearStackingValue` |
+| `close stack` (or `clear stack`) | `ClearStackingValue` |
 | `advance turn` | `AdvanceTurn` |
 | `skip next player` | sugar for `AdvanceTurn; AdvanceTurn` |
 
@@ -220,8 +220,16 @@ rule "continue stack" priority 120:
 
 rule "pass on stack" priority 120:
   when player passes and your turn and stack is open
-  do clear stack, advance turn
+  do close stack, advance turn
 ```
+
+The stack lifecycle: `open stack` records the played card's value and the
+rule deliberately omits `advance turn`, so the player stays on turn and may
+keep playing cards of that value (`continues stack`). `close stack` forgets
+the recorded value — clicking Done fires it and ends the turn. While the
+stack is open (`stack is open`), every other rule is guarded off, which is
+why the specials above all carry `not stack is open`. (`clear stack` is an
+accepted synonym for `close stack`.)
 
 The combined variant (`use stacking with draw until playable`) is the
 stacking rules with the draw rule swapped for draw-until drawing, guarded
@@ -236,6 +244,31 @@ rule "draw until playable" priority 1:
 Every hand-coded rule is expressible, so the grammar covers the existing
 engine. These texts become the round-trip test fixtures: parse them and
 assert equality with the hand-coded `Rule.t` values.
+
+## Overriding a built-in rule
+
+The engine runs exactly ONE rule per click — the highest-priority match —
+so a custom rule never layers onto normal play; it competes with it. The
+way to change how a card behaves is to redefine the preset's rule under
+its own name (rules merge by name, later definition wins) with the full
+effect list:
+
+```
+use standard
+
+rule "play reverse" priority 100:
+  when card is reverse and (card matches color or card matches value) and your turn
+  do play the card, set color to red, reverse direction, advance turn
+```
+
+The lobby editor's "Change a built-in rule" panel copies any preset rule's
+text into the editor for tweaking. The checker
+(`Rule_parser.parse_ruleset_checked`, surfaced by `/api/check-rules`)
+warns about the two easy mistakes: a rule that fires on a card play but
+lacks `play the card` (the card would stay in the hand), and one that
+plays the card but lacks `advance turn` (the turn would never end) —
+mid-stack rules are exempt from the latter since keeping the turn is the
+point.
 
 ## Decisions made (revisit if needed)
 
@@ -293,13 +326,25 @@ page whether the ruleset can open stacks via `stacking_enabled` on
 `Game_started`). The pass button only appears when a pass is actually
 legal: `Turn_changed` carries `can_pass` (the server dry-runs the rule
 conditions against a Pass) and `stack_value` (the open stack's value, if
-any). A "Leave game" button (and the tab-close beacon) hands the seat to
+any). The top discard always wears the active color: when a wild's
+declaration or a recoloring rule moves the color away from the card's
+printed one, the card face itself is repainted (plus a pop animation on
+the pile), not just the glow ring around it. A "Leave game" button (and the tab-close beacon) hands the seat to
 a bot mid-game — bots continue stacks, stack +2/+4s onto pending
 penalties, and pass when a stack runs dry; when the last human leaves,
 the game is abandoned and the room closes. The lobby's house-rules editor
 is the one typing surface — it
 starts from the standard-rules template and submits to `/api/rules`,
-rendering parse errors inline. Browsers reach the game through the HTTP
+rendering parse errors inline. Two click-only helpers feed it: "Change a
+built-in rule" copies a preset rule's text in for tweaking, and the
+composer ("Compose a new rule without typing") builds a brand-new rule
+from chips — any number of and-joined conditions, each optionally negated,
+plus ordered effects — showing a live preview of the rule text as it
+grows. Picking a card-play condition pre-adds the standard play effects
+(`play the card`, `set color from card`, `advance turn` — no advance for
+`continues stack`) as removable chips, so composed card rules handle the
+whole play by default; later effects slot in before the trailing turn
+ender, and adding a second turn ender replaces the first. Browsers reach the game through the HTTP
 → RPC bridge in `bin/web.ml` (per-player RPC connection + polled JSON
 event queue). Illegal actions come back to the acting player as an
 `Action_rejected` event and show as a toast.

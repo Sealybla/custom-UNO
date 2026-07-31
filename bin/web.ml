@@ -308,10 +308,33 @@ let handle t ~body req =
   | "/api/check-rules" ->
     (* parse-only dry run for live editor feedback; no session needed *)
     let%bind text = Cohttp_async.Body.to_string body in
-    (match Rule_parser.parse_ruleset text with
-     | Ok rules ->
-       respond_json (sprintf {|{"ok":true,"num_rules":%d}|} (List.length rules))
+    (match Rule_parser.parse_ruleset_checked text with
+     | Ok (rules, warnings) ->
+       let warning_json (w : Rule_parser.Lint.t) =
+         sprintf
+           {|{"rule":%s,"kind":%s,"message":%s}|}
+           (jstr w.rule_name)
+           (jstr
+              (match w.kind with
+               | Missing_play -> "missing_play"
+               | Missing_advance -> "missing_advance"))
+           (jstr w.message)
+       in
+       respond_json
+         (sprintf
+            {|{"ok":true,"num_rules":%d,"warnings":%s}|}
+            (List.length rules)
+            (jlist (List.map warnings ~f:warning_json)))
      | Error err -> respond_json (error_body err))
+  | "/api/preset-rules" ->
+    (* the expanded rule text behind a preset, so the editor can offer its
+       rules for copy-and-customize *)
+    (match Option.bind (Uri.get_query_param uri "name") ~f:Presets.find with
+     | None ->
+       respond_json
+         ~status:`Bad_request
+         (error_body (Error.of_string "unknown preset"))
+     | Some text -> respond_json (sprintf {|{"ok":true,"text":%s}|} (jstr text)))
   | "/api/create-room" ->
     (match%bind create_room t with
      | Error err -> respond_json (error_body err)

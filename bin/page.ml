@@ -116,6 +116,12 @@ let html =
   #check-status { font-size:.83rem; margin:.25rem 0 .35rem; min-height:1.1rem;
     font-family:ui-monospace,monospace; white-space:pre-wrap; }
   #check-status.ok { color:#8fe3a8; } #check-status.err { color:#ffb0b0; }
+  #check-status.warn { color:#ffd97a; white-space:pre-line; }
+  #check-status button { margin-left:.5rem; padding:.05rem .5rem; font-size:.72rem; }
+  #override-list { display:flex; flex-wrap:wrap; gap:.35rem; margin-top:.5rem; font-size:.83rem; }
+  #override-list code { cursor:pointer; padding:.14rem .45rem; border-radius:6px;
+    background:rgba(255,255,255,.1); }
+  #override-list code:hover { background:rgba(255,206,0,.35); }
   .panel details { margin:.7rem 0 0; background:rgba(0,0,0,.28); border-radius:12px;
     padding:.55rem .9rem; }
   .panel summary { cursor:pointer; font-weight:800; }
@@ -128,6 +134,9 @@ let html =
   #b-name { flex:1; min-width:8rem; }
   .chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:.2rem 0 .2rem 3.9rem; }
   .chips:empty { display:none; }
+  #b-preview { background:rgba(255,255,255,.08); border-radius:8px; padding:.5rem .7rem;
+    margin:.5rem 0 0; font-size:.8rem; white-space:pre-wrap; }
+  #b-preview:empty { display:none; }
   .chips span { background:var(--c-yellow); color:var(--ink); font-weight:700;
     font-size:.78rem; border-radius:999px; padding:.2rem .6rem; cursor:pointer; }
   .chips span::after { content:' ✕'; opacity:.6; }
@@ -166,6 +175,8 @@ let html =
     box-shadow:0 0 0 5px var(--cur,#333), 0 0 26px var(--cur,transparent);
     transition:box-shadow .35s; }
   #discard .card { transform:rotate(var(--tilt,0deg)); }
+  #discard.color-pop { animation:colorpop .55s var(--ease-pop); }
+  @keyframes colorpop { 35% { transform:scale(1.16); } }
   #pending-badge { position:absolute; top:-12px; right:-12px; z-index:5;
     background:var(--c-red); color:#fff; font-weight:900; font-size:1rem;
     border-radius:999px; padding:.25rem .6rem; border:3px solid #fff;
@@ -380,12 +391,14 @@ let html =
       <textarea id="rules-text" rows="12" spellcheck="false"></textarea>
 
       <details id="builder">
-        <summary>🛠 Build a rule without typing</summary>
+        <summary>🛠 Compose a new rule without typing</summary>
         <div class="b-row"><label>When</label>
           <select id="b-when"></select>
           <input id="b-when-n" type="number" value="0" min="0" hidden>
-          <label class="b-check"><input id="b-turn" type="checkbox" checked> only on your turn</label>
+          <label class="b-check"><input id="b-not" type="checkbox"> not</label>
+          <button id="b-add-cond" class="small">+ add condition</button>
         </div>
+        <div id="b-conds" class="chips"></div>
         <div class="b-row"><label>Then</label>
           <select id="b-eff"></select>
           <input id="b-eff-n" type="number" value="2" min="1" hidden>
@@ -396,15 +409,29 @@ let html =
           <button id="b-add-eff" class="small">+ add effect</button>
         </div>
         <div id="b-effs" class="chips"></div>
+        <pre id="b-preview"></pre>
         <div class="b-row"><label>Extras</label>
           <select id="b-prio">
             <option value="50" selected>normal priority</option>
+            <option value="100">same as the special cards</option>
             <option value="115">high — beats the special cards</option>
             <option value="5">low — a fallback rule</option>
           </select>
           <input id="b-name" placeholder="rule name (optional)">
           <button id="b-append">Add to ruleset</button>
         </div>
+        <p style="opacity:.7; font-size:.8rem; margin:.3rem 0 0">Stack as many conditions
+        as you like — they must all hold ("and"). Tick "not" to require the opposite of
+        the next condition. Picking a card condition pre-adds the usual play effects.
+        Click any chip to remove it.</p>
+      </details>
+
+      <details id="override">
+        <summary>🔁 Change a built-in rule</summary>
+        <p style="opacity:.75; font-size:.82rem; margin:.3rem 0 0">Click a rule to copy it
+        into the editor, then tweak its effects. Your copy keeps the same name, so it
+        replaces the built-in version.</p>
+        <div id="override-list"></div>
       </details>
 
       <details>
@@ -451,7 +478,7 @@ let html =
             <code>reverse direction</code>
             <code>skip next player</code>
             <code>open stack</code>
-            <code>clear stack</code>
+            <code>close stack</code>
             <code>advance turn</code>
           </div>
         </div>
@@ -533,6 +560,8 @@ function presetText(){
 
 const WHEN_OPTIONS = [
   ['card matches color or card matches value', 'a matching card is played'],
+  ['card matches color', 'the played card matches the color'],
+  ['card matches value', 'the played card matches the value'],
   ['card is plus two', 'a +2 is played'],
   ['card is plus four', 'a +4 is played'],
   ['card is skip', 'a skip is played'],
@@ -560,8 +589,8 @@ const EFF_OPTIONS = [
   ['draw until playable', 'draw 1; flag a playable draw'],
   ['reverse direction', 'reverse direction'],
   ['skip next player', 'skip the next player'],
-  ['open stack', 'open a stack'],
-  ['clear stack', 'clear the stack'],
+  ['open stack', 'open a stack: stay on turn, chain that value'],
+  ['close stack', 'close the stack (Done does this)'],
 ];
 
 let name = null;
@@ -582,8 +611,9 @@ const rect = el => el.getBoundingClientRect();
 /* ---------- card factories ---------- */
 function cardEl(card, mini){
   const el = document.createElement('div');
-  // a wild that has been played wears its declared color (card.declared)
-  const color = card.color === 'NoColor' && card.declared ? card.declared : card.color;
+  // a played card wears the active color (card.declared) when it differs
+  // from the printed one - declared wilds, or a rule that recolors the pile
+  const color = card.declared || card.color;
   el.className = 'card ' + color + (mini ? ' mini' : '');
   el.dataset.cid = card.id;
   const label = VALUE_LABEL[card.value] || card.value;
@@ -694,6 +724,7 @@ function apply(ev, fx){
     case 'game_started':
       hideCountdown();
       handOrder = [];
+      lastPileColor = null; lastPileTopId = null;
       state.inGame = true; state.hand = orderedHand(ev.hand); state.top = ev.top_card;
       state.color = ev.current_color; state.players = ev.players;
       state.current = ev.current_player; state.counts = {};
@@ -715,7 +746,7 @@ function apply(ev, fx){
       break;
     }
     case 'pile': {
-      if (ev.top_card.color === 'NoColor' && ev.current_color !== 'NoColor')
+      if (ev.current_color !== 'NoColor' && ev.top_card.color !== ev.current_color)
         ev.top_card.declared = ev.current_color;
       const changed = !state.top || state.top.id !== ev.top_card.id;
       if (changed){
@@ -897,19 +928,36 @@ function renderSeats(){
   layoutSeats();
 }
 
+let lastPileColor = null, lastPileTopId = null;
 function renderPile(){
   const d = $('discard');
   d.innerHTML = '';
-  // the color can change while the same wild stays on top (custom rules)
+  // the color can change while the same card stays on top (custom rules):
+  // the top card always wears the active color, so re-dress it here
   const top = state.pileStack[state.pileStack.length - 1];
-  if (top && top.color === 'NoColor' && state.color && state.color !== 'NoColor')
-    top.declared = state.color;
+  if (top){
+    if (state.color && state.color !== 'NoColor' && top.color !== state.color)
+      top.declared = state.color;
+    else delete top.declared;
+  }
   for (const c of state.pileStack){
     const el = cardEl(c);
     el.style.setProperty('--tilt', tiltOf(c.id) + 'deg');
     d.append(el);
   }
   d.style.setProperty('--cur', COLOR_CSS[state.color] || '#333');
+  // pop the pile when the color was CHANGED rather than followed - a wild,
+  // a recoloring rule, or a mid-turn recolor with the same card on top.
+  // Ordinary plays (printed color, new card) stay quiet.
+  const recolored = lastPileColor && lastPileColor !== state.color &&
+    top && (top.declared || top.id === lastPileTopId);
+  if (recolored && !snapshotMode){
+    d.classList.remove('color-pop');
+    void d.offsetWidth; // restart the animation
+    d.classList.add('color-pop');
+  }
+  lastPileColor = state.color;
+  lastPileTopId = top ? top.id : null;
   const badge = $('pending-badge');
   badge.hidden = !(state.pending > 0);
   badge.textContent = '+' + state.pending;
@@ -1187,12 +1235,52 @@ async function checkRules(){
   if (!text.trim()){ st.textContent = ''; return; }
   try {
     const r = await api('/api/check-rules', {method:'POST', body:text});
-    if (r.ok){ st.textContent = '✓ ' + r.num_rules + ' rules ready'; st.className = 'ok'; }
+    if (r.ok){
+      const warns = r.warnings || [];
+      st.textContent = '✓ ' + r.num_rules + ' rules ready';
+      st.className = warns.length ? 'warn' : 'ok';
+      const FIXES = {missing_play: 'play the card', missing_advance: 'advance turn'};
+      for (const w of warns){
+        const line = document.createElement('div');
+        line.textContent = '⚠ ' + w.message;
+        if (FIXES[w.kind]){
+          const b = document.createElement('button');
+          b.className = 'small';
+          b.textContent = 'add ‘' + FIXES[w.kind] + '’';
+          b.onclick = () => applyFix(w);
+          line.append(b);
+        }
+        st.append(line);
+      }
+    }
     else { st.textContent = '✗ ' + r.error; st.className = 'err'; }
   } catch (e){ st.textContent = ''; }
 }
 function scheduleCheck(){ clearTimeout(checkT); checkT = setTimeout(checkRules, 600); }
 $('rules-text').addEventListener('input', scheduleCheck);
+
+/* one-click warning fix: splice the missing effect into the named rule's
+   "do" line. 'play the card' goes first (like every built-in), 'advance
+   turn' goes last. Duplicate names: the LAST definition is the live one. */
+function applyFix(w){
+  const ta = $('rules-text');
+  const src = ta.value;
+  const headRe = new RegExp('rule\\s*"' +
+    w.rule.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"', 'gi');
+  let head = null, m;
+  while ((m = headRe.exec(src))) head = m;
+  const doMatch = head && /\bdo\b[ \t]*/.exec(src.slice(head.index));
+  if (!doMatch){ toast('could not find that rule anymore - re-checking'); checkRules(); return; }
+  if (w.kind === 'missing_play'){
+    const at = head.index + doMatch.index + doMatch[0].length;
+    ta.value = src.slice(0, at) + 'play the card, ' + src.slice(at);
+  } else {
+    const lineEnd = src.indexOf('\n', head.index + doMatch.index);
+    const at = lineEnd === -1 ? src.length : lineEnd;
+    ta.value = src.slice(0, at).replace(/[ \t]+$/, '') + ', advance turn' + src.slice(at);
+  }
+  checkRules();
+}
 
 // the toggles compose: stacking and draw-until can be on together
 function setPreset(stacking, drawuntil){
@@ -1204,6 +1292,7 @@ function setPreset(stacking, drawuntil){
   ta.value = presetText();
   lastLoaded = ta.value;
   checkRules();
+  loadOverrideList();
 }
 const toggleOn = id => $(id).classList.contains('active');
 $('preset-standard').onclick = () => setPreset(false, false);
@@ -1219,7 +1308,39 @@ document.querySelectorAll('.cheat code').forEach(c => c.onclick = () => {
   scheduleCheck();
 });
 
-/* rule builder */
+/* the current preset's rules, offered for copy-and-customize: clicking one
+   appends its full text, and the same name makes the copy replace the
+   built-in when the ruleset is parsed */
+async function loadOverrideList(){
+  const box = $('override-list');
+  try {
+    const r = await api('/api/preset-rules?name=' + encodeURIComponent(presetName()));
+    if (!r.ok) return;
+    box.innerHTML = '';
+    for (const raw of r.text.split(/\n\s*\n/)){
+      const block = raw.trim();
+      const m = block.match(/^rule "([^"]+)"/);
+      if (!m) continue;
+      const c = document.createElement('code');
+      c.textContent = m[1];
+      c.title = block;
+      c.onclick = () => {
+        const ta = $('rules-text');
+        ta.value = ta.value.replace(/\s*$/, '\n\n') +
+          '# your version of "' + m[1] + '" - it replaces the built-in rule\n' +
+          block + '\n';
+        ta.scrollTop = ta.scrollHeight;
+        checkRules();
+      };
+      box.append(c);
+    }
+  } catch (e){ /* lobby page not connected yet; retried on preset change */ }
+}
+loadOverrideList();
+
+/* rule builder: conditions and effects both stack as removable chips,
+   all joined by clicks, with a live preview of the rule being composed */
+let builderConds = ['your turn'];   // the usual guard, removable like any chip
 let builderEffs = [];
 let customRuleN = 0;
 
@@ -1243,37 +1364,85 @@ $('b-when').onchange = syncBuilderInputs;
 $('b-eff').onchange = syncBuilderInputs;
 syncBuilderInputs();
 
-function renderChips(){
-  const box = $('b-effs'); box.innerHTML = '';
-  builderEffs.forEach((t, i) => {
+function builderName(){
+  return $('b-name').value.trim() || 'my rule ' + (customRuleN + 1);
+}
+function builderText(){
+  const cond = builderConds.length ? builderConds.join(' and ') : 'always';
+  return 'rule "' + builderName() + '" priority ' + $('b-prio').value + ':\n' +
+         '  when ' + cond + '\n' +
+         '  do ' + (builderEffs.join(', ') || '(add at least one effect)') + '\n';
+}
+function renderChipList(box, arr){
+  box.innerHTML = '';
+  arr.forEach((t, i) => {
     const s = document.createElement('span');
     s.textContent = t;
     s.title = 'remove';
-    s.onclick = () => { builderEffs.splice(i, 1); renderChips(); };
+    s.onclick = () => { arr.splice(i, 1); renderChips(); };
     box.append(s);
   });
 }
+function renderChips(){
+  renderChipList($('b-conds'), builderConds);
+  renderChipList($('b-effs'), builderEffs);
+  // preview only once the rule differs from the untouched default
+  $('b-preview').textContent =
+    (builderEffs.length || builderConds.join() !== 'your turn' ||
+     $('b-name').value.trim()) ? builderText() : '';
+}
+// a positive card-play condition means this rule will WIN the card click,
+// so it must handle the whole play - pre-add the usual effects (once per
+// composition, only into an empty effect list; all removable like any chip)
+let autoFilled = false;
+function isCardCond(t){
+  return !t.startsWith('not ') &&
+    (t.startsWith('card ') || t.startsWith('(card ') || t === 'continues stack');
+}
+$('b-add-cond').onclick = () => {
+  let t = WHEN_OPTIONS[$('b-when').value][0].replace('N', $('b-when-n').value || '0');
+  if (t.includes(' or ')) t = '(' + t + ')';
+  if ($('b-not').checked) t = 'not ' + t;
+  $('b-not').checked = false;
+  if (!builderConds.includes(t)) builderConds.push(t);
+  if (!autoFilled && !builderEffs.length && isCardCond(t)){
+    autoFilled = true;
+    // mid-stack plays keep the turn, so no advance for "continues stack"
+    builderEffs = t === 'continues stack'
+      ? ['play the card', 'set color from card']
+      : ['play the card', 'set color from card', 'advance turn'];
+    toast('Added the usual play effects - remove any chip you don’t want');
+  }
+  renderChips();
+};
+// 'advance turn' / 'skip next player' end the turn, so keep exactly one of
+// them at the tail: other effects slot in before it, a second one replaces it
+const TURN_END = new Set(['advance turn', 'skip next player']);
 $('b-add-eff').onclick = () => {
   let t = EFF_OPTIONS[$('b-eff').value][0];
   t = t.replace('N', $('b-eff-n').value || '1').replace('C', $('b-eff-color').value);
-  builderEffs.push(t);
+  const last = builderEffs[builderEffs.length - 1];
+  if (TURN_END.has(t) && TURN_END.has(last)) builderEffs[builderEffs.length - 1] = t;
+  else if (TURN_END.has(last) && !TURN_END.has(t))
+    builderEffs.splice(builderEffs.length - 1, 0, t);
+  else builderEffs.push(t);
   renderChips();
 };
+$('b-prio').onchange = renderChips;
+$('b-name').addEventListener('input', renderChips);
 $('b-append').onclick = () => {
   if (!builderEffs.length){ toast('Add at least one effect first'); return; }
-  let cond = WHEN_OPTIONS[$('b-when').value][0].replace('N', $('b-when-n').value || '0');
-  if ($('b-turn').checked)
-    cond = (cond.includes(' or ') ? '(' + cond + ')' : cond) + ' and your turn';
-  const rname = $('b-name').value.trim() || 'my rule ' + (++customRuleN);
-  const text = 'rule "' + rname + '" priority ' + $('b-prio').value + ':\n' +
-               '  when ' + cond + '\n' +
-               '  do ' + builderEffs.join(', ') + '\n';
+  const text = builderText();
+  if ($('b-name').value.trim() === '') customRuleN++;
   const ta = $('rules-text');
   ta.value = ta.value.replace(/\s*$/, '\n\n') + text;
   ta.scrollTop = ta.scrollHeight;
-  builderEffs = []; renderChips(); $('b-name').value = '';
+  builderConds = ['your turn']; builderEffs = []; autoFilled = false;
+  $('b-name').value = '';
+  renderChips();
   checkRules();
 };
+renderChips();
 
 /* ---------- join / snapshot / polling ---------- */
 async function refreshState(){

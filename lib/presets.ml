@@ -125,7 +125,7 @@ rule "continue stack" priority 120:
 
 rule "pass on stack" priority 120:
   when player passes and your turn and stack is open
-  do clear stack, advance turn
+  do close stack, advance turn
 |}
 ;;
 

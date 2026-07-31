@@ -846,6 +846,107 @@ let%expect_test "combined stacking and draw-until variant plays a turn" =
     |}]
 ;;
 
+(* custom rules layered on a preset must actually fire in gameplay: an
+   override (same name) replaces the preset's behavior *)
+let%expect_test "custom override on a preset changes gameplay" =
+  let rules =
+    Rule_parser.parse_ruleset
+      {|use standard
+rule "play matching card" priority 10:
+  when (card matches color or card matches value) and your turn
+  do play the card, set color from card, next player draws 1 cards, advance turn|}
+    |> Or_error.ok_exn
+  in
+  let mine = { Card.color = Red; value = Nine; id = 730 } in
+  let top = { Card.color = Red; value = Five; id = 731 } in
+  let burn = { Card.color = Blue; value = Two; id = 732 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ mine ]; "b", []; "c", [] ]
+      ~top_card:top
+      ~draw_pile:[ burn ]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0
+      ~action:(Play { card_id = 730; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message
+      "matching card burned the neighbor"
+        (t.turn : int)
+        (List.length (Player.get_hand (List.nth_exn t.players 1)) : int)];
+  [%expect
+    {|
+    ("matching card burned the neighbor" (t.turn 1)
+     ("List.length (Player.get_hand (List.nth_exn t.players 1))" 1))
+    |}]
+;;
+
+(* a new custom rule at higher priority shadows a preset special *)
+let%expect_test "custom high-priority rule beats a preset special" =
+  let rules =
+    Rule_parser.parse_ruleset
+      {|use standard
+rule "reverse is just a card" priority 115:
+  when card is reverse and (card matches color or card matches value) and your turn
+  do play the card, set color from card, advance turn|}
+    |> Or_error.ok_exn
+  in
+  let rev = { Card.color = Red; value = Reverse; id = 740 } in
+  let top = { Card.color = Red; value = Five; id = 741 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ rev ]; "b", []; "c", [] ]
+      ~top_card:top
+      ~draw_pile:[]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0
+      ~action:(Play { card_id = 740; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message
+      "reverse played plainly" (t.turn : int) (t.direction : Direction.t)];
+  [%expect {| ("reverse played plainly" (t.turn 1) (t.direction Clockwise)) |}]
+;;
+
+(* overrides work on the combined preset too *)
+let%expect_test "custom wild override in the combined variant" =
+  let rules =
+    Rule_parser.parse_ruleset
+      {|use stacking with draw until playable
+rule "play wild" priority 100:
+  when card is wild and your turn and not stack is open
+  do play the card, set color to declared, skip next player|}
+    |> Or_error.ok_exn
+  in
+  let wild = { Card.color = NoColor; value = Wild; id = 750 } in
+  let top = { Card.color = Red; value = Five; id = 751 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ wild ]; "b", []; "c", [] ]
+      ~top_card:top
+      ~draw_pile:[]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0
+      ~action:(Play { card_id = 750; declared_color = Some Blue })
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message
+      "wild now skips" (t.turn : int) (t.current_color : Card.Color.t)];
+  [%expect {| ("wild now skips" (t.turn 2) (t.current_color Blue)) |}]
+;;
+
 let%expect_test "parsed stacking ruleset plays a real stacking turn" =
   let rules = Rule_parser.parse_ruleset Presets.stacking_text |> Or_error.ok_exn in
   let s1 = { Card.color = Red; value = Seven; id = 700 } in
@@ -918,4 +1019,64 @@ let%expect_test "parse errors carry line numbers and the rule name" =
     (e ("in rule \"confused\"" "unknown condition (line 2 at 'card')"))
     (e ("in rule \"flying\"" "unknown effect (line 3 at 'fly')"))
     |}]
+;;
+(* the checker warns about the two easy override mistakes: a card-play rule
+   that never plays the card, and one that never ends the turn. The presets
+   themselves must stay warning-free. *)
+let%expect_test "lint flags card-play rules missing play-the-card or advance-turn" =
+  let check text =
+    match Rule_parser.parse_ruleset_checked text with
+    | Error e -> print_s [%message (e : Error.t)]
+    | Ok (_, warnings) -> print_s [%message (warnings : Rule_parser.Lint.t list)]
+  in
+  check
+    {|use standard
+rule "red reverse" priority 115:
+  when card is reverse and your turn
+  do set color to red|};
+  check
+    {|use standard
+rule "play reverse" priority 100:
+  when card is reverse and (card matches color or card matches value) and your turn
+  do play the card, set color to red|};
+  [%expect
+    {|
+    (warnings
+     (((rule_name "red reverse") (kind Missing_play)
+       (message
+        "rule \"red reverse\" fires when a card is played but has no 'play the card' effect - the card will stay in the hand"))))
+    (warnings
+     (((rule_name "play reverse") (kind Missing_advance)
+       (message
+        "rule \"play reverse\" plays the card but has no 'advance turn' effect - the turn will never end"))))
+    |}]
+;;
+
+let%expect_test "presets and mid-stack rules produce no lint warnings" =
+  List.iter
+    [ "standard"; "stacking"; "draw until playable"; "stacking with draw until playable" ]
+    ~f:(fun preset ->
+      match Rule_parser.parse_ruleset_checked ("use " ^ preset) with
+      | Error e -> print_s [%message preset (e : Error.t)]
+      | Ok (_, warnings) -> print_s [%message preset (warnings : Rule_parser.Lint.t list)]);
+  [%expect
+    {|
+    (standard (warnings ()))
+    (stacking (warnings ()))
+    ("draw until playable" (warnings ()))
+    ("stacking with draw until playable" (warnings ()))
+    |}]
+;;
+
+(* "close stack" and the historical "clear stack" are the same effect *)
+let%expect_test "close stack parses as clear stack" =
+  let parse text = Rule_parser.parse_ruleset text |> Or_error.ok_exn in
+  let close =
+    parse {|rule "pass on stack": when player passes do close stack, advance turn|}
+  in
+  let clear =
+    parse {|rule "pass on stack": when player passes do clear stack, advance turn|}
+  in
+  print_s [%message (Rule_engine.Ruleset.equal close clear : bool)];
+  [%expect {| ("Rule_engine.Ruleset.equal close clear" true) |}]
 ;;
