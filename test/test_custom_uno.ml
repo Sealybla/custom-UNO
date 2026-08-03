@@ -901,6 +901,133 @@ let%expect_test "any card opens the game on a flipped wild" =
     |}]
 ;;
 
+(* ---------- multi-winner play (play until ...) ---------- *)
+
+(* four seats; "a" is one card from going out, the rest hold two each *)
+let finish_setup text =
+  let rules = Rule_parser.parse_ruleset text |> Or_error.ok_exn in
+  let top = { Card.color = Red; value = Five; id = 700 } in
+  let c n v = { Card.color = Card.Color.Red; value = v; id = n } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:
+        [ "a", [ c 701 One ]
+        ; "b", [ c 702 Two; c 712 Six ]
+        ; "c", [ c 703 Three; c 713 Seven ]
+        ; "d", [ c 704 Four; c 714 Eight ]
+        ]
+      ~top_card:top
+      ~draw_pile:(Game_state.create_card_deck ())
+      ~pending_draws:0
+      ~turn:0
+  in
+  rules, t
+;;
+
+let play rules t ~player_id ~card_id =
+  Rule_engine.apply_action
+    rules
+    t
+    ~player_id
+    ~action:(Play { card_id; declared_color = None; swap_with = None })
+  |> Or_error.ok_exn
+;;
+
+let%expect_test "by default the first player out ends the game" =
+  let rules, t = finish_setup "use standard" in
+  let t = play rules t ~player_id:0 ~card_id:701 in
+  print_s [%message (t.winner : int option) (t.finished : int list)];
+  [%expect {| ((t.winner (0)) (t.finished (0))) |}]
+;;
+
+(* the whole point: going out no longer stops everyone else *)
+let%expect_test "play until one player is left keeps the game going" =
+  let rules, t = finish_setup "play until one player is left\nuse standard" in
+  let t = play rules t ~player_id:0 ~card_id:701 in
+  print_s
+    [%message "a is out" (t.winner : int option) (t.finished : int list) (t.turn : int)];
+  (* b, c and d each play once; the rotation must step over the empty seat *)
+  let t = play rules t ~player_id:1 ~card_id:702 in
+  let t = play rules t ~player_id:2 ~card_id:703 in
+  let t = play rules t ~player_id:3 ~card_id:704 in
+  print_s [%message "one lap later" (t.turn : int)];
+  (* b goes out second, which leaves only c and d -> still not over *)
+  let t = play rules t ~player_id:1 ~card_id:712 in
+  print_s [%message "b is out" (t.winner : int option) (t.finished : int list)];
+  let t = play rules t ~player_id:2 ~card_id:713 in
+  print_s
+    [%message "c is out - game over" (t.winner : int option) (t.finished : int list)];
+  [%expect
+    {|
+    ("a is out" (t.winner ()) (t.finished (0)) (t.turn 1))
+    ("one lap later" (t.turn 1))
+    ("b is out" (t.winner ()) (t.finished (0 1)))
+    ("c is out - game over" (t.winner (0)) (t.finished (0 1 2)))
+    |}]
+;;
+
+let%expect_test "play until N players finish stops at N" =
+  let rules, t = finish_setup "play until 2 players finish\nuse standard" in
+  let t = play rules t ~player_id:0 ~card_id:701 in
+  print_s [%message "one out" (t.winner : int option)];
+  let t = play rules t ~player_id:1 ~card_id:702 in
+  let t = play rules t ~player_id:2 ~card_id:703 in
+  let t = play rules t ~player_id:3 ~card_id:704 in
+  let t = play rules t ~player_id:1 ~card_id:712 in
+  print_s [%message "two out" (t.winner : int option) (t.finished : int list)];
+  [%expect
+    {|
+    ("one out" (t.winner ()))
+    ("two out" (t.winner (0)) (t.finished (0 1)))
+    |}]
+;;
+
+(* nobody can take the last place from themselves, so an over-large N must
+   still be reachable rather than hanging the table forever *)
+let%expect_test "play until N is clamped to one short of the table" =
+  print_s
+    [%message
+      (Game_state.Finish.needed (After 5) ~num_players:3 : int)
+        (Game_state.Finish.needed Last_standing ~num_players:4 : int)
+        (Game_state.Finish.needed First_out ~num_players:4 : int)];
+  [%expect
+    {|
+    (("Game_state.Finish.needed (After 5) ~num_players:3" 2)
+     ("Game_state.Finish.needed Last_standing ~num_players:4" 3)
+     ("Game_state.Finish.needed First_out ~num_players:4" 1))
+    |}]
+;;
+
+let%expect_test "play until parses in any position and rejects nonsense" =
+  let finish_of text =
+    match Rule_parser.parse_ruleset text with
+    | Error e -> Error (Error.to_string_hum e)
+    | Ok rules ->
+      Ok
+        (List.find_map rules ~f:(fun (r : Rule.t) ->
+           List.find_map r.actions ~f:(function
+             | Game_state.Effect.CheckWinner f -> Some f
+             | _ -> None)))
+  in
+  let show label text =
+    print_s
+      [%message label ~_:(finish_of text : (Game_state.Finish.t option, string) Result.t)]
+  in
+  show "before use" "play until 2 players finish\nuse standard";
+  show "after use" "use standard\nplay until one player is left";
+  show "twice" "play until 2 players finish\nplay until 3 players finish\nuse standard";
+  show "nonsense" "use standard\nplay until bananas";
+  [%expect
+    {|
+    ("before use" (Ok ((After 2))))
+    ("after use" (Ok (Last_standing)))
+    (twice (Error "line 2: 'play until' given more than once"))
+    (nonsense
+     (Error
+      "line 2: expected 'play until N players finish', 'play until one player is left', or 'play until first player finishes'"))
+    |}]
+;;
+
 (* ---------- jumping in (playing out of turn) ---------- *)
 
 (* seats a b c d, a red seven on the pile, and d holding its twin. The turn

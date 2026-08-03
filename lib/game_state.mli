@@ -6,6 +6,20 @@ module Card_registry : sig
   val find : t -> int -> Card.t Or_error.t
 end
 
+(* when emptying a hand ends the whole game rather than just taking that
+   player out of it *)
+module Finish : sig
+  type t =
+    | First_out
+    | After of int
+    | Last_standing
+  [@@deriving sexp, compare, equal, bin_io]
+
+  (* how many players must go out before the game ends, clamped to one short
+     of the table so an over-large [After] can still finish *)
+  val needed : t -> num_players:int -> int
+end
+
 module Effect : sig
   type t =
     | PlayTriggeringCard
@@ -23,7 +37,7 @@ module Effect : sig
     | ClearStackingValue
     | AdvanceTurn
     | JumpToActor
-    | CheckWinner
+    | CheckWinner of Finish.t
     | MarkUnoCalled
     | PenalizeUnoCaller of int
     | PenalizeUnoTarget of int
@@ -55,6 +69,7 @@ type t =
   ; turns_advanced : int
   ; turn : int
   ; uno_vulnerable : int option
+  ; finished : int list (* players who are out, first place first *)
   ; card_registry : Card_registry.t
   ; winner : int option
   }
@@ -79,6 +94,12 @@ val create
   -> t Or_error.t
 
 val hand_size : t -> int -> int
+
+(* has this player already emptied their hand and left the rotation? *)
+val is_finished : t -> int -> bool
+
+(* a gameplay move consumes a turn; an UNO press does not *)
+val is_gameplay_event : Event.t -> bool
 val apply_effect : t -> event:Event.t -> Effect.t -> t Or_error.t
 
 (* recomputes who can be caught for not calling UNO; called once per action
@@ -92,6 +113,10 @@ val update_uno_window : t -> actor_id:int -> event:Event.t -> t
    Ordinary plays and draws never look like a move - drawn cards come from
    the pile, so a grown hand can't equal anyone's old hand. Drives the
    swap/rotate animations and keeps the forced-draw notification from
-   misreading a received hand as a penalty. Empty hands are skipped: there
-   is nothing to animate and empty sets would match each other. *)
-val hand_moves : before:t -> after:t -> played:Int.t Option.t -> (int * int) list
+   misreading a received hand as a penalty. Empty hands are skipped: there is
+   nothing to animate and empty sets would match each other. *)
+val hand_moves
+  :  before:t
+  -> after:t
+  -> played:Int.t Option.t
+  -> (int * int) list

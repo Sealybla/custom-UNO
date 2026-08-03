@@ -50,7 +50,14 @@ module Server_to_client : sig
              it or the next action closes the window *)
         }
     | Hand_counts of { counts : (String.t * Int.t) List.t }
-    | Game_over of { winner_name : String.t }
+    | Game_over of
+        { winner_name : String.t
+        ; standings : String.t List.t
+        }
+    | Player_finished of
+        { player_name : String.t
+        ; place : Int.t
+        }
     | Uno_called of { player_name : String.t }
     | Uno_penalty of
         { player_name : String.t

@@ -17,6 +17,28 @@ module Card_registry = struct
   ;;
 end
 
+(* When does emptying your hand end the GAME, as opposed to just taking you
+   out of it? Classic Uno stops at the first player out; the other two modes
+   keep the remaining players going for the lower places. *)
+module Finish = struct
+  type t =
+    | First_out (* the first empty hand ends the game *)
+    | After of int (* stop once this many players are out *)
+    | Last_standing (* play on until only one player still holds cards *)
+  [@@deriving sexp, compare, equal, bin_io]
+
+  (* how many players must go out before the game is over. Never more than
+     one short of the table: nobody can take the last place from themselves,
+     so "until 5 finish" at a table of 3 would otherwise never end. *)
+  let needed t ~num_players =
+    let all_but_one = Int.max 1 (num_players - 1) in
+    match t with
+    | First_out -> 1
+    | Last_standing -> all_but_one
+    | After n -> Int.min (Int.max 1 n) all_but_one
+  ;;
+end
+
 module Effect = struct
   type t =
     | PlayTriggeringCard
@@ -38,7 +60,9 @@ module Effect = struct
        works: everyone between the seat whose turn it was and the player who
        jumped loses their go. *)
     | JumpToActor
-    | CheckWinner
+    (* records an emptied hand as out, and ends the game once the finish
+       mode says enough players have gone *)
+    | CheckWinner of Finish.t
     (* the caller is safe: shuts their own catch window *)
     | MarkUnoCalled
     (* the caller pressed UNO with nothing to claim *)
@@ -92,8 +116,13 @@ type t =
        played down to a single card and nobody has taken a gameplay turn
        since. At most one player can be in this position at a time, because
        only the actor's own hand can shrink on their move. *)
+  ; finished : int List.t
+    (* players who have emptied their hand, in the order they did it: first
+       place first. They keep their seat but are skipped forever after. *)
   ; card_registry : Card_registry.t
   ; winner : int Option.t
+    (* set only when the GAME is over; it is whoever came first. With a
+       multi-winner finish mode the full podium is [finished]. *)
   }
 [@@deriving sexp, compare, equal, bin_io]
 
@@ -119,6 +148,7 @@ let for_testing ~player_hands ~top_card ~draw_pile ~pending_draws ~turn =
   ; turns_advanced = 0
   ; turn
   ; uno_vulnerable = None
+  ; finished = []
   ; card_registry = Card_registry.of_cards all_cards
   ; winner = None
   }
@@ -274,6 +304,7 @@ let create ?random_state ~player_names ~hand_size () : t Or_error.t =
     ; turns_advanced = 0
     ; turn = 0
     ; uno_vulnerable = None
+    ; finished = []
     ; card_registry = Card_registry.of_cards deck
     ; winner = None
     }
@@ -287,13 +318,23 @@ let create ?random_state ~player_names ~hand_size () : t Or_error.t =
 ;;
 
 (* passing the turn also forgets the drawn-card decision *)
+let is_finished t player_id = List.mem t.finished player_id ~equal:Int.equal
+
 let advance_turn t =
   let num_players = List.length t.players in
   let dir = match t.direction with Clockwise -> 1 | Counter -> -1 in
   (* add num_players again to account for neg mod *)
-  let next_turn = (t.turn + dir + num_players) % num_players in
+  let step idx = (idx + dir + num_players) % num_players in
+  (* players who have already gone out keep their seat but never get another
+     turn. [tried] bounds the walk: if everybody is finished there is no live
+     seat to land on and we would otherwise loop forever. *)
+  let rec next_live idx tried =
+    if tried >= num_players || not (is_finished t idx)
+    then idx
+    else next_live (step idx) (tried + 1)
+  in
   { t with
-    turn = next_turn
+    turn = next_live (step t.turn) 1
   ; drew_playable = false
   ; turns_advanced = t.turns_advanced + 1
   }
@@ -471,18 +512,27 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
        jumping in cancels that offer *)
     { t with turn = Player.get_id player; drew_playable = false }
   | AdvanceTurn -> Ok (advance_turn t)
-  | CheckWinner ->
+  | CheckWinner finish ->
     let%map player = player_of_event event in
     let id = Player.get_id player in
-    let current_player =
-      List.find t.players ~f:(fun p -> Int.equal (Player.get_id p) id)
+    let emptied_hand =
+      match List.find t.players ~f:(fun p -> Int.equal (Player.get_id p) id) with
+      | Some p -> List.is_empty (Player.get_hand p)
+      | None -> false
+    in
+    (* order matters: [finished] is the podium, first place first *)
+    let finished =
+      if emptied_hand && not (is_finished t id)
+      then t.finished @ [ id ]
+      else t.finished
+    in
+    let needed =
+      Finish.needed finish ~num_players:(List.length t.players)
     in
     let winner =
-      match current_player with
-      | Some p when List.is_empty (Player.get_hand p) -> Some id
-      | _ -> None
+      if List.length finished >= needed then List.hd finished else None
     in
-    { t with winner }
+    { t with finished; winner }
 ;;
 
 (* Bookkeeping for the UNO catch window, run by Rule_engine.apply_action once

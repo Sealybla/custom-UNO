@@ -621,13 +621,32 @@ let start_engine_loop t (room : Room.t) request_reader =
                            Some card_id
                          | _ -> None));
                  maybe_bot_calls_uno room next_state;
+                 (* somebody emptied their hand on this action. With a
+                    multi-winner finish mode the game carries on for the
+                    lower places, so this is its own announcement rather
+                    than a game-over. *)
+                 List.iteri next_state.finished ~f:(fun i id ->
+                   if i >= List.length current_state.Game_state.finished
+                   then (
+                     match name_of_player_id next_state id with
+                     | Some player_name ->
+                       broadcast
+                         room
+                         (Action.Server_to_client.Player_finished
+                            { player_name; place = i + 1 })
+                     | None -> ()));
                  (match next_state.winner with
                   | Some winner_id ->
                     (match name_of_player_id next_state winner_id with
                      | Some winner_name ->
+                       let standings =
+                         List.filter_map next_state.finished ~f:(fun id ->
+                           name_of_player_id next_state id)
+                       in
                        broadcast
                          room
-                         (Action.Server_to_client.Game_over { winner_name });
+                         (Action.Server_to_client.Game_over
+                            { winner_name; standings });
                        room.game_state <- None;
                        room.last_winner <- Some winner_name;
                        Hashtbl.filter_inplace room.clients ~f:(fun client ->

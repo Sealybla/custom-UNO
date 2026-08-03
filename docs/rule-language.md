@@ -133,6 +133,41 @@ changes.
 immediately after every `play the card`. Forgetting it would mean wins
 silently never register — too sharp a footgun to leave to users.
 
+## When the game ends (`play until`)
+
+By default the first player to empty their hand ends the game — everyone else
+just loses. A `play until` line changes that, so play carries on for second
+place, third place, and so on:
+
+```
+use standard
+play until one player is left      # keep going until only one player has cards
+```
+
+Three forms:
+
+| Text | Meaning |
+| --- | --- |
+| `play until first player finishes` | classic Uno; the default if the line is absent |
+| `play until N players finish` | stop once N players are out |
+| `play until one player is left` | everyone but the last player finishes |
+
+A player who empties their hand is **out**: they keep their seat but are
+skipped for the rest of the game. `Game_over` then carries the full finishing
+order, so the results screen can show a podium rather than a single name.
+
+Notes:
+
+- The line is a **ruleset-wide setting, not a rule** — it takes no `when`/`do`
+  and may appear anywhere in the file, including before or after `use`. Giving
+  it twice is an error.
+- `N` is clamped to one less than the number of players, since nobody can take
+  the last place from themselves. `play until 5 players finish` at a table of
+  three ends after two are out, rather than never ending.
+- It applies to the whole ruleset: every `play the card` compiles to a
+  `CheckWinner` carrying this mode, so preset rules pulled in by `use` obey it
+  too.
+
 ## Playing out of turn (jump-in)
 
 Nothing in the engine checks whose turn it is — that gate is the `your turn`

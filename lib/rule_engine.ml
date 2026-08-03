@@ -14,7 +14,7 @@ module Ruleset = struct
       ; condition = And (IsWildCard, IsPlayerTurn)
       ; actions =
           [ PlayTriggeringCard
-          ; CheckWinner
+          ; CheckWinner First_out
           ; SetDeclaredColor
           ; AdvanceTurn
           ]
@@ -27,7 +27,7 @@ module Ruleset = struct
             , And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn) )
       ; actions =
           [ PlayTriggeringCard
-          ; CheckWinner
+          ; CheckWinner First_out
           ; SetColorFromTriggeringCard
           ; AdvanceTurn
           ; AdvanceTurn
@@ -41,7 +41,7 @@ module Ruleset = struct
             , And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn) )
       ; actions =
           [ PlayTriggeringCard
-          ; CheckWinner
+          ; CheckWinner First_out
           ; SetColorFromTriggeringCard
           ; ReverseDirection
           ; AdvanceTurn
@@ -62,9 +62,9 @@ module Ruleset = struct
             , And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn) )
       ; actions =
           [ PlayTriggeringCard
-          ; CheckWinner
+          ; CheckWinner First_out
           ; SetColorFromTriggeringCard
-          ; (DrawForNextPlayer 2)
+          ; DrawForNextPlayer 2
           ; AdvanceTurn
           ; AdvanceTurn
           ]
@@ -74,9 +74,9 @@ module Ruleset = struct
       ; condition = And (IsPlusFour, IsPlayerTurn)
       ; actions =
           [ PlayTriggeringCard
-          ; CheckWinner
+          ; CheckWinner First_out
           ; SetDeclaredColor
-          ; (DrawForNextPlayer 4)
+          ; DrawForNextPlayer 4
           ; AdvanceTurn
           ; AdvanceTurn
           ]
@@ -93,7 +93,7 @@ module Ruleset = struct
       ; condition = And (IsWildCard, And (IsPlayerTurn, Not StackIsOpen))
       ; actions =
           [ PlayTriggeringCard
-          ; CheckWinner
+          ; CheckWinner First_out
           ; SetDeclaredColor
           ; AdvanceTurn
           ]
@@ -108,7 +108,7 @@ module Ruleset = struct
                 , And (IsPlayerTurn, Not StackIsOpen) ) )
       ; actions =
           [ PlayTriggeringCard
-          ; CheckWinner
+          ; CheckWinner First_out
           ; SetColorFromTriggeringCard
           ; AdvanceTurn
           ; AdvanceTurn
@@ -124,7 +124,7 @@ module Ruleset = struct
                 , And (IsPlayerTurn, Not StackIsOpen) ) )
       ; actions =
           [ PlayTriggeringCard
-          ; CheckWinner
+          ; CheckWinner First_out
           ; SetColorFromTriggeringCard
           ; ReverseDirection
           ; AdvanceTurn
@@ -147,7 +147,7 @@ module Ruleset = struct
                 , And (IsPlayerTurn, Not StackIsOpen) ) )
       ; actions =
           [ PlayTriggeringCard
-          ; CheckWinner
+          ; CheckWinner First_out
           ; SetColorFromTriggeringCard
           ; (AddPendingDraws 2)
           ; AdvanceTurn
@@ -158,7 +158,7 @@ module Ruleset = struct
       ; condition = And (IsPlusFour, And (IsPlayerTurn, Not StackIsOpen))
       ; actions =
           [ PlayTriggeringCard
-          ; CheckWinner
+          ; CheckWinner First_out
           ; SetDeclaredColor
           ; (AddPendingDraws 4)
           ; AdvanceTurn
@@ -185,7 +185,7 @@ module Ruleset = struct
     ; condition = And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn)
     ; actions =
         [ PlayTriggeringCard
-        ; CheckWinner
+        ; CheckWinner First_out
         ; SetColorFromTriggeringCard
         ; AdvanceTurn
         ]
@@ -204,7 +204,7 @@ module Ruleset = struct
           , And (IsPlayerTurn, Not StackIsOpen) )
     ; actions =
         [ PlayTriggeringCard
-        ; CheckWinner
+        ; CheckWinner First_out
         ; SetColorFromTriggeringCard
         ; SetStackingValue
           (* no AdvanceTurn — opens a stack; player passes to end turn *)
@@ -219,7 +219,7 @@ module Ruleset = struct
     ; condition = And (ContinuesStack, IsPlayerTurn)
     ; actions =
         [ PlayTriggeringCard
-        ; CheckWinner
+        ; CheckWinner First_out
         ; SetColorFromTriggeringCard
           (* no AdvanceTurn — stack stays open *)
         ]
@@ -321,7 +321,7 @@ module Ruleset = struct
       ; actions =
           [ JumpToActor
           ; PlayTriggeringCard
-          ; CheckWinner
+          ; CheckWinner First_out
           ; SetColorFromTriggeringCard
           ; AdvanceTurn
           ]

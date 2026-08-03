@@ -39,8 +39,11 @@ let print_event (event : Action.Server_to_client.t) =
           (can_pass : bool)
           (stack_value : Card.Value.t option)
           (uno_race : bool)]
-  | Game_over { winner_name } ->
-    print_s [%message "GAME OVER" (winner_name : string)]
+  | Game_over { winner_name; standings } ->
+    print_s
+      [%message "GAME OVER" (winner_name : string) (standings : string list)]
+  | Player_finished { player_name; place } ->
+    print_s [%message "finished" (player_name : string) (place : int)]
   | Hand_counts { counts } ->
     print_s [%message "hand counts" (counts : (string * int) list)]
   | Uno_called { player_name } ->

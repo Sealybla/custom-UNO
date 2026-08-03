@@ -235,13 +235,17 @@ and parse_or toks =
 let parse_condition = parse_or
 
 (* one phrase can desugar to several effects, hence the list *)
-let parse_effect (toks : tokens) : (Game_state.Effect.t list * tokens) Or_error.t =
+let parse_effect ~finish (toks : tokens)
+  : (Game_state.Effect.t list * tokens) Or_error.t
+  =
   let open Token in
   let open Game_state.Effect in
   match toks with
   | (Word "play", _) :: (Word "the", _) :: (Word "card", _) :: rest ->
-    (* winning is checked the moment the card leaves the hand *)
-    Ok ([ PlayTriggeringCard; CheckWinner ], rest)
+    (* winning is checked the moment the card leaves the hand; [finish] is
+       the ruleset's "play until ..." setting, so every play rule agrees on
+       when the game is over *)
+    Ok ([ PlayTriggeringCard; CheckWinner finish ], rest)
   | (Word "set", _) :: (Word "color", _) :: (Word "from", _) :: (Word "card", _) :: rest
     -> Ok ([ SetColorFromTriggeringCard ], rest)
   | (Word "set", _) :: (Word "color", _) :: (Word "to", _) :: (Word "declared", _) :: rest
@@ -299,11 +303,13 @@ let parse_effect (toks : tokens) : (Game_state.Effect.t list * tokens) Or_error.
   | _ -> Or_error.errorf "unknown effect (%s)" (where toks)
 ;;
 
-let rec parse_effects toks : (Game_state.Effect.t list * tokens) Or_error.t =
-  let%bind effs, rest = parse_effect toks in
+let rec parse_effects ~finish toks
+  : (Game_state.Effect.t list * tokens) Or_error.t
+  =
+  let%bind effs, rest = parse_effect ~finish toks in
   match rest with
   | (Token.Comma, _) :: rest ->
-    let%map more, rest = parse_effects rest in
+    let%map more, rest = parse_effects ~finish rest in
     effs @ more, rest
   | _ -> Ok (effs, rest)
 ;;
@@ -312,7 +318,9 @@ let default_priority = 50
 
 (* called with the tokens after the leading "rule" keyword; ids are
    assigned later, after name-based merging *)
-let parse_rule (toks : tokens) : ((string * Rule.t) * tokens) Or_error.t =
+let parse_rule ~finish (toks : tokens)
+  : ((string * Rule.t) * tokens) Or_error.t
+  =
   let%bind name, toks =
     match toks with
     | (Token.Str name, _) :: rest -> Ok (name, rest)
@@ -335,8 +343,45 @@ let parse_rule (toks : tokens) : ((string * Rule.t) * tokens) Or_error.t =
      let%bind toks = expect_word toks "when" in
      let%bind condition, toks = parse_condition toks in
      let%bind toks = expect_word toks "do" in
-     let%map effects, toks = parse_effects toks in
+     let%map effects, toks = parse_effects ~finish toks in
      (name, { Rule.id = 0; priority; condition; actions = effects }), toks)
+;;
+
+(* Pulls the optional "play until ..." line out of the token stream before
+   any rule is parsed, so it applies to the whole ruleset no matter where it
+   sits - including the preset rules a later `use` pulls in. Returns the
+   finish mode and the tokens with the directive removed. *)
+let extract_finish (toks : tokens) : (Game_state.Finish.t * tokens) Or_error.t =
+  let open Token in
+  let rec go toks found acc =
+    match toks with
+    | (Word "play", line) :: (Word "until", _) :: rest ->
+      let%bind mode, rest =
+        match rest with
+        | (Int n, _) :: (Word ("player" | "players"), _) :: (Word "finish", _) :: r
+        | (Int n, _) :: (Word ("player" | "players"), _) :: (Word "finishes", _) :: r
+          ->
+          if n < 1
+          then Or_error.errorf "line %d: 'play until' needs at least 1" line
+          else Ok (Game_state.Finish.After n, r)
+        | (Word "one", _) :: (Word "player", _) :: (Word "is", _) :: (Word "left", _)
+          :: r -> Ok (Game_state.Finish.Last_standing, r)
+        | (Word "first", _) :: (Word "player", _) :: (Word "finishes", _) :: r ->
+          Ok (Game_state.Finish.First_out, r)
+        | _ ->
+          Or_error.errorf
+            "line %d: expected 'play until N players finish', 'play until one \
+             player is left', or 'play until first player finishes'"
+            line
+      in
+      (match found with
+       | Some _ ->
+         Or_error.errorf "line %d: 'play until' given more than once" line
+       | None -> go rest (Some mode) acc)
+    | tok :: rest -> go rest found (tok :: acc)
+    | [] -> Ok (Option.value found ~default:Game_state.Finish.First_out, List.rev acc)
+  in
+  go toks None []
 ;;
 
 (* settings live beside the rules: directives like `deal 9 cards` are not
@@ -359,6 +404,9 @@ let parse_ruleset_named src
   : ((string * Rule.t) list * int option * int option) Or_error.t
   =
   let%bind toks = tokenize src in
+  (* `play until` is pulled out first so it applies to the whole ruleset,
+     including rules a later `use` pulls in *)
+  let%bind finish, toks = extract_finish toks in
   (* like same-named rules, a later `deal`/`turn timer` line replaces an
      earlier one *)
   let hand_size = ref None in
@@ -367,7 +415,7 @@ let parse_ruleset_named src
     match toks with
     | [] -> Ok (List.rev acc)
     | (Token.Word "rule", _) :: rest ->
-      let%bind named, rest = parse_rule rest in
+      let%bind named, rest = parse_rule ~finish rest in
       go rest (named :: acc) ~allow_use
     | (Token.Word "deal", line) :: (Token.Int n, _)
       :: (Token.Word ("card" | "cards"), _) :: rest ->

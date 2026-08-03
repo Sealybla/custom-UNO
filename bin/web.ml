@@ -166,8 +166,16 @@ let event_json (event : Action.Server_to_client.t) =
       (jlist
          (List.map counts ~f:(fun (name, n) ->
             sprintf "[%s,%d]" (jstr name) n)))
-  | Game_over { winner_name } ->
-    sprintf {|{"type":"game_over","winner":%s}|} (jstr winner_name)
+  | Game_over { winner_name; standings } ->
+    sprintf
+      {|{"type":"game_over","winner":%s,"standings":%s}|}
+      (jstr winner_name)
+      (jlist (List.map standings ~f:jstr))
+  | Player_finished { player_name; place } ->
+    sprintf
+      {|{"type":"finished","player":%s,"place":%d}|}
+      (jstr player_name)
+      place
   | Uno_called { player_name } ->
     sprintf {|{"type":"uno","player":%s}|} (jstr player_name)
   | Uno_penalty { player_name; count; caught } ->

@@ -55,7 +55,18 @@ module Server_to_client = struct
              it or the next action closes the window *)
         }
     | Hand_counts of { counts : (String.t * Int.t) List.t }
-    | Game_over of { winner_name : String.t }
+    (* [standings] is the finishing order, first place first. With the
+       classic finish mode that is just the winner. *)
+    | Game_over of
+        { winner_name : String.t
+        ; standings : String.t List.t
+        }
+    (* a player emptied their hand while the game carries on for the
+       remaining places; [place] is 1-based *)
+    | Player_finished of
+        { player_name : String.t
+        ; place : Int.t
+        }
     (* a player successfully claimed UNO (or caught somebody who didn't) *)
     | Uno_called of { player_name : String.t }
     (* a bad UNO press: either they were caught holding one card, or they

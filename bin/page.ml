@@ -381,6 +381,15 @@ let html =
     color:var(--c-yellow); -webkit-text-stroke:2px #fff; text-shadow:5px 5px 0 rgba(0,0,0,.45);
     transform:rotate(-5deg); animation:unopop .5s var(--ease-pop); }
   #win-overlay .win-sub { font-size:1.4rem; font-weight:800; letter-spacing:.2em; }
+  /* the podium, shown only when more than one player went out */
+  #win-standings { list-style:none; margin:0; padding:0; display:flex;
+    flex-direction:column; gap:.35rem; font-weight:800; }
+  #win-standings li { background:rgba(255,255,255,.14); border-radius:999px;
+    padding:.3rem .9rem; }
+  #win-standings li::before { content:counter(list-item) '. '; opacity:.75; }
+  /* a player who is out but the game continues without them */
+  .seat.out { opacity:.5; }
+  .seat.out .name::after { content:' ✔'; color:var(--c-green); }
   #win-overlay i { position:absolute; top:-8vh; width:10px; height:16px; border-radius:2px;
     left:var(--x); animation:fall var(--d) linear var(--dl) infinite; }
   @keyframes fall { to { transform:translateY(120vh) rotate(720deg); } }
@@ -474,6 +483,15 @@ let html =
         <label class="set-lbl" title="seconds before the server plays for a stalled player (default 20; 0 = no clock)">turn timer
           <input id="set-timer" type="number" min="0" max="300" step="5" value="20"> s</label>
       </div>
+      <div class="preset-row">
+        <span style="opacity:.8">Game ends:</span>
+        <select id="ends-mode">
+          <option value="first">when the first player goes out</option>
+          <option value="count">when this many go out</option>
+          <option value="last">when only one player is left</option>
+        </select>
+        <input id="ends-count" type="number" min="1" max="9" value="2" hidden>
+      </div>
       <div id="modes-row" class="preset-row" hidden>
         <span style="opacity:.8">My modes:</span>
         <span id="mode-chips" style="display:contents"></span>
@@ -553,10 +571,13 @@ let html =
             <code title="ADD-ON: use it after a base preset — 7s swap hands with the next player, 0s rotate all hands">use seven zero</code>
             <h4 style="margin-top:.6rem">Settings</h4>
             <div class="cheat-note">not rules — no when/do, just a line of its own:<br>
-            <b>deal</b> &lt;1–30&gt; <b>cards</b> · <b>turn timer</b> &lt;5–300&gt; <b>seconds</b> · <b>turn timer off</b></div>
+            <b>deal</b> &lt;1–30&gt; <b>cards</b> · <b>turn timer</b> &lt;5–300&gt; <b>seconds</b> · <b>turn timer off</b> · <b>play until</b> …</div>
             <code title="cards dealt to each player at the start (default 7, max 30; the deck must cover every player)">deal 9 cards</code>
             <code title="seconds before the server plays for a stalled player (default 20, range 5-300)">turn timer 15 seconds</code>
             <code title="no clock: turns wait forever">turn timer off</code>
+            <code title="the game stops as soon as one player empties their hand — the default">play until first player finishes</code>
+            <code title="keep playing after the first winner; everyone but the last player finishes, and the standings show the order">play until one player is left</code>
+            <code title="stop once this many players are out; the rest are unranked">play until 2 players finish</code>
             <h4 style="margin-top:.6rem">Conditions</h4>
             <code title="the played card's printed color equals the color to match">card matches color</code>
             <code title="the played card's value equals the top card's value">card matches value</code>
@@ -676,6 +697,7 @@ let html =
 <div id="win-overlay" hidden>
   <div class="win-name"></div>
   <div class="win-sub">WINS THE GAME</div>
+  <ol id="win-standings" hidden></ol>
   <button id="win-back">Back to lobby</button>
 </div>
 
@@ -735,10 +757,13 @@ function settingsLines(){
 function presetText(){
   const desc = PRESET_DESC[baseName()] + (jumpInOn() ? '\n# ' + JUMP_IN_DESC : '') +
     (sevenZeroOn() ? '\n# ' + SEVEN_ZERO_DESC : '');
+  // keep the chosen end condition when a toggle rewrites the box
+  const ends = endsDirective();
   // seven-zero is an ADD-ON preset: a second `use` line appends its rules
   return '# ' + desc + '\n' +
     'use ' + presetName() + '\n' +
     (sevenZeroOn() ? 'use seven zero\n' : '') +
+    (ends ? ends + '\n' : '') +
     settingsLines() + '\n' +
     '# Add house rules below - they combine with the preset above.\n' +
     '# Redefining a rule with the same name replaces the preset version.\n';
@@ -815,6 +840,8 @@ const freshState = () => ({ players:[], hand:[], top:null, color:null, current:n
               playable:new Set(),
               // subset of playable that needs a swap target picked first
               swapTargets:new Set(),
+              // names of players who have gone out while the game continues
+              out:[],
               ready:[], lastWinner:null });
 let state = freshState();
 let pendingWild = null;
@@ -909,9 +936,19 @@ function seatBadge(player, text, cls){
   s.append(b);
   setTimeout(() => b.remove(), 1700);
 }
-function showWin(winner){
+function showWin(winner, standings){
   const w = $('win-overlay');
   w.querySelector('.win-name').textContent = winner;
+  // only worth a podium when the game ran on past first place
+  const list = $('win-standings');
+  list.innerHTML = '';
+  const podium = standings || [];
+  list.hidden = podium.length < 2;
+  for (const p of podium){
+    const li = document.createElement('li');
+    li.textContent = p;
+    list.append(li);
+  }
   if (!w.querySelector('i')){
     for (let i = 0; i < 40; i++){
       const f = document.createElement('i');
@@ -955,6 +992,7 @@ function apply(ev, fx){
       // a 'hand' event follows immediately with the real set
       state.playable = new Set();
       state.swapTargets = new Set();
+      state.out = [];
       dirty.seats = dirty.pile = dirty.hand = dirty.turn = true;
       $('log').innerHTML = ''; $('win-overlay').hidden = true;
       setView('game'); layoutSeats();
@@ -1062,7 +1100,17 @@ function apply(ev, fx){
       state.inGame = false;
       hideCountdown();
       $('lobby-status').textContent = 'Last game: ' + ev.winner + ' won';
-      showWin(ev.winner);
+      showWin(ev.winner, ev.standings);
+      break;
+    case 'finished':
+      // someone emptied their hand but the game plays on for the lower
+      // places; they keep their seat, greyed out
+      state.out = (state.out || []).concat([ev.player]);
+      logLine((ev.player === name ? 'you finished' : ev.player + ' finished') +
+              ' in place ' + ev.place);
+      toast((ev.player === name ? 'You are' : ev.player + ' is') +
+            ' out in place ' + ev.place);
+      dirty.seats = true;
       break;
     case 'rules_updated':
       // everyone's editor mirrors the room's accepted rules; an empty
@@ -1196,7 +1244,8 @@ function renderSeats(){
   seatsEl.innerHTML = '';
   for (const p of opp){
     const s = document.createElement('div');
-    s.className = 'seat' + (p === state.current ? ' turn' : '');
+    s.className = 'seat' + (p === state.current ? ' turn' : '') +
+                  ((state.out || []).includes(p) ? ' out' : '');
     s.dataset.player = p;
     const fan = document.createElement('div'); fan.className = 'fan';
     const n = state.counts[p];
@@ -1730,6 +1779,33 @@ const flip = (id) => setPreset(
   toggleOn('toggle-drawuntil') !== (id === 'toggle-drawuntil'),
   toggleOn('toggle-jumpin') !== (id === 'toggle-jumpin'),
   toggleOn('toggle-sevenzero') !== (id === 'toggle-sevenzero'));
+// The "game ends" control edits only the `play until` line, so hand-written
+// rules below it survive - unlike the preset toggles, which rewrite the box.
+function endsDirective(){
+  const mode = $('ends-mode').value;
+  if (mode === 'last') return 'play until one player is left';
+  if (mode === 'count')
+    return 'play until ' + ($('ends-count').value || 2) + ' players finish';
+  return '';   // first player out: the default, so say nothing
+}
+async function applyEndsMode(){
+  $('ends-count').hidden = $('ends-mode').value !== 'count';
+  const ta = $('rules-text');
+  const kept = ta.value.split('\n')
+    .filter(l => !/^\s*play\s+until\b/i.test(l));
+  const line = endsDirective();
+  if (line){
+    // sits just after the `use` line so the file still reads top-down
+    const at = kept.findIndex(l => /^\s*use\b/i.test(l));
+    kept.splice(at < 0 ? 0 : at + 1, 0, line);
+  }
+  ta.value = kept.join('\n');
+  lastLoaded = ta.value;
+  await applyRules();
+}
+$('ends-mode').onchange = applyEndsMode;
+$('ends-count').onchange = applyEndsMode;
+
 $('preset-standard').onclick = () => setPreset(false, false, false, false);
 $('toggle-stacking').onclick = () => flip('toggle-stacking');
 $('toggle-drawuntil').onclick = () => flip('toggle-drawuntil');
