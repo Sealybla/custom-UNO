@@ -11,15 +11,17 @@ val parse_ruleset : string -> Rule.t List.t Or_error.t
 (* parse_ruleset plus lint warnings for editor feedback. Warnings flag
    authoring footguns without rejecting the ruleset: since the engine runs
    only the single highest-priority matching rule per action, a rule that
-   wins a card play but omits [play the card] (or [advance turn]) silently
-   swallows the click. Warnings are structured so the editor can offer a
-   one-click fix: [kind] names the missing effect, [rule_name] the rule to
-   insert it into. *)
+   wins a card play but omits [play the card] (or [advance turn], or a
+   color effect) silently breaks the click. Warnings are structured so the
+   editor can offer a one-click fix: [fix] is the snippet to insert, [kind]
+   implies where, [rule_name] names the rule to insert it into. *)
 module Lint : sig
   module Kind : sig
     type t =
       | Missing_play
       | Missing_advance
+      | Missing_set_color (* plays the card but leaves the active color stale *)
+      | Missing_turn (* no [your turn] guard: fires for any player, out of turn *)
       | Dead_rule (* an identical condition always wins over this rule *)
     [@@deriving sexp, compare, equal]
   end
@@ -28,6 +30,7 @@ module Lint : sig
     { rule_name : string
     ; kind : Kind.t
     ; message : string
+    ; fix : string option (* None: no automatic fix is offered *)
     }
   [@@deriving sexp, compare, equal]
 end

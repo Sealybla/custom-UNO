@@ -1621,17 +1621,20 @@ rule "play reverse" priority 100:
     (warnings
      (((rule_name "red reverse") (kind Missing_play)
        (message
-        "rule \"red reverse\" fires when a card is played but has no 'play the card' effect - the card will stay in the hand"))))
+        "rule \"red reverse\" fires when a card is played but has no 'play the card' effect - the card will stay in the hand")
+       (fix ("play the card")))))
     (warnings
      (((rule_name "play reverse") (kind Missing_advance)
        (message
-        "rule \"play reverse\" plays the card but has no 'advance turn' effect - the turn will never end"))))
+        "rule \"play reverse\" plays the card but has no 'advance turn' effect - the turn will never end")
+       (fix ("advance turn")))))
     |}]
 ;;
 
 let%expect_test "presets and mid-stack rules produce no lint warnings" =
+  (* every preset, so new ones (jump-in, uno rules) stay warning-free too *)
   List.iter
-    [ "standard"; "stacking"; "draw until playable"; "stacking with draw until playable" ]
+    (List.map Presets.all ~f:fst)
     ~f:(fun preset ->
       match Rule_parser.parse_ruleset_checked ("use " ^ preset) with
       | Error e -> print_s [%message preset (e : Error.t)]
@@ -1642,6 +1645,10 @@ let%expect_test "presets and mid-stack rules produce no lint warnings" =
     (stacking (warnings ()))
     ("draw until playable" (warnings ()))
     ("stacking with draw until playable" (warnings ()))
+    ("jump in" (warnings ()))
+    ("stacking with jump in" (warnings ()))
+    ("draw until playable with jump in" (warnings ()))
+    ("stacking with draw until playable with jump in" (warnings ()))
     |}]
 ;;
 
@@ -1789,5 +1796,286 @@ let%expect_test "accounts login, modes, and snapshot round-trip" =
      ("List.map modes ~f:(fun m -> m.Accounts.Mode.name)" (CHAOS calm)))
     calm
     No saved mode named "chaos"
+    |}]
+;;
+
+(* "card is 7" tests only the printed number - no pile match required unless
+   the author adds one, so this rule makes any seven playable on anything *)
+let%expect_test "card is <number> makes that number special" =
+  let rules =
+    Rule_parser.parse_ruleset
+      {|use standard
+rule "sevens are hot" priority 115:
+  when card is 7 and your turn
+  do play the card, set color to red, advance turn|}
+    |> Or_error.ok_exn
+  in
+  let seven = { Card.color = Blue; value = Seven; id = 760 } in
+  let eight = { Card.color = Blue; value = Eight; id = 761 } in
+  let top = { Card.color = Yellow; value = Five; id = 762 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ seven; eight ]; "b", []; "c", [] ]
+      ~top_card:top
+      ~draw_pile:[]
+      ~pending_draws:0
+      ~turn:0
+  in
+  (* a mismatched non-seven is still illegal *)
+  (match
+     Rule_engine.apply_action rules t ~player_id:0
+       ~action:(Play { card_id = 761; declared_color = None })
+   with
+   | Ok _ -> print_endline "unexpectedly legal"
+   | Error e -> print_s [%message (e : Error.t)]);
+  (* the equally mismatched seven plays and turns the pile red *)
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0
+      ~action:(Play { card_id = 760; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message "seven played" (t.turn : int) (t.current_color : Card.Color.t)];
+  [%expect
+    {|
+    (e "Illegal move: no rule allows that right now")
+    ("seven played" (t.turn 1) (t.current_color Red))
+    |}]
+;;
+
+let%expect_test "card is <number> covers 0 and rejects numbers past 9" =
+  (match
+     Rule_parser.parse_ruleset
+       {|rule "zeros":
+  when card is 0 and your turn
+  do play the card, advance turn|}
+   with
+   | Ok [ rule ] -> print_s [%message (rule.Rule.condition : Rule.Condition.t)]
+   | Ok _ -> print_endline "unexpected rule count"
+   | Error e -> print_s [%message (e : Error.t)]);
+  (match
+     Rule_parser.parse_ruleset
+       {|rule "impossible":
+  when card is 12 and your turn
+  do play the card, advance turn|}
+   with
+   | Ok _ -> print_endline "unexpectedly parsed"
+   | Error e -> print_s [%message (e : Error.t)]);
+  [%expect
+    {|
+    (rule.Rule.condition (And (IsNumber 0) IsPlayerTurn))
+    (e
+     ("in rule \"impossible\""
+      "line 2: 'card is 12' - card numbers go from 0 to 9"))
+    |}]
+;;
+
+(* "card is blue" tests the printed color, so it can make a whole color
+   playable on anything; other colors still follow the normal rules *)
+let%expect_test "card is <color> makes blue cards play anywhere" =
+  let rules =
+    Rule_parser.parse_ruleset
+      {|use standard
+rule "blue anywhere" priority 60:
+  when card is blue and your turn
+  do play the card, set color from card, advance turn|}
+    |> Or_error.ok_exn
+  in
+  let blue = { Card.color = Blue; value = Two; id = 770 } in
+  let green = { Card.color = Green; value = Two; id = 771 } in
+  let top = { Card.color = Red; value = Five; id = 772 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ blue; green ]; "b", []; "c", [] ]
+      ~top_card:top
+      ~draw_pile:[]
+      ~pending_draws:0
+      ~turn:0
+  in
+  (* the equally mismatched green card is still illegal *)
+  (match
+     Rule_engine.apply_action rules t ~player_id:0
+       ~action:(Play { card_id = 771; declared_color = None })
+   with
+   | Ok _ -> print_endline "unexpectedly legal"
+   | Error e -> print_s [%message (e : Error.t)]);
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0
+      ~action:(Play { card_id = 770; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message "blue played" (t.turn : int) (t.current_color : Card.Color.t)];
+  [%expect
+    {|
+    (e "Illegal move: no rule allows that right now")
+    ("blue played" (t.turn 1) (t.current_color Blue))
+    |}]
+;;
+
+(* "active color is <c>" reads the table's color to match, not the card *)
+let%expect_test "active color condition taxes draws while red is up" =
+  let rules =
+    Rule_parser.parse_ruleset
+      {|use standard
+rule "red draw tax" priority 60:
+  when player draws and active color is red and your turn
+  do draw 2 cards, advance turn|}
+    |> Or_error.ok_exn
+  in
+  let c1 = { Card.color = Blue; value = Two; id = 780 } in
+  let c2 = { Card.color = Green; value = Seven; id = 781 } in
+  let top = { Card.color = Red; value = Five; id = 782 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", []; "b", [] ]
+      ~top_card:top
+      ~draw_pile:[ c1; c2 ]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0 ~action:Draw
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message
+      "drew under red"
+        (List.length (Player.get_hand (List.nth_exn t.players 0)) : int)
+        (t.turn : int)];
+  [%expect
+    {|
+    ("drew under red"
+     ("List.length (Player.get_hand (List.nth_exn t.players 0))" 2) (t.turn 1))
+    |}]
+;;
+
+let%expect_test "color conditions parse; bad colors are rejected" =
+  (match
+     Rule_parser.parse_ruleset
+       {|rule "c": when card is yellow and active color is green and your turn do play the card, set color from card, advance turn|}
+   with
+   | Ok [ rule ] -> print_s [%message (rule.Rule.condition : Rule.Condition.t)]
+   | Ok _ -> print_endline "unexpected rule count"
+   | Error e -> print_s [%message (e : Error.t)]);
+  (match
+     Rule_parser.parse_ruleset
+       {|rule "bad": when active color is purple do advance turn|}
+   with
+   | Ok _ -> print_endline "unexpectedly parsed"
+   | Error e -> print_s [%message (e : Error.t)]);
+  [%expect
+    {|
+    (rule.Rule.condition
+     (And (IsCardColor Yellow) (And (ActiveColorIs Green) IsPlayerTurn)))
+    (e
+     ("in rule \"bad\""
+      "line 1: unknown color 'purple' (expected red, green, blue, yellow, or declared)"))
+    |}]
+;;
+
+(* playing a card without a color effect leaves the previous color active
+   (a blue 0 on red keeps red), except when the condition guarantees the
+   card already matches the color; wild rules are pointed at 'set color to
+   declared' since a wild has no printed color *)
+let%expect_test "lint flags plays that never set the color" =
+  let check text =
+    match Rule_parser.parse_ruleset_checked text with
+    | Error e -> print_s [%message (e : Error.t)]
+    | Ok (_, warnings) -> print_s [%message (warnings : Rule_parser.Lint.t list)]
+  in
+  (* a card-value condition can change the color, so this goes stale *)
+  check
+    {|use standard
+rule "quiet zeros" priority 60:
+  when card is 0 and your turn
+  do play the card, advance turn|};
+  (* guaranteed color match: leaving the color untouched is correct *)
+  check
+    {|use standard
+rule "same color only" priority 60:
+  when card matches color and your turn
+  do play the card, advance turn|};
+  (* wild rules get the declared-color suggestion; replacing the built-in
+     by name keeps this from also flagging a dead rule *)
+  check
+    {|use standard
+rule "play wild" priority 100:
+  when card is wild and your turn
+  do play the card, advance turn|};
+  [%expect
+    {|
+    (warnings
+     (((rule_name "quiet zeros") (kind Missing_set_color)
+       (message
+        "rule \"quiet zeros\" plays the card but never sets the color - the color to match stays what it was, not the played card's color")
+       (fix ("set color from card")))))
+    (warnings ())
+    (warnings
+     (((rule_name "play wild") (kind Missing_set_color)
+       (message
+        "rule \"play wild\" plays the card but never sets the color - add 'set color to declared' so the color the player picks takes effect")
+       (fix ("set color to declared")))))
+    |}]
+;;
+
+(* turn order exists only because rules demand it: a rule without the
+   'your turn' guard fires for any player's action, even out of turn.
+   Warn - omitting the guard is legitimate only for jump-in style rules. *)
+let%expect_test "lint flags rules missing the your-turn guard" =
+  (match
+     Rule_parser.parse_ruleset_checked
+       {|use standard
+rule "free zeros" priority 60:
+  when card is 0
+  do play the card, set color from card, advance turn|}
+   with
+   | Error e -> print_s [%message (e : Error.t)]
+   | Ok (_, warnings) -> print_s [%message (warnings : Rule_parser.Lint.t list)]);
+  (* the guard must hold on EVERY path: or-ing it away doesn't count *)
+  (match
+     Rule_parser.parse_ruleset_checked
+       {|use standard
+rule "sneaky" priority 60:
+  when your turn or player draws
+  do advance turn|}
+   with
+   | Error e -> print_s [%message (e : Error.t)]
+   | Ok (_, warnings) ->
+     print_s
+       [%message
+         (List.map warnings ~f:(fun w -> w.Rule_parser.Lint.rule_name, w.kind)
+          : (string * Rule_parser.Lint.Kind.t) list)]);
+  [%expect
+    {|
+    (warnings
+     (((rule_name "free zeros") (kind Missing_turn)
+       (message
+        "rule \"free zeros\" has no 'your turn' condition - it fires for ANY player's action, even out of turn (write 'not your turn' explicitly if jump-in is what you mean)")
+       (fix ("your turn")))))
+    ("List.map warnings ~f:(fun w -> (w.Rule_parser.Lint.rule_name, w.kind))"
+     ((sneaky Missing_turn)))
+    |}]
+;;
+
+(* a number condition wins the card click like any card condition, so the
+   missing-play lint must fire for it too *)
+let%expect_test "lint treats card is <number> as a card-play condition" =
+  (match
+     Rule_parser.parse_ruleset_checked
+       {|use standard
+rule "lucky sevens" priority 115:
+  when card is 7 and your turn
+  do set color to red|}
+   with
+   | Error e -> print_s [%message (e : Error.t)]
+   | Ok (_, warnings) -> print_s [%message (warnings : Rule_parser.Lint.t list)]);
+  [%expect
+    {|
+    (warnings
+     (((rule_name "lucky sevens") (kind Missing_play)
+       (message
+        "rule \"lucky sevens\" fires when a card is played but has no 'play the card' effect - the card will stay in the hand")
+       (fix ("play the card")))))
     |}]
 ;;

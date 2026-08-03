@@ -28,6 +28,9 @@ module Value : sig
     | Eight
     | Nine
   [@@deriving enumerate, sexp, compare, equal, bin_io]
+
+  (* the number card for a digit; None outside 0-9 *)
+  val of_digit : int -> t option
 end
 
 type t =

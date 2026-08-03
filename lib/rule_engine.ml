@@ -477,6 +477,19 @@ let rec eval_condition
     (match evt with
      | CardPlayed { card; _ } -> Card.Value.equal (Card.get_value card) Wild4
      | _ -> false)
+  | IsNumber n ->
+    (match evt with
+     | CardPlayed { card; _ } ->
+       (match Card.Value.of_digit n with
+        | Some v -> Card.Value.equal (Card.get_value card) v
+        (* unreachable via the parser, which rejects numbers outside 0-9 *)
+        | None -> false)
+     | _ -> false)
+  | IsCardColor c ->
+    (match evt with
+     | CardPlayed { card; _ } -> Card.Color.equal (Card.get_color card) c
+     | _ -> false)
+  | ActiveColorIs c -> Card.Color.equal state.current_color c
   | ContinuesStack ->
     (match evt with
      | CardPlayed { card; _ } ->

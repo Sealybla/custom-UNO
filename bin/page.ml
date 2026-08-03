@@ -128,6 +128,7 @@ let html =
     font-family:ui-monospace,monospace; white-space:pre-wrap; }
   #check-status.ok { color:#8fe3a8; } #check-status.err { color:#ffb0b0; }
   #check-status.warn { color:#ffd97a; white-space:pre-line; }
+  #b-turn-hint { color:#ffd97a; font-size:.78rem; margin:.15rem 0 .3rem; }
   #check-status button { margin-left:.5rem; padding:.05rem .5rem; font-size:.72rem; }
   #override-list { display:flex; flex-wrap:wrap; gap:.35rem; margin-top:.5rem; font-size:.83rem; }
   #override-list code { cursor:pointer; padding:.14rem .45rem; border-radius:6px;
@@ -154,6 +155,17 @@ let html =
   .chips span { background:var(--c-yellow); color:var(--ink); font-weight:700;
     font-size:.78rem; border-radius:999px; padding:.2rem .6rem; cursor:pointer; }
   .chips span::after { content:' ✕'; opacity:.6; }
+  .b-cond-row { display:flex; flex-wrap:wrap; gap:.4rem; align-items:center;
+    margin:.25rem 0 .25rem 3.9rem; }
+  .b-cond-row .cchip { background:var(--c-yellow); color:var(--ink); font-weight:700;
+    font-size:.78rem; border-radius:999px; padding:.2rem .6rem; cursor:pointer; }
+  .b-cond-row .cchip.neg { background:var(--ink); color:var(--c-yellow);
+    box-shadow:inset 0 0 0 2px var(--c-yellow); }
+  .b-cond-row .cchip b { margin-left:.35rem; opacity:.55; font-weight:900; }
+  .b-cond-row .cchip b:hover { opacity:1; }
+  .b-cond-row .cjoin { font-size:.75rem; font-style:italic; opacity:.75; }
+  .b-row-x { opacity:.65; }
+  .b-row-x:hover { opacity:1; }
   .cheat { display:grid; grid-template-columns:1fr 1fr; gap:.8rem; font-size:.83rem;
     margin-top:.5rem; }
   .cheat h4 { margin:.2rem 0 .3rem; }
@@ -456,10 +468,16 @@ let html =
         <div class="b-row"><label>When</label>
           <select id="b-when"></select>
           <input id="b-when-n" type="number" value="0" min="0" hidden>
-          <label class="b-check"><input id="b-not" type="checkbox"> not</label>
-          <button id="b-add-cond" class="small">+ add condition</button>
+          <select id="b-when-color" hidden>
+            <option>red</option><option>yellow</option>
+            <option>green</option><option>blue</option>
+          </select>
+          <button id="b-add-cond" class="small" title="start a new line — every line must hold">+ and condition</button>
         </div>
-        <div id="b-conds" class="chips"></div>
+        <div id="b-conds"></div>
+        <div id="b-turn-hint" hidden>⚠ no “your turn” line — this rule fires for ANY
+        player, even when it isn’t their turn (a jump-in rule). Re-add it from the
+        condition menu if that’s not what you meant.</div>
         <div class="b-row"><label>Then</label>
           <select id="b-eff"></select>
           <input id="b-eff-n" type="number" value="2" min="1" hidden>
@@ -480,11 +498,15 @@ let html =
           </select>
           <input id="b-name" placeholder="rule name (optional)">
           <button id="b-append">Add to ruleset</button>
+          <button id="b-clear" class="small" title="throw this rule away and reset the builder">↺ start over</button>
         </div>
-        <p style="opacity:.7; font-size:.8rem; margin:.3rem 0 0">Stack as many conditions
-        as you like — they must all hold ("and"). Tick "not" to require the opposite of
-        the next condition. Picking a card condition pre-adds the usual play effects.
-        Click any chip to remove it.</p>
+        <p style="opacity:.7; font-size:.8rem; margin:.3rem 0 0">Conditions stack as
+        lines: every line must hold ("and"), and a line holds if any chip in it does
+        (grow a line with its "+ or…" button). Click a chip to flip it to "not", click
+        its × to remove it, or drop a whole line with "× line". "↺ start over" resets
+        the builder. Picking a card condition pre-adds the usual play effects. The
+        pre-added “your turn” line is the turn-order guard — turn order only exists
+        because rules demand it.</p>
       </details>
 
       <details id="override">
@@ -496,53 +518,56 @@ let html =
       </details>
 
       <details>
-        <summary>📖 Cheat sheet</summary>
+        <summary>📖 All phrases — click to insert at your cursor, hover for what it does</summary>
         <pre class="cheat-shape">rule "name" priority 100:
   when &lt;condition&gt;
   do &lt;effect&gt;, &lt;effect&gt;</pre>
         <div class="cheat">
           <div>
-            <h4>Presets (click to insert)</h4>
-            <code>use standard</code>
-            <code>use stacking</code>
-            <code>use draw until playable</code>
-            <code>use stacking with draw until playable</code>
-            <h4 style="margin-top:.6rem">Conditions (click to insert)</h4>
-            <code>card matches color</code>
-            <code>card matches value</code>
-            <code>card is wild</code>
-            <code>card is skip</code>
-            <code>card is reverse</code>
-            <code>card is plus two</code>
-            <code>card is plus four</code>
-            <code>player draws</code>
-            <code>player passes</code>
-            <code>continues stack</code>
-            <code>stack is open</code>
-            <code>drew playable card</code>
-            <code>pending draws > 0</code>
-            <code>card matches exactly</code>
-            <code>your turn</code>
-            <code>always</code>
+            <h4>Presets</h4>
+            <code title="official rules: a +2/+4 makes the next player draw immediately and lose their turn">use standard</code>
+            <code title="chain same-value cards in one turn; +2/+4 penalties pile up until someone can't answer">use stacking</code>
+            <code title="no passing: draw one card at a time until you can play">use draw until playable</code>
+            <code title="both variants combined">use stacking with draw until playable</code>
+            <h4 style="margin-top:.6rem">Conditions</h4>
+            <code title="the played card's printed color equals the color to match">card matches color</code>
+            <code title="the played card's value equals the top card's value">card matches value</code>
+            <code title="the played card has the same printed color AND number as the top card — the jump-in trigger; wilds never match">card matches exactly</code>
+            <code title="the played card is a wild or a +4">card is wild</code>
+            <code title="the played card is a skip">card is skip</code>
+            <code title="the played card is a reverse">card is reverse</code>
+            <code title="the played card is a +2">card is plus two</code>
+            <code title="the played card is a +4">card is plus four</code>
+            <code title="the played card is that number (any of 0-9 works), whatever its color">card is 7</code>
+            <code title="the played card's printed color (wilds have none, so they never match)">card is blue</code>
+            <code title="the table's color to match right now — works for any action, not just card plays">active color is red</code>
+            <code title="the player clicked draw">player draws</code>
+            <code title="the player clicked done">player passes</code>
+            <code title="the played card has the open stack's value">continues stack</code>
+            <code title="someone is mid-chain: a stack is open">stack is open</code>
+            <code title="the card just drawn is playable, and the player is deciding to play it or pass">drew playable card</code>
+            <code title="stacked +2/+4 penalty cards are waiting to be drawn">pending draws > 0</code>
+            <code title="the acting player is the current player — the turn-order guard every normal rule needs">your turn</code>
+            <code title="matches any action by anyone — use with care">always</code>
           </div>
           <div>
-            <h4>Effects (click to insert)</h4>
-            <code>play the card</code>
-            <code>set color from card</code>
-            <code>set color to declared</code>
-            <code>set color to red</code>
-            <code>draw 2 cards</code>
-            <code>draw and decide</code>
-            <code>next player draws 2 cards</code>
-            <code>add 2 pending draws</code>
-            <code>apply pending draws</code>
-            <code>draw until playable</code>
-            <code>reverse direction</code>
-            <code>skip next player</code>
-            <code>open stack</code>
-            <code>close stack</code>
-            <code>jump in</code>
-            <code>advance turn</code>
+            <h4>Effects</h4>
+            <code title="move the card from the hand onto the pile (winning is checked here)">play the card</code>
+            <code title="the played card's printed color becomes the color to match">set color from card</code>
+            <code title="the color the player picked becomes the color to match (for wilds)">set color to declared</code>
+            <code title="force a specific color to match">set color to red</code>
+            <code title="the acting player draws that many cards">draw 2 cards</code>
+            <code title="draw 1 card; if it's playable keep the turn open, otherwise the turn ends">draw and decide</code>
+            <code title="the next player draws now; whose turn it is doesn't change">next player draws 2 cards</code>
+            <code title="grow the stackable +2/+4 penalty instead of drawing now">add 2 pending draws</code>
+            <code title="the acting player draws every pending penalty card">apply pending draws</code>
+            <code title="draw 1 card and keep the turn; a playable draw is flagged for other rules">draw until playable</code>
+            <code title="flip the turn order (with 2 players this skips the opponent instead)">reverse direction</code>
+            <code title="the turn jumps over the next player">skip next player</code>
+            <code title="stay on turn and chain more cards of this value">open stack</code>
+            <code title="end the chain (the done button does this)">close stack</code>
+            <code title="the acting player takes the turn — pair with 'not your turn' for out-of-turn plays">jump in</code>
+            <code title="end the acting player's turn">advance turn</code>
           </div>
         </div>
         <p style="opacity:.75; font-size:.82rem">Join conditions with <b>and</b> / <b>or</b> / <b>not</b>, parentheses to group. When several rules match, the highest priority wins; on a tie, the rule defined first wins (so built-ins pulled in by <b>use</b> beat same-priority rules below them — replace them by name or use a higher priority).</p>
@@ -648,6 +673,8 @@ const WHEN_OPTIONS = [
   ['card is skip', 'a skip is played'],
   ['card is reverse', 'a reverse is played'],
   ['card is wild', 'a wild is played'],
+  ['card is N', 'a specific number (0-9) is played'],
+  ['card is C', 'a card of a specific color is played'],
   ['player draws', 'the player clicks draw'],
   ['player passes', 'the player clicks done'],
   ['continues stack', 'a card continues the stack'],
@@ -658,6 +685,8 @@ const WHEN_OPTIONS = [
   ['player calls uno', 'the UNO button was pressed'],
   ['has uno', 'the presser is down to one card'],
   ['someone has uno', 'someone else is catchable'],
+  ['active color is C', 'the color to match is a specific color'],
+  ['your turn', 'the acting player is the current player (turn guard)'],
   ['always', 'always (any action)'],
 ];
 const EFF_OPTIONS = [
@@ -1429,14 +1458,14 @@ async function checkRules(){
       const warns = r.warnings || [];
       st.textContent = '✓ ' + r.num_rules + ' rules ready';
       st.className = warns.length ? 'warn' : 'ok';
-      const FIXES = {missing_play: 'play the card', missing_advance: 'advance turn'};
+      // the server names the snippet to insert (w.fix); w.kind implies where
       for (const w of warns){
         const line = document.createElement('div');
         line.textContent = '⚠ ' + w.message;
-        if (FIXES[w.kind]){
+        if (w.fix){
           const b = document.createElement('button');
           b.className = 'small';
-          b.textContent = 'add ‘' + FIXES[w.kind] + '’';
+          b.textContent = 'add ‘' + w.fix + '’';
           b.onclick = () => applyFix(w);
           line.append(b);
         }
@@ -1449,9 +1478,11 @@ async function checkRules(){
 function scheduleCheck(){ clearTimeout(checkT); checkT = setTimeout(checkRules, 600); }
 $('rules-text').addEventListener('input', () => { markRulesDirty(); scheduleCheck(); });
 
-/* one-click warning fix: splice the missing effect into the named rule's
-   "do" line. 'play the card' goes first (like every built-in), 'advance
-   turn' goes last. Duplicate names: the LAST definition is the live one. */
+/* one-click warning fix: splice w.fix into the named rule, where depending
+   on the kind - 'play the card' first in the "do" line (like every
+   built-in), the color effect right after 'play the card', 'advance turn'
+   last, 'your turn' into the WHEN clause. Duplicate names: the LAST
+   definition is the live one. */
 function applyFix(w){
   const ta = $('rules-text');
   const src = ta.value;
@@ -1460,14 +1491,35 @@ function applyFix(w){
   let head = null, m;
   while ((m = headRe.exec(src))) head = m;
   const doMatch = head && /\bdo\b[ \t]*/.exec(src.slice(head.index));
-  if (!doMatch){ toast('could not find that rule anymore - re-checking'); checkRules(); return; }
+  const lost = () => { toast('could not find that rule anymore - re-checking'); checkRules(); };
+  if (!doMatch){ lost(); return; }
   if (w.kind === 'missing_play'){
     const at = head.index + doMatch.index + doMatch[0].length;
-    ta.value = src.slice(0, at) + 'play the card, ' + src.slice(at);
+    ta.value = src.slice(0, at) + w.fix + ', ' + src.slice(at);
+  } else if (w.kind === 'missing_set_color'){
+    // this warning only fires for rules that DO play the card
+    const playRe = /play\s+the\s+card/g;
+    playRe.lastIndex = head.index + doMatch.index;
+    const pm = playRe.exec(src);
+    if (!pm){ lost(); return; }
+    const at = pm.index + pm[0].length;
+    ta.value = src.slice(0, at) + ', ' + w.fix + src.slice(at);
+  } else if (w.kind === 'missing_turn'){
+    // this one splices into the WHEN clause: guard the whole condition,
+    // adding parens when an 'or' would change meaning under the tighter 'and'
+    const whenMatch = /\bwhen\b[ \t]*/.exec(src.slice(head.index));
+    if (!whenMatch || whenMatch.index > doMatch.index){ lost(); return; }
+    const condStart = head.index + whenMatch.index + whenMatch[0].length;
+    const condEnd = head.index + doMatch.index;
+    const raw = src.slice(condStart, condEnd);
+    const sep = (raw.match(/\s*$/) || [' '])[0] || ' ';
+    const cond = raw.trim();
+    const guarded = (/\bor\b/.test(cond) ? '(' + cond + ')' : cond) + ' and ' + w.fix;
+    ta.value = src.slice(0, condStart) + guarded + sep + src.slice(condEnd);
   } else {
     const lineEnd = src.indexOf('\n', head.index + doMatch.index);
     const at = lineEnd === -1 ? src.length : lineEnd;
-    ta.value = src.slice(0, at).replace(/[ \t]+$/, '') + ', advance turn' + src.slice(at);
+    ta.value = src.slice(0, at).replace(/[ \t]+$/, '') + ', ' + w.fix + src.slice(at);
   }
   checkRules();
 }
@@ -1535,9 +1587,12 @@ async function loadOverrideList(){
 }
 loadOverrideList();
 
-/* rule builder: conditions and effects both stack as removable chips,
-   all joined by clicks, with a live preview of the rule being composed */
-let builderConds = ['your turn'];   // the usual guard, removable like any chip
+/* rule builder: conditions form LINES - every line must hold ("and"), and
+   a line holds if any chip in it does ("or"). Click a chip to flip it to
+   "not", click its × to remove it. This shape (and-of-ors of possibly
+   negated chips) can express anything the text grammar can. Effects stay
+   one flat chip list. */
+let builderRows = [[{t:'your turn', neg:false}]];   // the usual guard
 let builderEffs = [];
 let customRuleN = 0;
 
@@ -1552,7 +1607,12 @@ fillSelect($('b-when'), WHEN_OPTIONS);
 fillSelect($('b-eff'), EFF_OPTIONS);
 
 function syncBuilderInputs(){
-  $('b-when-n').hidden = !WHEN_OPTIONS[$('b-when').value][0].includes('N');
+  const when = WHEN_OPTIONS[$('b-when').value][0];
+  $('b-when-n').hidden = !when.includes('N');
+  $('b-when-color').hidden = !when.includes('C');
+  // card numbers stop at 9; the other N (pending draws) is unbounded
+  if (when === 'card is N') $('b-when-n').max = 9;
+  else $('b-when-n').removeAttribute('max');
   const eff = EFF_OPTIONS[$('b-eff').value][0];
   $('b-eff-n').hidden = !eff.includes('N');
   $('b-eff-color').hidden = !eff.includes('C');
@@ -1564,10 +1624,16 @@ syncBuilderInputs();
 function builderName(){
   return $('b-name').value.trim() || 'my rule ' + (customRuleN + 1);
 }
+function condText(){
+  if (!builderRows.length) return 'always';
+  return builderRows.map(row => {
+    const s = row.map(c => (c.neg ? 'not ' : '') + c.t).join(' or ');
+    return row.length > 1 ? '(' + s + ')' : s;
+  }).join(' and ');
+}
 function builderText(){
-  const cond = builderConds.length ? builderConds.join(' and ') : 'always';
   return 'rule "' + builderName() + '" priority ' + $('b-prio').value + ':\n' +
-         '  when ' + cond + '\n' +
+         '  when ' + condText() + '\n' +
          '  do ' + (builderEffs.join(', ') || '(add at least one effect)') + '\n';
 }
 function renderChipList(box, arr){
@@ -1580,38 +1646,91 @@ function renderChipList(box, arr){
     box.append(s);
   });
 }
+function renderCondRows(){
+  const box = $('b-conds');
+  box.innerHTML = '';
+  builderRows.forEach((row, ri) => {
+    const div = document.createElement('div');
+    div.className = 'b-cond-row';
+    row.forEach((c, ci) => {
+      if (ci){
+        const j = document.createElement('span');
+        j.className = 'cjoin'; j.textContent = 'or';
+        div.append(j);
+      }
+      const s = document.createElement('span');
+      s.className = 'cchip' + (c.neg ? ' neg' : '');
+      s.append(document.createTextNode((c.neg ? 'not ' : '') + c.t));
+      s.title = c.neg ? 'click to require it again' : 'click to require the opposite (not)';
+      s.onclick = () => { c.neg = !c.neg; renderChips(); };
+      const x = document.createElement('b');
+      x.textContent = '×'; x.title = 'remove';
+      x.onclick = e => {
+        e.stopPropagation();
+        row.splice(ci, 1);
+        if (!row.length) builderRows.splice(ri, 1);
+        renderChips();
+      };
+      s.append(x);
+      div.append(s);
+    });
+    const orBtn = document.createElement('button');
+    orBtn.className = 'small';
+    orBtn.textContent = '+ or…';
+    orBtn.title = 'add the condition picked above to this line as an alternative';
+    orBtn.onclick = () => addCond(ri);
+    div.append(orBtn);
+    const rmBtn = document.createElement('button');
+    rmBtn.className = 'small b-row-x';
+    rmBtn.textContent = '× line';
+    rmBtn.title = 'remove this whole line';
+    rmBtn.onclick = () => { builderRows.splice(ri, 1); renderChips(); };
+    div.append(rmBtn);
+    box.append(div);
+  });
+}
 function renderChips(){
-  renderChipList($('b-conds'), builderConds);
+  renderCondRows();
   renderChipList($('b-effs'), builderEffs);
+  // the guard only counts when a whole line is exactly "your turn" -
+  // or-ing something onto it weakens it (matches the checker's rule)
+  $('b-turn-hint').hidden = builderRows.some(r =>
+    r.length === 1 && !r[0].neg && r[0].t === 'your turn');
+  const untouched = builderRows.length === 1 && builderRows[0].length === 1 &&
+    !builderRows[0][0].neg && builderRows[0][0].t === 'your turn';
   // preview only once the rule differs from the untouched default
   $('b-preview').textContent =
-    (builderEffs.length || builderConds.join() !== 'your turn' ||
-     $('b-name').value.trim()) ? builderText() : '';
+    (builderEffs.length || !untouched || $('b-name').value.trim())
+      ? builderText() : '';
 }
 // a positive card-play condition means this rule will WIN the card click,
 // so it must handle the whole play - pre-add the usual effects (once per
 // composition, only into an empty effect list; all removable like any chip)
 let autoFilled = false;
-function isCardCond(t){
-  return !t.startsWith('not ') &&
-    (t.startsWith('card ') || t.startsWith('(card ') || t === 'continues stack');
-}
-$('b-add-cond').onclick = () => {
-  let t = WHEN_OPTIONS[$('b-when').value][0].replace('N', $('b-when-n').value || '0');
-  if (t.includes(' or ')) t = '(' + t + ')';
-  if ($('b-not').checked) t = 'not ' + t;
-  $('b-not').checked = false;
-  if (!builderConds.includes(t)) builderConds.push(t);
-  if (!autoFilled && !builderEffs.length && isCardCond(t)){
+function addCond(ri){
+  // an option that is itself an "or" (like "a matching card is played")
+  // splits into separate chips of one line
+  const parts = WHEN_OPTIONS[$('b-when').value][0]
+    .replace('N', $('b-when-n').value || '0')
+    .replace('C', $('b-when-color').value)
+    .split(' or ');
+  const fresh = parts.map(t => ({t, neg:false}));
+  if (ri == null) builderRows.push(fresh);
+  else for (const c of fresh){
+    if (!builderRows[ri].some(o => o.t === c.t)) builderRows[ri].push(c);
+  }
+  if (!autoFilled && !builderEffs.length &&
+      parts.some(t => t.startsWith('card ') || t === 'continues stack')){
     autoFilled = true;
     // mid-stack plays keep the turn, so no advance for "continues stack"
-    builderEffs = t === 'continues stack'
+    builderEffs = parts.includes('continues stack')
       ? ['play the card', 'set color from card']
       : ['play the card', 'set color from card', 'advance turn'];
     toast('Added the usual play effects - remove any chip you don’t want');
   }
   renderChips();
-};
+}
+$('b-add-cond').onclick = () => addCond(null);
 // 'advance turn' / 'skip next player' end the turn, so keep exactly one of
 // them at the tail: other effects slot in before it, a second one replaces it
 const TURN_END = new Set(['advance turn', 'skip next player']);
@@ -1627,6 +1746,12 @@ $('b-add-eff').onclick = () => {
 };
 $('b-prio').onchange = renderChips;
 $('b-name').addEventListener('input', renderChips);
+function resetBuilder(){
+  builderRows = [[{t:'your turn', neg:false}]];
+  builderEffs = []; autoFilled = false;
+  $('b-name').value = '';
+  renderChips();
+}
 $('b-append').onclick = () => {
   if (!builderEffs.length){ toast('Add at least one effect first'); return; }
   const text = builderText();
@@ -1634,11 +1759,10 @@ $('b-append').onclick = () => {
   const ta = $('rules-text');
   ta.value = ta.value.replace(/\s*$/, '\n\n') + text;
   ta.scrollTop = ta.scrollHeight;
-  builderConds = ['your turn']; builderEffs = []; autoFilled = false;
-  $('b-name').value = '';
-  renderChips();
+  resetBuilder();
   checkRules();
 };
+$('b-clear').onclick = resetBuilder;
 renderChips();
 
 /* ---------- optional login + saved rule modes ---------- */

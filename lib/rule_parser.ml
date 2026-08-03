@@ -98,6 +98,19 @@ let expect_word (toks : tokens) word =
   | _ -> Or_error.errorf "expected '%s' (%s)" word (where toks)
 ;;
 
+let color_of_word word line : Card.Color.t Or_error.t =
+  match word with
+  | "red" -> Ok Red
+  | "green" -> Ok Green
+  | "blue" -> Ok Blue
+  | "yellow" -> Ok Yellow
+  | _ ->
+    Or_error.errorf
+      "line %d: unknown color '%s' (expected red, green, blue, yellow, or declared)"
+      line
+      word
+;;
+
 (* conditions are fixed multi-word phrases, so each is one pattern match *)
 let parse_atom (toks : tokens) : (Rule.Condition.t * tokens) Or_error.t =
   let open Token in
@@ -121,6 +134,24 @@ let parse_atom (toks : tokens) : (Rule.Condition.t * tokens) Or_error.t =
     Ok (IsPlusTwo, rest)
   | (Word "card", _) :: (Word "is", _) :: (Word "plus", _) :: (Word "four", _) :: rest
     -> Ok (IsPlusFour, rest)
+  | (Word "card", _) :: (Word "is", _) :: (Int n, line) :: rest ->
+    if n >= 0 && n <= 9
+    then Ok (IsNumber n, rest)
+    else
+      Or_error.errorf
+        "line %d: 'card is %d' - card numbers go from 0 to 9"
+        line
+        n
+    (* only the four real colors here, so anything else still falls through
+       to the generic unknown-condition error *)
+  | (Word "card", _) :: (Word "is", _)
+    :: (Word (("red" | "green" | "blue" | "yellow") as color), line) :: rest ->
+    let%map color = color_of_word color line in
+    IsCardColor color, rest
+  | (Word "active", _) :: (Word "color", _) :: (Word "is", _)
+    :: (Word color, line) :: rest ->
+    let%map color = color_of_word color line in
+    ActiveColorIs color, rest
   | (Word "pending", _) :: (Word "draws", _) :: (Greater, _) :: (Int n, _) :: rest ->
     Ok (PendingDrawsGreaterThan n, rest)
   | (Word "continues", _) :: (Word "stack", _) :: rest -> Ok (ContinuesStack, rest)
@@ -169,19 +200,6 @@ and parse_or toks =
 ;;
 
 let parse_condition = parse_or
-
-let color_of_word word line : Card.Color.t Or_error.t =
-  match word with
-  | "red" -> Ok Red
-  | "green" -> Ok Green
-  | "blue" -> Ok Blue
-  | "yellow" -> Ok Yellow
-  | _ ->
-    Or_error.errorf
-      "line %d: unknown color '%s' (expected red, green, blue, yellow, or declared)"
-      line
-      word
-;;
 
 (* one phrase can desugar to several effects, hence the list *)
 let parse_effect (toks : tokens) : (Game_state.Effect.t list * tokens) Or_error.t =
@@ -348,8 +366,9 @@ let rec condition_requires (cond : Rule.Condition.t) ~positive ~f =
 ;;
 
 let is_card_play_atom : Rule.Condition.t -> bool = function
-  | MatchesTopColor | MatchesTopValue | IsWildCard | IsSkip | IsReverse
-  | IsPlusTwo | IsPlusFour | ContinuesStack -> true
+  | MatchesTopColor | MatchesTopValue | MatchesTopExactly | IsWildCard
+  | IsSkip | IsReverse | IsPlusTwo | IsPlusFour | IsNumber _
+  | IsCardColor _ | ContinuesStack -> true
   | _ -> false
 ;;
 
@@ -358,6 +377,36 @@ let is_card_play_atom : Rule.Condition.t -> bool = function
 let is_mid_stack_atom : Rule.Condition.t -> bool = function
   | ContinuesStack | StackIsOpen -> true
   | _ -> false
+;;
+
+let is_turn_atom : Rule.Condition.t -> bool = function
+  | IsPlayerTurn -> true
+  | _ -> false
+;;
+
+(* UNO presses are never turn-gated, so rules that can only fire on one are
+   exempt from the your-turn warning *)
+let is_uno_atom : Rule.Condition.t -> bool = function
+  | IsUnoCall -> true
+  | _ -> false
+;;
+
+(* wilds have no printed color, so a wild-play rule must set the color from
+   the player's declaration, not from the card *)
+let is_wild_atom : Rule.Condition.t -> bool = function
+  | IsWildCard | IsPlusFour -> true
+  | _ -> false
+;;
+
+(* does EVERY way of satisfying [cond] pass through an atom satisfying [f]?
+   The dual of [condition_requires] (which asks for SOME path): an Or needs
+   both sides to guarantee, and a Not guarantees nothing. *)
+let rec condition_guarantees (cond : Rule.Condition.t) ~f =
+  match cond with
+  | And (a, b) -> condition_guarantees a ~f || condition_guarantees b ~f
+  | Or (a, b) -> condition_guarantees a ~f && condition_guarantees b ~f
+  | Not _ -> false
+  | atom -> f atom
 ;;
 
 let rec action_uses (act : Rule.Action_AST.t) ~f =
@@ -374,6 +423,8 @@ module Lint = struct
     type t =
       | Missing_play
       | Missing_advance
+      | Missing_set_color (* plays the card but leaves the active color stale *)
+      | Missing_turn (* no [your turn] guard: fires for any player, out of turn *)
       | Dead_rule (* an identical condition always wins over this rule *)
     [@@deriving sexp, compare, equal]
   end
@@ -382,6 +433,9 @@ module Lint = struct
     { rule_name : string
     ; kind : Kind.t
     ; message : string
+    ; fix : string option
+      (* the snippet a one-click fix inserts (where to insert it is implied
+         by [kind]); None means no automatic fix is offered *)
     }
   [@@deriving sexp, compare, equal]
 end
@@ -398,6 +452,20 @@ let lint (named : (string * Rule.t) list) : Lint.t list =
         | Game_state.Effect.AdvanceTurn | SetStackingValue -> true
         | _ -> false)
     in
+    let sets_color =
+      uses (function
+        | Game_state.Effect.SetColorFromTriggeringCard | SetDeclaredColor
+        | SetActiveColor _ -> true
+        | _ -> false)
+    in
+    let wild_play = requires is_wild_atom in
+    (* when the condition guarantees the played card matches the active
+       color, leaving the color untouched is correct, not a mistake *)
+    let color_cannot_go_stale =
+      condition_guarantees rule.condition ~f:(function
+        | Rule.Condition.MatchesTopColor -> true
+        | _ -> false)
+    in
     List.filter_opt
       [ (if requires is_card_play_atom && not plays
          then
@@ -409,6 +477,7 @@ let lint (named : (string * Rule.t) list) : Lint.t list =
                    "rule \"%s\" fires when a card is played but has no \
                     'play the card' effect - the card will stay in the hand"
                    name
+             ; fix = Some "play the card"
              }
          else None)
       ; (if plays && (not ends_turn) && not (requires is_mid_stack_atom)
@@ -421,6 +490,62 @@ let lint (named : (string * Rule.t) list) : Lint.t list =
                    "rule \"%s\" plays the card but has no 'advance turn' \
                     effect - the turn will never end"
                    name
+             ; fix = Some "advance turn"
+             }
+         else None)
+        (* a played card should normally become the color to match; with no
+           color effect the previous color stays active (a blue 0 played on
+           red keeps red active) *)
+      ; (if plays && (not sets_color) && not color_cannot_go_stale
+         then
+           Some
+             { Lint.rule_name = name
+             ; kind = Missing_set_color
+             ; message =
+                 (if wild_play
+                  then
+                    sprintf
+                      "rule \"%s\" plays the card but never sets the color \
+                       - add 'set color to declared' so the color the \
+                       player picks takes effect"
+                      name
+                  else
+                    sprintf
+                      "rule \"%s\" plays the card but never sets the color \
+                       - the color to match stays what it was, not the \
+                       played card's color"
+                      name)
+             ; fix =
+                 Some
+                   (if wild_play
+                    then "set color to declared"
+                    else "set color from card")
+             }
+         else None)
+        (* turn order is enforced ONLY by this condition, so leaving it out
+           means the rule fires for any player's action, even out of turn.
+           Guaranteed on every path, not just present somewhere: "your turn
+           or player draws" still fires on other players' draws. Two
+           deliberate shapes are exempt: jump-in rules, which say "not your
+           turn" explicitly, and UNO-call rules, which can only fire on the
+           (never turn-gated) UNO button. *)
+      ; (let guarded = condition_guarantees rule.condition ~f:is_turn_atom in
+         let jump_in_style =
+           condition_requires rule.condition ~positive:false ~f:is_turn_atom
+         in
+         let uno_only = condition_guarantees rule.condition ~f:is_uno_atom in
+         if (not guarded) && (not jump_in_style) && not uno_only
+         then
+           Some
+             { Lint.rule_name = name
+             ; kind = Missing_turn
+             ; message =
+                 sprintf
+                   "rule \"%s\" has no 'your turn' condition - it fires for \
+                    ANY player's action, even out of turn (write 'not your \
+                    turn' explicitly if jump-in is what you mean)"
+                   name
+             ; fix = Some "your turn"
              }
          else None)
       ])
@@ -451,6 +576,7 @@ let dead_rule_warnings (named : (string * Rule.t) list) : Lint.t list =
              to the rule defined first)"
             name
             killer
+      ; fix = None (* which of the twins to change is a judgement call *)
       }))
 ;;
 

@@ -60,6 +60,9 @@ never duplicates anything. Ids are assigned after this merge.
 | `card is reverse` | `IsReverse` |
 | `card is plus two` | `IsPlusTwo` |
 | `card is plus four` | `IsPlusFour` |
+| `card is N` (0–9, e.g. `card is 7`) | `IsNumber N` |
+| `card is red` (etc.) | `IsCardColor Red` |
+| `active color is red` (etc.) | `ActiveColorIs Red` |
 | `pending draws > N` | `PendingDrawsGreaterThan N` |
 | `continues stack` | `ContinuesStack` |
 | `stack is open` | `StackIsOpen` |
@@ -73,6 +76,18 @@ never duplicates anything. Ids are assigned after this merge.
 
 Precedence: `not` binds tightest, then `and`, then `or` (conventional).
 Parentheses override.
+
+`card is 7` tests only the card's printed number — it says nothing about
+whether the card matches the pile. A rule that should follow normal
+matching wants `when card is 7 and (card matches color or card matches
+value) and your turn`, the same shape as the built-in skip/reverse rules;
+leave the matching clause out to make that number playable on anything.
+
+Likewise `card is blue` tests the card's *printed* color (wilds have none,
+so they never match), while `active color is blue` tests the table's
+current color to match — whatever the last rule set it to. "Blue cards are
+always playable" wants the first; "while blue is active, draws are
+doubled" wants the second.
 
 ## Effects
 
@@ -362,11 +377,32 @@ rule "play reverse" priority 100:
 The lobby editor's "Change a built-in rule" panel copies any preset rule's
 text into the editor for tweaking. The checker
 (`Rule_parser.parse_ruleset_checked`, surfaced by `/api/check-rules`)
-warns about the two easy mistakes: a rule that fires on a card play but
-lacks `play the card` (the card would stay in the hand), and one that
-plays the card but lacks `advance turn` (the turn would never end) —
-mid-stack rules are exempt from the latter since keeping the turn is the
-point.
+warns about the easy mistakes, each with a one-click fix in the editor:
+
+- a card-play rule without `play the card` — the card would stay in the
+  hand;
+- one that plays the card but lacks `advance turn` — the turn would never
+  end (mid-stack rules are exempt: keeping the turn is the point);
+- one that plays the card but has no color effect — the color to match
+  would go stale (a blue 0 played on red keeps red active). Exempt when
+  the condition guarantees a color match on every path (e.g. plain
+  `card matches color`); rules on wilds are steered to
+  `set color to declared` since a wild has no printed color;
+- one without a `your turn` condition (see below).
+
+## Turn order is just a condition
+
+Nothing in the engine enforces turn order. The server accepts actions from
+every player at any time; a rule fires for the *acting* player, and the
+only thing keeping play orderly is that every normal rule requires
+`your turn` — "the player doing this action is the player whose turn it
+is". Omit it from a custom rule and that rule fires for anyone, even out
+of turn (the checker warns; the composer pre-adds the line and shows a
+hint when it's removed). The jump-in presets are exactly this, on purpose
+— see "Playing out of turn" above. The checker therefore skips the
+warning for two deliberate shapes: rules that say `not your turn`
+explicitly (jump-in style), and rules that can only fire on the UNO
+button, which is never turn-gated.
 
 ## Decisions made (revisit if needed)
 

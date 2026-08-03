@@ -413,14 +413,19 @@ let handle t ~body req =
      | Ok (rules, warnings) ->
        let warning_json (w : Rule_parser.Lint.t) =
          sprintf
-           {|{"rule":%s,"kind":%s,"message":%s}|}
+           {|{"rule":%s,"kind":%s,"message":%s,"fix":%s}|}
            (jstr w.rule_name)
            (jstr
               (match w.kind with
                | Missing_play -> "missing_play"
                | Missing_advance -> "missing_advance"
+               | Missing_set_color -> "missing_set_color"
+               | Missing_turn -> "missing_turn"
                | Dead_rule -> "dead_rule"))
            (jstr w.message)
+           (match w.fix with
+            | Some f -> jstr f
+            | None -> "null")
        in
        respond_json
          (sprintf

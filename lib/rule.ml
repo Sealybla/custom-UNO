@@ -23,6 +23,9 @@ module Condition = struct
     | IsDrawAction
     | IsPlusTwo
     | IsPlusFour
+    | IsNumber of int (* the card is this number, 0-9 *)
+    | IsCardColor of Card.Color.t (* the card's printed color; wilds have none *)
+    | ActiveColorIs of Card.Color.t (* the table's color to match right now *)
     | ContinuesStack
     | StackIsOpen
     | DrewPlayableCard
