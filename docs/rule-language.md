@@ -112,6 +112,10 @@ doubled" wants the second.
 | `mark uno called` | `MarkUnoCalled` (shuts the presser's own catch window) |
 | `penalize caller N cards` | `PenalizeUnoCaller N` |
 | `penalize uncalled player N cards` | `PenalizeUnoTarget N` |
+| `swap hands with next player` | `SwapHandsWithNext` (entire hands trade, in play direction) |
+| `swap hands with chosen player` | `SwapHandsWithChosen` (the actor names the target; the web UI shows a player picker) |
+| `rotate hands` | `RotateHands` (every hand moves one seat in play direction) |
+| `everyone else draws N cards` | `AllOthersDraw N` |
 
 Each effect becomes a `Mutate` in `Rule.t.actions`. `Sequence` and
 `Chain_event` are not exposed in v1: the flat effect list already is a
@@ -164,11 +168,61 @@ Notes:
   rather than guessing), so a custom jump condition lights up correctly
   without any client change.
 
+## Seven-zero (hands that move)
+
+The classic 7-0 house rule ships as an **add-on preset**: unlike the base
+presets it is not a complete ruleset, just two rules you `use` *after* a
+base (the lobby's "7-0" toggle writes exactly this):
+
+```
+use standard
+use seven zero
+```
+
+which expands to
+
+```
+rule "sevens swap hands" priority 60:
+  when card is 7 and (card matches color or card matches value) and your turn
+  do play the card, set color from card, swap hands with chosen player, advance turn
+
+rule "zeros rotate hands" priority 60:
+  when card is 0 and (card matches color or card matches value) and your turn
+  do play the card, set color from card, rotate hands, advance turn
+```
+
+Notes:
+
+- **The 7 swaps with a player of your choice** — the web UI pops a player
+  picker when you click the 7 (the server marks such cards in
+  `Hand_updated.swap_target_ids`, found by simulating the play and hitting
+  the needs-a-target rejection). Prefer no questions? Redefine the rule
+  with `swap hands with next player`. Bots pick the smallest hand.
+- **Going out on a 7 or 0 wins.** The winner check runs the moment the
+  card is played, before any hands move — same as real seven-zero — and a
+  winning 7 never asks for a target.
+- **Rotation respects play direction**: `rotate hands` passes every hand
+  one seat along; after a reverse it flows the other way (same for
+  `swap hands with next player`).
+- Priority 60 beats the generic play rule (10) but loses to the specials
+  (100+) and to continuing an open stack (120). In stacking rulesets a 7
+  or 0 that would have *opened* a stack swaps/rotates instead.
+- The UNO catch window follows the swap: swap yourself *into* a one-card
+  hand and you are catchable until you call UNO, exactly as if you had
+  played down to one.
+- These rules override like any other: redefine `"sevens swap hands"` by
+  name to change what a 7 does (e.g. `everyone else draws 2 cards` for a
+  crueler table).
+
 ## The UNO button
 
 Pressing UNO is its own action, separate from playing/drawing/passing. It
-never consumes a turn and anyone may press at any time, so the three UNO
-rules are resolved purely by priority:
+never consumes a turn and anyone may press at any time. While a catch
+window is open the server flags it on every `Turn_changed`
+(`uno_race`), and the web UI flashes **everyone's** UNO button — the
+holder races to save themselves, everyone else races to catch them; the
+flashing stops for the whole table the moment the press (or any other
+action) settles it. The three UNO rules are resolved purely by priority:
 
 ```
 rule "call uno" priority 200:

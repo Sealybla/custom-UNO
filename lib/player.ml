@@ -10,6 +10,9 @@ type t =
 let create id name = { id; name; hand = [] }
 let get_hand t = t.hand
 let add_card t card_id = {t with hand = card_id :: t.hand}
+
+(* wholesale replacement, for effects that move entire hands (swap/rotate) *)
+let with_hand t hand = { t with hand }
 let get_id t = t.id
 
 let get_name t = t.name

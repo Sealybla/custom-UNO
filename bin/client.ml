@@ -31,13 +31,14 @@ let print_event (event : Action.Server_to_client.t) =
           (top_card : Card.t)
           (current_color : Card.Color.t)
           (pending_draws : int)]
-  | Turn_changed { current_player_name; can_pass; stack_value } ->
+  | Turn_changed { current_player_name; can_pass; stack_value; uno_race } ->
     print_s
       [%message
         "turn"
           (current_player_name : string)
           (can_pass : bool)
-          (stack_value : Card.Value.t option)]
+          (stack_value : Card.Value.t option)
+          (uno_race : bool)]
   | Game_over { winner_name } ->
     print_s [%message "GAME OVER" (winner_name : string)]
   | Hand_counts { counts } ->
@@ -61,6 +62,10 @@ let print_event (event : Action.Server_to_client.t) =
     print_s [%message "forced to draw" (player_name : string) (count : int)]
   | Direction_changed { direction } ->
     print_s [%message "direction" (direction : Direction.t)]
+  | Hands_moved { moves } ->
+    print_s [%message "hands moved" (moves : (string * string) list)]
+  | Jumped_in { player_name } ->
+    print_s [%message "jumped in" (player_name : string)]
 ;;
 
 let color_of_string = function
@@ -134,16 +139,21 @@ let handle_line conn line =
        print_endline "usage: play <card_id> [color]";
        Deferred.unit
      | Some card_id ->
-       let declared_color =
+       (* any non-color word names the player to swap hands with *)
+       let declared_color, swap_with =
          match rest with
-         | [ c ] -> color_of_string c
-         | _ -> None
+         | [ x ] ->
+           (match color_of_string x with
+            | Some c -> Some c, None
+            | None -> None, Some x)
+         | [ x; y ] -> color_of_string x, Some y
+         | _ -> None, None
        in
        let%map result =
          Rpc.Rpc.dispatch_exn
            Rpc_protocol.take_action_rpc
            conn
-           (Action.Client_to_server.Play { card_id; declared_color })
+           (Action.Client_to_server.Play { card_id; declared_color; swap_with })
        in
        (match result with
         | Ok () -> ()
@@ -151,7 +161,7 @@ let handle_line conn line =
   | [ "" ] -> Deferred.unit
   | _ ->
     print_endline
-      "commands: ready | unready | start | draw | pass | play <card_id> [red|green|blue|yellow] | rules <file>";
+      "commands: ready | unready | start | draw | pass | play <card_id> [red|green|blue|yellow] [swap target] | rules <file>";
     Deferred.unit
 ;;
 

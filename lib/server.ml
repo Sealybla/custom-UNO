@@ -102,8 +102,8 @@ let send_hands (room : Room.t) state =
       let hand = hand_of_player state player in
       (* asked per player, because with jump-in enabled someone who is not
          the current player may still have a legal move *)
-      let playable_ids =
-        Rule_engine.playable_card_ids
+      let playable_ids, swap_target_ids =
+        Rule_engine.playable_and_swap_ids
           room.ruleset
           state
           ~player_id:(Player.get_id player)
@@ -113,7 +113,7 @@ let send_hands (room : Room.t) state =
         Pipe.write_without_pushback
           client.writer
           (Action.Server_to_client.Hand_updated
-             { your_hand = hand; playable_ids }))
+             { your_hand = hand; playable_ids; swap_target_ids }))
 ;;
 
 (* current player + whether a pass is legal + any open stack's value; sent
@@ -124,6 +124,7 @@ let turn_changed_event (room : Room.t) (state : Game_state.t) =
         Option.value (name_of_player_id state state.Game_state.turn) ~default:""
     ; can_pass = Rule_engine.pass_available room.ruleset state
     ; stack_value = state.Game_state.stacking_value
+    ; uno_race = Option.is_some state.Game_state.uno_vulnerable
     }
 ;;
 
@@ -162,6 +163,18 @@ let broadcast_game_started (room : Room.t) state =
    first valid card in hand (declaring a real color for wilds) or draw. *)
 let bot_action (state : Game_state.t) player_name =
   let fallback = Action.Client_to_server.Draw in
+  (* a standing swap target rides along on every bot play: rules that don't
+     swap ignore it, and a chosen-swap rule gets the strategic pick - the
+     smallest hand that isn't the bot's own *)
+  let swap_with =
+    List.filter state.Game_state.players ~f:(fun p ->
+      not (String.Caseless.equal (Player.get_name p) player_name))
+    |> List.min_elt ~compare:(fun a b ->
+         Int.compare
+           (List.length (Player.get_hand a))
+           (List.length (Player.get_hand b)))
+    |> Option.map ~f:Player.get_name
+  in
   let play_card hand (card : Card.t) =
     let declared_color =
       match card.Card.value with
@@ -177,7 +190,8 @@ let bot_action (state : Game_state.t) player_name =
         Some color
       | _ -> None
     in
-    Action.Client_to_server.Play { card_id = Card.get_id card; declared_color }
+    Action.Client_to_server.Play
+      { card_id = Card.get_id card; declared_color; swap_with }
   in
   match player_id_of_name state player_name with
   | None -> fallback
@@ -362,6 +376,11 @@ let maybe_bot_calls_uno (room : Room.t) (next_state : Game_state.t) =
    cannot see this: it measures turns_advanced, and JumpToActor moves the
    turn without advancing it. *)
 let broadcast_jump_in (room : Room.t) ~(before : Game_state.t) ~actor_id =
+  (* announce the jumper first, then everyone they leapt over *)
+  (match name_of_player_id before actor_id with
+   | Some player_name ->
+     broadcast room (Action.Server_to_client.Jumped_in { player_name })
+   | None -> ());
   let num_players = List.length before.players in
   let dir = if Direction.equal before.direction Clockwise then 1 else -1 in
   let rec seats_passed idx acc =
@@ -421,17 +440,34 @@ let broadcast_notifications
   ~(before : Game_state.t)
   ~(after : Game_state.t)
   ~actor_id
+  ~played
   =
   let hand_len (st : Game_state.t) idx =
     match List.nth st.players idx with
     | Some p -> List.length (Player.get_hand p)
     | None -> 0
   in
+  (* whole hands changing owners (swap/rotate rules) are their own
+     spectacle, and a received hand must not read as a forced draw below *)
+  let moves = Game_state.hand_moves ~before ~after ~played in
+  let received_hand = Int.Set.of_list (List.map moves ~f:snd) in
+  (if not (List.is_empty moves)
+   then (
+     let named =
+       List.filter_map moves ~f:(fun (from, to_) ->
+         match name_of_player_id after from, name_of_player_id after to_ with
+         | Some a, Some b -> Some (a, b)
+         | _ -> None)
+     in
+     if not (List.is_empty named)
+     then broadcast room (Action.Server_to_client.Hands_moved { moves = named })));
   (* forced draws: a hand that grew without its owner acting, or the actor
      cashing out a pending +2/+4 penalty *)
   List.iteri after.players ~f:(fun idx p ->
     let grew = hand_len after idx - hand_len before idx in
     let forced =
+      (not (Set.mem received_hand idx))
+      &&
       if idx = actor_id
       then before.pending_draws > 0 && after.pending_draws = 0 && grew > 0
       else grew > 0
@@ -564,7 +600,12 @@ let start_engine_loop t (room : Room.t) request_reader =
                       room
                       ~before:current_state
                       ~after:next_state
-                      ~actor_id:player_id);
+                      ~actor_id:player_id
+                      ~played:
+                        (match action with
+                         | Action.Client_to_server.Play { card_id; _ } ->
+                           Some card_id
+                         | _ -> None));
                  maybe_bot_calls_uno room next_state;
                  (match next_state.winner with
                   | Some winner_id ->
@@ -748,14 +789,17 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                            (* Game_started has no playable ids, so a client
                               rebuilding from this snapshot would think
                               nothing was playable until the next action *)
-                         ; Action.Server_to_client.Hand_updated
-                             { your_hand = hand_of_player game player
-                             ; playable_ids =
-                                 Rule_engine.playable_card_ids
-                                   room.ruleset
-                                   game
-                                   ~player_id:(Player.get_id player)
-                             }
+                         ; (let playable_ids, swap_target_ids =
+                              Rule_engine.playable_and_swap_ids
+                                room.ruleset
+                                game
+                                ~player_id:(Player.get_id player)
+                            in
+                            Action.Server_to_client.Hand_updated
+                              { your_hand = hand_of_player game player
+                              ; playable_ids
+                              ; swap_target_ids
+                              })
                          ; hand_counts_event game
                          ; turn_changed_event room game
                          ]))))

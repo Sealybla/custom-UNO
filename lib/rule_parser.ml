@@ -239,6 +239,13 @@ let parse_effect (toks : tokens) : (Game_state.Effect.t list * tokens) Or_error.
   | (Word "jump", _) :: (Word "in", _) :: rest -> Ok ([ JumpToActor ], rest)
   | (Word "skip", _) :: (Word "next", _) :: (Word "player", _) :: rest ->
     Ok ([ AdvanceTurn; AdvanceTurn ], rest)
+  | (Word "swap", _) :: (Word "hands", _) :: (Word "with", _) :: (Word "next", _)
+    :: (Word "player", _) :: rest -> Ok ([ SwapHandsWithNext ], rest)
+  | (Word "swap", _) :: (Word "hands", _) :: (Word "with", _) :: (Word "chosen", _)
+    :: (Word "player", _) :: rest -> Ok ([ SwapHandsWithChosen ], rest)
+  | (Word "rotate", _) :: (Word "hands", _) :: rest -> Ok ([ RotateHands ], rest)
+  | (Word "everyone", _) :: (Word "else", _) :: (Word "draws", _) :: (Int n, _)
+    :: (Word ("card" | "cards"), _) :: rest -> Ok ([ AllOthersDraw n ], rest)
   | (Word "mark", _) :: (Word "uno", _) :: (Word "called", _) :: rest ->
     Ok ([ MarkUnoCalled ], rest)
   | (Word "penalize", _) :: (Word "caller", _) :: (Int n, _)

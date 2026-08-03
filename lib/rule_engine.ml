@@ -398,11 +398,25 @@ let event_of_client_action
   : Event.t Or_error.t
   =
   match action with
-  | Play { card_id; declared_color } ->
-    let%map card =
+  | Play { card_id; declared_color; swap_with } ->
+    let%bind card =
       Game_state.Card_registry.find state.card_registry card_id
     in
-    Event.CardPlayed { player; card; declared_color }
+    let%map swap_with =
+      match swap_with with
+      | None -> Ok None
+      | Some target_name ->
+        (match
+           List.find state.players ~f:(fun p ->
+             String.Caseless.equal (Player.get_name p) target_name)
+         with
+         | None -> Or_error.errorf "No player named %s to swap with" target_name
+         | Some target ->
+           if Int.equal (Player.get_id target) (Player.get_id player)
+           then Or_error.error_string "You cannot swap hands with yourself"
+           else Ok (Some target))
+    in
+    Event.CardPlayed { player; card; declared_color; swap_with }
   | Draw -> Ok (DrawRequested { player })
   | Pass -> Ok (Event.PassRequested { player })
   | Call_uno -> Ok (Event.UnoCalled { player })
@@ -623,23 +637,46 @@ let apply_action
    an out-of-turn jump-in shows up here for free, whatever condition the
    player wrote for it. Cheap: a hand times a ruleset is a few hundred
    condition checks. *)
+(* (playable ids, subset that also needs a swap target). A play that fails
+   only for want of a target IS legal - the UI just has to ask who first. *)
+let playable_and_swap_ids (rules : Ruleset.t) (state : Game_state.t) ~player_id
+  : int list * int list
+  =
+  match state.winner with
+  | Some _ -> [], []
+  | None ->
+    (match List.nth state.players player_id with
+     | None -> [], []
+     | Some player ->
+       let statuses =
+         List.filter_map (Player.get_hand player) ~f:(fun card_id ->
+           (* any real colour stands in for a wild's declaration *)
+           match
+             apply_action
+               rules
+               state
+               ~player_id
+               ~action:
+                 (Play { card_id; declared_color = Some Red; swap_with = None })
+           with
+           | Ok _ -> Some (card_id, `Ready)
+           | Error e ->
+             if String.is_substring
+                  (Error.to_string_hum e)
+                  ~substring:Game_state.swap_target_needed
+             then Some (card_id, `Needs_target)
+             else None)
+       in
+       ( List.map statuses ~f:fst
+       , List.filter_map statuses ~f:(function
+           | id, `Needs_target -> Some id
+           | _, `Ready -> None) ))
+;;
+
 let playable_card_ids (rules : Ruleset.t) (state : Game_state.t) ~player_id
   : int list
   =
-  match state.winner with
-  | Some _ -> []
-  | None ->
-    (match List.nth state.players player_id with
-     | None -> []
-     | Some player ->
-       List.filter (Player.get_hand player) ~f:(fun card_id ->
-         (* any real colour stands in for a wild's declaration *)
-         apply_action
-           rules
-           state
-           ~player_id
-           ~action:(Play { card_id; declared_color = Some Red })
-         |> Or_error.is_ok))
+  fst (playable_and_swap_ids rules state ~player_id)
 ;;
 
 (* Simulates every move the current player could make. When a pass is legal

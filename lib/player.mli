@@ -12,6 +12,9 @@ type t =
 val create : int -> string -> t
 val get_hand : t -> Int.t List.t
 val add_card : t -> int -> t
+
+(* wholesale replacement, for effects that move entire hands (swap/rotate) *)
+val with_hand : t -> Int.t List.t -> t
 val get_id : t -> int
 val get_name : t -> string
 val remove_card : t -> int -> t Or_error.t

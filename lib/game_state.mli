@@ -28,8 +28,17 @@ module Effect : sig
     | MarkUnoCalled
     | PenalizeUnoCaller of int
     | PenalizeUnoTarget of int
+    | SwapHandsWithNext
+    | SwapHandsWithChosen
+    | RotateHands
+    | AllOthersDraw of int
   [@@deriving sexp, compare, equal, bin_io]
 end
+
+(* the rejection text SwapHandsWithChosen produces when the play declared
+   no target. The server greps for it when simulating playability, turning
+   "would be legal, but needs a target" into the UI's player picker. *)
+val swap_target_needed : string
 
 type t =
   { players : Player.t list
@@ -82,3 +91,14 @@ val apply_effect : t -> event:Event.t -> Effect.t -> t Or_error.t
 (* recomputes who can be caught for not calling UNO; called once per action
    by Rule_engine.apply_action, never from a rule *)
 val update_uno_window : t -> actor_id:int -> event:Event.t -> t
+
+(* Which ENTIRE hands changed owners across one action, as (from, to)
+   player-index pairs: [to]'s whole hand after the action is [from]'s hand
+   from before it (minus the card the actor just [played], for the hand the
+   actor traded away). A swap reports two moves, a rotate one per player.
+   Ordinary plays and draws never look like a move - drawn cards come from
+   the pile, so a grown hand can't equal anyone's old hand. Drives the
+   swap/rotate animations and keeps the forced-draw notification from
+   misreading a received hand as a penalty. Empty hands are skipped: there
+   is nothing to animate and empty sets would match each other. *)
+val hand_moves : before:t -> after:t -> played:Int.t Option.t -> (int * int) list

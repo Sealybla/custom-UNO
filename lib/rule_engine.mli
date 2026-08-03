@@ -70,3 +70,11 @@ val playable_card_ids
   -> Game_state.t
   -> player_id:int
   -> int list
+
+(* (playable ids, subset that also needs a swap target declared before the
+   play can go through - the UI asks with a player picker) *)
+val playable_and_swap_ids
+  :  Ruleset.t
+  -> Game_state.t
+  -> player_id:int
+  -> int list * int list

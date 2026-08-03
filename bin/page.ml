@@ -272,7 +272,7 @@ let html =
   #uno-btn:hover { transform:translateY(-2px) scale(1.05);
     box-shadow:0 6px 0 rgba(0,0,0,.45); }
   #uno-btn:active { transform:translateY(2px); box-shadow:0 1px 0 rgba(0,0,0,.45); }
-  /* flashes when you are the one holding a single card - a nudge, not a
+  /* flashes for everyone while an UNO catch window is open - a nudge, not a
      disclosure: it never reveals anyone else's hand */
   #uno-btn.armed { animation:unopulse .8s ease-in-out infinite; }
   @keyframes unopulse { 50% { box-shadow:0 4px 0 rgba(0,0,0,.45),
@@ -322,6 +322,15 @@ let html =
   #color-modal .wheel button:hover { transform:scale(1.05); }
   .swatch-red{background:var(--c-red)} .swatch-green{background:var(--c-green)}
   .swatch-blue{background:var(--c-blue)} .swatch-yellow{background:var(--c-yellow)}
+  #swap-modal { position:fixed; inset:0; background:rgba(0,0,0,.65);
+    display:flex; align-items:center; justify-content:center; z-index:30; }
+  #swap-modal .swap-box { background:var(--paper); border-radius:16px;
+    padding:1rem 1.3rem; min-width:min(320px,80vw);
+    box-shadow:0 0 0 6px #fff, 0 20px 60px rgba(0,0,0,.5);
+    animation:wheelin .35s var(--ease-pop); transform:none; }
+  #swap-modal h3 { margin:.1rem 0 .6rem; }
+  #swap-modal .swap-list { display:flex; flex-direction:column; gap:.5rem; }
+  #swap-modal .swap-list button { width:100%; text-align:left; }
   #uno-splash { position:fixed; left:50%; top:38%; transform:translate(-50%,-50%) rotate(-6deg);
     z-index:40; font-size:clamp(2.5rem,9vw,4.5rem); font-weight:900; font-style:italic;
     color:var(--c-yellow); -webkit-text-stroke:2px #fff;
@@ -453,6 +462,7 @@ let html =
         <button class="preset toggle" id="toggle-stacking">Stacking</button>
         <button class="preset toggle" id="toggle-drawuntil">Draw until playable</button>
         <button class="preset toggle" id="toggle-jumpin" title="play out of turn on an exact match">Jump in</button>
+        <button class="preset toggle" id="toggle-sevenzero" title="7s swap hands with the next player, 0s send every hand one seat along">7-0</button>
       </div>
       <div id="modes-row" class="preset-row" hidden>
         <span style="opacity:.8">My modes:</span>
@@ -529,6 +539,7 @@ let html =
             <code title="chain same-value cards in one turn; +2/+4 penalties pile up until someone can't answer">use stacking</code>
             <code title="no passing: draw one card at a time until you can play">use draw until playable</code>
             <code title="both variants combined">use stacking with draw until playable</code>
+            <code title="ADD-ON: use it after a base preset — 7s swap hands with the next player, 0s rotate all hands">use seven zero</code>
             <h4 style="margin-top:.6rem">Conditions</h4>
             <code title="the played card's printed color equals the color to match">card matches color</code>
             <code title="the played card's value equals the top card's value">card matches value</code>
@@ -543,6 +554,9 @@ let html =
             <code title="the table's color to match right now — works for any action, not just card plays">active color is red</code>
             <code title="the player clicked draw">player draws</code>
             <code title="the player clicked done">player passes</code>
+            <code title="the UNO button was pressed — its own action, never turn-gated">player calls uno</code>
+            <code title="the presser is down to exactly one card (their own catch window is open)">has uno</code>
+            <code title="some other player sits on one card with their catch window still open">someone has uno</code>
             <code title="the played card has the open stack's value">continues stack</code>
             <code title="someone is mid-chain: a stack is open">stack is open</code>
             <code title="the card just drawn is playable, and the player is deciding to play it or pass">drew playable card</code>
@@ -567,6 +581,13 @@ let html =
             <code title="stay on turn and chain more cards of this value">open stack</code>
             <code title="end the chain (the done button does this)">close stack</code>
             <code title="the acting player takes the turn — pair with 'not your turn' for out-of-turn plays">jump in</code>
+            <code title="the acting player picks any other player and trades entire hands with them (the UI asks who)">swap hands with chosen player</code>
+            <code title="the acting player trades entire hands with the next player (in play direction)">swap hands with next player</code>
+            <code title="every hand moves one seat in the play direction">rotate hands</code>
+            <code title="every player except the actor draws that many cards">everyone else draws 2 cards</code>
+            <code title="the presser is safe: closes their own catch window">mark uno called</code>
+            <code title="a false UNO call: the presser draws the penalty">penalize caller 2 cards</code>
+            <code title="the caught player draws the penalty and their window closes">penalize uncalled player 2 cards</code>
             <code title="end the acting player's turn">advance turn</code>
           </div>
         </div>
@@ -616,6 +637,13 @@ let html =
   </div>
 </div>
 
+<div id="swap-modal" hidden>
+  <div class="swap-box">
+    <h3>Swap hands with…</h3>
+    <div class="swap-list"></div>
+  </div>
+</div>
+
 <div id="uno-splash" hidden></div>
 <div id="win-overlay" hidden>
   <div class="win-name"></div>
@@ -642,6 +670,9 @@ const PRESET_DESC = {
 const JUMP_IN_DESC =
   'Jump in: when your card is an exact match of the top card you may play it ' +
   'out of turn, skipping everyone between you and the last player.';
+const SEVEN_ZERO_DESC =
+  'Seven-zero: playing a 7 trades hands with the next player, playing a 0 ' +
+  'sends every hand one seat along the play direction.';
 // jump-in composes onto any of the four bases, giving the eight preset names
 // in lib/presets.ml
 function baseName(){
@@ -651,15 +682,19 @@ function baseName(){
        : s ? 'stacking' : d ? 'draw until playable' : 'standard';
 }
 function jumpInOn(){ return $('toggle-jumpin').classList.contains('active'); }
+function sevenZeroOn(){ return $('toggle-sevenzero').classList.contains('active'); }
 function presetName(){
   const base = baseName();
   if (!jumpInOn()) return base;
   return base === 'standard' ? 'jump in' : base + ' with jump in';
 }
 function presetText(){
-  const desc = PRESET_DESC[baseName()] + (jumpInOn() ? '\n# ' + JUMP_IN_DESC : '');
+  const desc = PRESET_DESC[baseName()] + (jumpInOn() ? '\n# ' + JUMP_IN_DESC : '') +
+    (sevenZeroOn() ? '\n# ' + SEVEN_ZERO_DESC : '');
+  // seven-zero is an ADD-ON preset: a second `use` line appends its rules
   return '# ' + desc + '\n' +
-    'use ' + presetName() + '\n\n' +
+    'use ' + presetName() + '\n' +
+    (sevenZeroOn() ? 'use seven zero\n' : '') + '\n' +
     '# Add house rules below - they combine with the preset above.\n' +
     '# Redefining a rule with the same name replaces the preset version.\n';
 }
@@ -706,6 +741,10 @@ const EFF_OPTIONS = [
   ['open stack', 'open a stack: stay on turn, chain that value'],
   ['close stack', 'close the stack (Done does this)'],
   ['jump in', 'take the turn, skipping everyone in between'],
+  ['swap hands with chosen player', 'trade hands with a player you pick'],
+  ['swap hands with next player', 'trade hands with the next player'],
+  ['rotate hands', 'every hand moves one seat along'],
+  ['everyone else draws N cards', 'all other players draw'],
   ['mark uno called', 'the presser is safe'],
   ['penalize caller N cards', 'fine the presser'],
   ['penalize uncalled player N cards', 'fine the player who got caught'],
@@ -715,9 +754,11 @@ let name = null;
 let code = null;
 const freshState = () => ({ players:[], hand:[], top:null, color:null, current:null,
               counts:{}, inGame:false, pileStack:[], pending:0,
-              canPass:false, stackValue:null, stacking:false,
+              canPass:false, stackValue:null, stacking:false, unoRace:false,
               // card ids the server says are legal for us right now
               playable:new Set(),
+              // subset of playable that needs a swap target picked first
+              swapTargets:new Set(),
               ready:[], lastWinner:null });
 let state = freshState();
 let pendingWild = null;
@@ -849,13 +890,15 @@ function apply(ev, fx){
       hideCountdown();
       handOrder = [];
       lastPileColor = null; lastPileTopId = null;
-      state.inGame = true; state.hand = orderedHand(ev.hand); state.top = ev.top_card;
+      state.inGame = true; state.unoRace = false;
+      state.hand = orderedHand(ev.hand); state.top = ev.top_card;
       state.color = ev.current_color; state.players = ev.players;
       state.current = ev.current_player; state.counts = {};
       state.pileStack = [ev.top_card]; state.pending = ev.pending || 0;
       state.stacking = !!ev.stacking; state.canPass = false; state.stackValue = null;
       // a 'hand' event follows immediately with the real set
       state.playable = new Set();
+      state.swapTargets = new Set();
       dirty.seats = dirty.pile = dirty.hand = dirty.turn = true;
       $('log').innerHTML = ''; $('win-overlay').hidden = true;
       setView('game'); layoutSeats();
@@ -870,6 +913,7 @@ function apply(ev, fx){
       }
       state.hand = orderedHand(ev.hand);
       state.playable = new Set(ev.playable || []);
+      state.swapTargets = new Set(ev.swap_targets || []);
       // turn too: highlights change without the turn changing when a
       // jump-in becomes available on somebody else's go
       dirty.hand = dirty.turn = true;
@@ -902,6 +946,10 @@ function apply(ev, fx){
       state.current = ev.player;
       state.canPass = !!ev.can_pass;
       state.stackValue = ev.stack_value || null;
+      // the race is on: someone is sitting on one card and EVERYONE's UNO
+      // button is live - save yourself or catch them
+      if (ev.uno_race && !state.unoRace) logLine('UNO race - hit the button!');
+      state.unoRace = !!ev.uno_race;
       hideCountdown(); // an action landed, so the clock restarted
       dirty.turn = dirty.seats = true;
       break;
@@ -939,6 +987,20 @@ function apply(ev, fx){
     case 'direction':
       logLine('direction reversed');
       if (fx) fx.push({kind:'reversed'});
+      break;
+    case 'hands_moved': {
+      // two reciprocal moves are a swap; one per player is a rotate
+      const swap = ev.moves.length === 2 &&
+        ev.moves[0][0] === ev.moves[1][1] && ev.moves[0][1] === ev.moves[1][0];
+      logLine(swap
+        ? ev.moves[0][0] + ' and ' + ev.moves[0][1] + ' traded hands'
+        : 'every hand moved one seat along');
+      if (fx) fx.push({kind:'handsMoved', moves:ev.moves, swap});
+      break;
+    }
+    case 'jumped_in':
+      logLine((ev.player === name ? 'you' : ev.player) + ' jumped in!');
+      if (fx) fx.push({kind:'jumpin', player:ev.player});
       break;
     case 'game_over':
       state.inGame = false;
@@ -999,7 +1061,9 @@ function updateHighlights(){
   $('pass-btn').hidden = !(myTurn && state.canPass);
   // only ever keys off your OWN hand, so it cannot tell you when an
   // opponent is catchable - that is the part you are supposed to notice
-  $('uno-btn').classList.toggle('armed', state.hand.length === 1);
+  // server-driven: flashes for EVERYONE while a catch window is open
+  // (save yourself or catch them), stops the moment the race is settled
+  $('uno-btn').classList.toggle('armed', state.unoRace);
 }
 
 /* ---------- targeted renderers ---------- */
@@ -1295,6 +1359,10 @@ function runFx(fx){
   // a +2/+4 victim is skipped by the same play; the DRAW splash already
   // says so, so drop their separate skip signal
   const penalized = new Set(fx.filter(f => f.kind === 'penalty').map(f => f.player));
+  // players who RECEIVED a whole hand (swap/rotate): their count jump and
+  // fresh cards are the move itself, not draws from the pile
+  const gotHand = new Set(fx.filter(f => f.kind === 'handsMoved')
+    .flatMap(f => f.moves.map(m => m[1])));
   let splashes = 0;
   const stagger = () => 300 * splashes++;
   for (const f of fx){
@@ -1306,6 +1374,11 @@ function runFx(fx){
       else seatBadge(f.player, '+' + f.count + ' cards', 'penalty');
     } else if (f.kind === 'reversed'){
       bigSplash('⇄', 'REVERSED', 'blue mid spin', stagger());
+    } else if (f.kind === 'handsMoved'){
+      bigSplash('⇆', f.swap ? 'HANDS SWAPPED!' : 'HANDS ROTATE!', 'blue mid', stagger());
+    } else if (f.kind === 'jumpin'){
+      if (f.player === name) bigSplash('⚡', 'JUMPED IN!', 'blue', stagger());
+      else seatBadge(f.player, '⚡ jumped in', 'skip');
     }
   }
   for (const f of fx){
@@ -1318,16 +1391,28 @@ function runFx(fx){
       flyClone(el, f.from || rect($('draw-pile')), rect($('discard')),
                {onDone: () => { top.style.visibility = ''; }});
     } else if (f.kind === 'ownDraw'){
+      if (gotHand.has(name)) continue;
       const slot = document.querySelector('#hand .slot[data-cid="' + f.id + '"]');
       if (!slot) continue;
       slot.firstChild.style.visibility = 'hidden';
       flyClone(cardBackEl(), f.from, rect(slot),
                {delay:f.delay, onDone: () => { slot.firstChild.style.visibility = ''; }});
     } else if (f.kind === 'oppDraw'){
+      if (gotHand.has(f.player)) continue;
       const s = seatOf(f.player);
       if (!s) continue;
       for (let i = 0; i < Math.min(f.count, 4); i++)
         flyClone(cardBackEl(true), f.from, rect(s), {delay:i*90, dur:380});
+    } else if (f.kind === 'handsMoved'){
+      // little card-back convoys travel each (from -> to) leg; the own
+      // hand sits at the bottom of the screen rather than in a seat
+      const spotOf = p => p === name ? $('hand') : seatOf(p);
+      for (const [from, to] of f.moves){
+        const a = spotOf(from), b = spotOf(to);
+        if (!a || !b) continue;
+        for (let i = 0; i < 3; i++)
+          flyClone(cardBackEl(true), rect(a), rect(b), {delay:120 + i*110, dur:520});
+      }
     }
   }
 }
@@ -1342,24 +1427,56 @@ function processEvents(events){
 }
 
 /* ---------- actions ---------- */
+async function sendPlay(cardId, color, target){
+  const r = await api('/api/play?card_id=' + cardId +
+    (color ? '&color=' + color : '') +
+    (target ? '&swap_with=' + encodeURIComponent(target) : ''), {method:'POST'});
+  if (!r.ok) toast(r.error); else lastPlayedId = cardId;
+}
+// cards the server flagged as needing a swap target get a player picker
+// (after the color wheel, if the card is also a wild)
+let pendingSwap = null; // {id, color}
+function openSwapModal(cardId, color){
+  pendingSwap = {id: cardId, color};
+  const box = document.querySelector('#swap-modal .swap-list');
+  box.innerHTML = '';
+  for (const p of state.players){
+    if (p === name) continue;
+    const b = document.createElement('button');
+    const n = state.counts[p];
+    b.textContent = p + (n === undefined ? '' : ' — ' + n + ' card' + (n === 1 ? '' : 's'));
+    b.onclick = (e) => {
+      e.stopPropagation();
+      $('swap-modal').hidden = true;
+      const ps = pendingSwap; pendingSwap = null;
+      if (ps) sendPlay(ps.id, ps.color, p);
+    };
+    box.append(b);
+  }
+  $('swap-modal').hidden = false;
+}
+$('swap-modal').onclick = (e) => {
+  if (e.target === $('swap-modal')){ $('swap-modal').hidden = true; pendingSwap = null; }
+};
+
 async function playCard(card){
   if (card.value === 'Wild' || card.value === 'Wild4'){
     pendingWild = card;
     $('color-modal').hidden = false;
     return;
   }
-  const r = await api('/api/play?card_id=' + card.id, {method:'POST'});
-  if (!r.ok) toast(r.error); else lastPlayedId = card.id;
+  if (state.swapTargets.has(card.id)){ openSwapModal(card.id, null); return; }
+  sendPlay(card.id, null, null);
 }
 
 document.querySelectorAll('#color-modal .wheel button').forEach(b => {
-  b.onclick = async (e) => {
+  b.onclick = (e) => {
     e.stopPropagation();
     $('color-modal').hidden = true;
     if (!pendingWild) return;
     const id = pendingWild.id; pendingWild = null;
-    const r = await api('/api/play?card_id=' + id + '&color=' + b.dataset.color, {method:'POST'});
-    if (!r.ok) toast(r.error); else lastPlayedId = id;
+    if (state.swapTargets.has(id)){ openSwapModal(id, b.dataset.color); return; }
+    sendPlay(id, b.dataset.color, null);
   };
 });
 $('color-modal').onclick = (e) => {
@@ -1524,14 +1641,15 @@ function applyFix(w){
   checkRules();
 }
 
-// the toggles compose: any mix of stacking, draw-until and jump-in
-function setPreset(stacking, drawuntil, jumpin){
+// the toggles compose: any mix of stacking, draw-until, jump-in and 7-0
+function setPreset(stacking, drawuntil, jumpin, sevenzero){
   const ta = $('rules-text');
   if (ta.value.trim() !== lastLoaded.trim() &&
       !confirm('Replace the current rule text?')) return;
   $('toggle-stacking').classList.toggle('active', stacking);
   $('toggle-drawuntil').classList.toggle('active', drawuntil);
   $('toggle-jumpin').classList.toggle('active', jumpin);
+  $('toggle-sevenzero').classList.toggle('active', sevenzero);
   ta.value = presetText();
   lastLoaded = ta.value;
   checkRules();
@@ -1544,11 +1662,13 @@ const toggleOn = id => $(id).classList.contains('active');
 const flip = (id) => setPreset(
   toggleOn('toggle-stacking') !== (id === 'toggle-stacking'),
   toggleOn('toggle-drawuntil') !== (id === 'toggle-drawuntil'),
-  toggleOn('toggle-jumpin') !== (id === 'toggle-jumpin'));
-$('preset-standard').onclick = () => setPreset(false, false, false);
+  toggleOn('toggle-jumpin') !== (id === 'toggle-jumpin'),
+  toggleOn('toggle-sevenzero') !== (id === 'toggle-sevenzero'));
+$('preset-standard').onclick = () => setPreset(false, false, false, false);
 $('toggle-stacking').onclick = () => flip('toggle-stacking');
 $('toggle-drawuntil').onclick = () => flip('toggle-drawuntil');
 $('toggle-jumpin').onclick = () => flip('toggle-jumpin');
+$('toggle-sevenzero').onclick = () => flip('toggle-sevenzero');
 
 document.querySelectorAll('.cheat code').forEach(c => c.onclick = () => {
   const ta = $('rules-text');
@@ -1565,6 +1685,11 @@ async function loadOverrideList(){
   try {
     const r = await api('/api/preset-rules?name=' + encodeURIComponent(presetName()));
     if (!r.ok) return;
+    // the 7-0 add-on's rules are overridable too when its toggle is on
+    if (sevenZeroOn()){
+      const r2 = await api('/api/preset-rules?name=' + encodeURIComponent('seven zero'));
+      if (r2.ok) r.text += '\n\n' + r2.text;
+    }
     box.innerHTML = '';
     for (const raw of r.text.split(/\n\s*\n/)){
       const block = raw.trim();

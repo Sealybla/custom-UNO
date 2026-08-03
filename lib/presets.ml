@@ -197,6 +197,29 @@ let draw_until_jump_in_text = draw_until_text ^ jump_in
 
 let stacking_draw_until_jump_in_text = stacking_draw_until_text ^ jump_in
 
+(* Seven-zero, as an ADD-ON rather than eight more matrix variants: a
+   second `use seven zero` line after any base preset appends these two
+   rules. Priority 60 beats the generic play rule (10) and loses to the
+   specials (100+), so only plain 7s and 0s change behavior. Winning is
+   checked the moment the card is played, so going out on your last 7 or 0
+   wins before any hands move - real seven-zero works the same way. In the
+   stacking variants a 7/0 that could open a stack swaps/rotates instead
+   (60 beats the stack-open rule's 10); continuing an open stack (120)
+   still wins over both. The 7 swaps with a player of the actor's choice
+   (the UI asks); "swap hands with next player" is the no-questions
+   variant for anyone who prefers it. *)
+let seven_zero_text =
+  {|
+rule "sevens swap hands" priority 60:
+  when card is 7 and (card matches color or card matches value) and your turn
+  do play the card, set color from card, swap hands with chosen player, advance turn
+
+rule "zeros rotate hands" priority 60:
+  when card is 0 and (card matches color or card matches value) and your turn
+  do play the card, set color from card, rotate hands, advance turn
+|}
+;;
+
 let all =
   [ "standard", standard_text
   ; "stacking", stacking_text
@@ -207,6 +230,7 @@ let all =
   ; "draw until playable with jump in", draw_until_jump_in_text
   ; "stacking with draw until playable with jump in",
     stacking_draw_until_jump_in_text
+  ; "seven zero", seven_zero_text
   ]
 ;;
 

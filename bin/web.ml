@@ -139,25 +139,27 @@ let event_json (event : Action.Server_to_client.t) =
       (jstr current_player_name)
       pending_draws
       stacking_enabled
-  | Hand_updated { your_hand; playable_ids } ->
+  | Hand_updated { your_hand; playable_ids; swap_target_ids } ->
     sprintf
-      {|{"type":"hand","hand":%s,"playable":%s}|}
+      {|{"type":"hand","hand":%s,"playable":%s,"swap_targets":%s}|}
       (jlist (List.map your_hand ~f:card_json))
       (jlist (List.map playable_ids ~f:Int.to_string))
+      (jlist (List.map swap_target_ids ~f:Int.to_string))
   | Pile_updated { top_card; current_color; pending_draws } ->
     sprintf
       {|{"type":"pile","top_card":%s,"current_color":%s,"pending":%d}|}
       (card_json top_card)
       (jstr (color_name current_color))
       pending_draws
-  | Turn_changed { current_player_name; can_pass; stack_value } ->
+  | Turn_changed { current_player_name; can_pass; stack_value; uno_race } ->
     sprintf
-      {|{"type":"turn","player":%s,"can_pass":%b,"stack_value":%s}|}
+      {|{"type":"turn","player":%s,"can_pass":%b,"stack_value":%s,"uno_race":%b}|}
       (jstr current_player_name)
       can_pass
       (match stack_value with
        | Some v -> jstr (Sexp.to_string ([%sexp_of: Card.Value.t] v))
        | None -> "null")
+      uno_race
   | Hand_counts { counts } ->
     sprintf
       {|{"type":"hand_counts","counts":%s}|}
@@ -198,6 +200,14 @@ let event_json (event : Action.Server_to_client.t) =
     sprintf
       {|{"type":"direction","clockwise":%b}|}
       (match direction with Clockwise -> true | Counter -> false)
+  | Hands_moved { moves } ->
+    sprintf
+      {|{"type":"hands_moved","moves":%s}|}
+      (jlist
+         (List.map moves ~f:(fun (from, to_) ->
+            sprintf "[%s,%s]" (jstr from) (jstr to_))))
+  | Jumped_in { player_name } ->
+    sprintf {|{"type":"jumped_in","player":%s}|} (jstr player_name)
 ;;
 
 (* names are only unique within a room, so sessions key on both *)
@@ -491,13 +501,15 @@ let handle t ~body req =
         let declared_color =
           Option.bind (Uri.get_query_param uri "color") ~f:color_of_string
         in
+        let swap_with = Uri.get_query_param uri "swap_with" in
         respond_result
           (take_action
              t
              ~code
              ~name
              ~action:
-               (Action.Client_to_server.Play { card_id; declared_color })))
+               (Action.Client_to_server.Play
+                  { card_id; declared_color; swap_with })))
   | "/api/rules" ->
     with_ident (fun ~code ~name ->
       let%bind text = Cohttp_async.Body.to_string body in

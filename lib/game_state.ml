@@ -45,6 +45,18 @@ module Effect = struct
     | PenalizeUnoCaller of int
     (* the caller caught somebody sitting on one card *)
     | PenalizeUnoTarget of int
+    (* the actor trades entire hands with the next player in play
+       direction (seven-zero's 7). Runs after PlayTriggeringCard, so the
+       played card is already gone from the hand being traded away. *)
+    | SwapHandsWithNext
+    (* like SwapHandsWithNext but with the player the actor named when
+       playing the card (the authentic seven-zero 7); rejects the play
+       with [swap_target_needed] when no target was declared *)
+    | SwapHandsWithChosen
+    (* every hand moves one seat in the play direction (seven-zero's 0) *)
+    | RotateHands
+    (* every player except the actor draws (chaos house rules) *)
+    | AllOthersDraw of int
   [@@deriving sexp, compare, equal, bin_io]
 end
 
@@ -204,6 +216,28 @@ let hand_size t player_id =
 let draw_n t player_id n =
   List.fold_result (List.init n ~f:Fn.id) ~init:t ~f:(fun s _ ->
     draw_card_player s player_id)
+;;
+
+let swap_target_needed = "Choose a player to swap hands with"
+
+(* trade two players' entire hands. No catch-window bookkeeping here:
+   update_uno_window recomputes it from the actor's final hand after every
+   action, so swapping into a one-card hand correctly leaves the actor
+   catchable. *)
+let swap_hands t ~a ~b =
+  let hand_of id = Player.get_hand (List.nth_exn t.players id) in
+  let a_hand = hand_of a
+  and b_hand = hand_of b in
+  let players =
+    List.map t.players ~f:(fun p ->
+      let id = Player.get_id p in
+      if id = a
+      then Player.with_hand p b_hand
+      else if id = b
+      then Player.with_hand p a_hand
+      else p)
+  in
+  { t with players }
 ;;
 
 (* Builds the initial game state: creates and shuffles a full deck, makes one
@@ -373,6 +407,48 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
        (* the catch is spent whether or not it stung *)
        let%map t = draw_n t victim n in
        { t with uno_vulnerable = None })
+  | SwapHandsWithNext ->
+    let%map player = player_of_event event in
+    let actor = Player.get_id player in
+    let n = List.length t.players in
+    let dir = if Direction.equal t.direction Clockwise then 1 else -1 in
+    let target = (actor + dir + n) % n in
+    if Option.is_some t.winner || target = actor
+    then t (* going out on the card wins outright - no swap after a win *)
+    else swap_hands t ~a:actor ~b:target
+  | SwapHandsWithChosen ->
+    let%bind player = player_of_event event in
+    if Option.is_some t.winner
+    then Ok t (* checked before demanding a target: a winning play needs none *)
+    else (
+      match event with
+      | Event.CardPlayed { swap_with = Some target; _ } ->
+        Ok (swap_hands t ~a:(Player.get_id player) ~b:(Player.get_id target))
+      | Event.CardPlayed { swap_with = None; _ } ->
+        Or_error.error_string swap_target_needed
+      | _ ->
+        Or_error.error_string
+          "'swap hands with chosen player' only makes sense on a card play")
+  | RotateHands ->
+    if Option.is_some t.winner
+    then Ok t (* going out on the card wins outright - hands stay put *)
+    else (
+      let n = List.length t.players in
+      let dir = if Direction.equal t.direction Clockwise then 1 else -1 in
+      let hands = List.map t.players ~f:Player.get_hand in
+      let players =
+        (* your hand goes to the seat ahead of you, so the hand you receive
+           comes from the seat behind you (in play direction) *)
+        List.mapi t.players ~f:(fun i p ->
+          Player.with_hand p (List.nth_exn hands ((i - dir + n) % n)))
+      in
+      Ok { t with players })
+  | AllOthersDraw count ->
+    let%bind player = player_of_event event in
+    let actor = Player.get_id player in
+    List.fold_result t.players ~init:t ~f:(fun acc p ->
+      let id = Player.get_id p in
+      if id = actor then Ok acc else draw_n acc id count)
   | JumpToActor ->
     let%map player = player_of_event event in
     (* the interrupted player may have been mid-decision on a drawn card;
@@ -423,4 +499,33 @@ let update_uno_window t ~(actor_id : int) ~(event : Event.t) : t =
       if Int.equal (hand_size t actor_id) 1 then Some actor_id else None
     in
     { t with uno_vulnerable = vulnerable })
+;;
+
+(* see the .mli. [played] is removed from every before-hand rather than just
+   the actor's: card ids are unique, so it is a no-op everywhere else. *)
+let hand_moves ~(before : t) ~(after : t) ~(played : int option)
+  : (int * int) list
+  =
+  let hand_set p = Int.Set.of_list (Player.get_hand p) in
+  let befores =
+    List.map before.players ~f:(fun p ->
+      let s = hand_set p in
+      match played with
+      | Some c -> Set.remove s c
+      | None -> s)
+  in
+  List.filter_mapi after.players ~f:(fun i receiver ->
+    let after_hand = hand_set receiver in
+    match List.nth befores i with
+    | None -> None
+    | Some own_before ->
+      if Set.is_empty after_hand || Set.equal after_hand own_before
+      then None
+      else
+        List.find_mapi befores ~f:(fun j before_j ->
+          if j = i || Set.is_empty before_j
+          then None
+          else if Set.equal after_hand before_j
+          then Some (j, i)
+          else None))
 ;;
