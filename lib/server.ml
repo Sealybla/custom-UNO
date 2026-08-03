@@ -51,6 +51,12 @@ type t =
 let request_queue_size_budget = 1024
 
 (* room-wide broadcast *)
+(* official UNO's table size, and kind to the deck: 108 cards minus 10
+   seven-card hands and the flipped top still leaves a 37-card draw pile.
+   Past ~15 players the deal itself runs out of cards and game creation
+   fails, so the lobby refuses long before that. *)
+let max_players = 10
+
 let broadcast (room : Room.t) event =
   Hashtbl.iter room.clients ~f:(fun client ->
     if not (Pipe.is_closed client.writer)
@@ -699,6 +705,12 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                         "Cannot join: a game is in progress in this room")
                  else if String.is_empty (String.strip name)
                  then return (Or_error.error_string "Invalid name")
+                 else if Hashtbl.length room.clients >= max_players
+                 then
+                   return
+                     (Or_error.errorf
+                        "Room is full (%d players max)"
+                        max_players)
                  else (
                    match state.Connection_state.player_name with
                    | Some _ ->
