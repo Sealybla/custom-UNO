@@ -23,6 +23,7 @@ module Effect : sig
     | SetStackingValue 
     | ClearStackingValue
     | AdvanceTurn
+    | JumpToActor
     | CheckWinner
     | MarkUnoCalled
     | PenalizeUnoCaller of int

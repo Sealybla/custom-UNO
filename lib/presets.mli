@@ -10,6 +10,12 @@ val stacking_text : string
 val draw_until_text : string
 val stacking_draw_until_text : string
 
+(* the four above, again with the out-of-turn jump-in rule appended *)
+val jump_in_text : string
+val stacking_jump_in_text : string
+val draw_until_jump_in_text : string
+val stacking_draw_until_jump_in_text : string
+
 (* (name, text) for every preset, in menu order *)
 val all : (string * string) list
 

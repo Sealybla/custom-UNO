@@ -11,6 +11,10 @@ module Condition = struct
     | Always
     | MatchesTopColor
     | MatchesTopValue
+    (* same printed colour AND number as the top card. Wilds never match:
+       they have no printed colour, and letting one through would set the
+       active colour to NoColor, which makes every card playable. *)
+    | MatchesTopExactly
     | IsWildCard
     | PendingDrawsGreaterThan of int
     | IsPlayerTurn

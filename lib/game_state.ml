@@ -33,6 +33,11 @@ module Effect = struct
     | SetStackingValue
     | ClearStackingValue
     | AdvanceTurn
+    (* hand the turn to whoever acted, wherever they were sitting. Combined
+       with a rule that omits "your turn" this is how playing out of turn
+       works: everyone between the seat whose turn it was and the player who
+       jumped loses their go. *)
+    | JumpToActor
     | CheckWinner
     (* the caller is safe: shuts their own catch window *)
     | MarkUnoCalled
@@ -368,6 +373,11 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
        (* the catch is spent whether or not it stung *)
        let%map t = draw_n t victim n in
        { t with uno_vulnerable = None })
+  | JumpToActor ->
+    let%map player = player_of_event event in
+    (* the interrupted player may have been mid-decision on a drawn card;
+       jumping in cancels that offer *)
+    { t with turn = Player.get_id player; drew_playable = false }
   | AdvanceTurn -> Ok (advance_turn t)
   | CheckWinner ->
     let%map player = player_of_event event in

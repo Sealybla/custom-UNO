@@ -10,6 +10,12 @@ module Ruleset : sig
   (* stacking play rules with draw-until drawing *)
   val stacking_draw_until_variant : t
 
+  (* the four above, again with out-of-turn jump-in allowed *)
+  val jump_in_variant : t
+  val stacking_jump_in_variant : t
+  val draw_until_jump_in_variant : t
+  val stacking_draw_until_jump_in_variant : t
+
   (* true if any rule in the set can open a same-value stack *)
   val uses_stacking : t -> bool
 end
@@ -54,3 +60,13 @@ val apply_action
 (* true when a pass is the current player's only legal move (no card play
    and no draw would be accepted) - the server then passes for them *)
 val only_pass_available : Ruleset.t -> Game_state.t -> bool
+
+(* the ids in this player's hand that some rule would accept right now,
+   found by simulating each play. Includes out-of-turn plays when the
+   ruleset allows them, so the UI can highlight jump-ins without knowing
+   what condition the player wrote. *)
+val playable_card_ids
+  :  Ruleset.t
+  -> Game_state.t
+  -> player_id:int
+  -> int list

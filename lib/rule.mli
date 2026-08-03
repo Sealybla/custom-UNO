@@ -11,6 +11,7 @@ module Condition : sig
     | Always
     | MatchesTopColor
     | MatchesTopValue
+    | MatchesTopExactly
     | IsWildCard
     | PendingDrawsGreaterThan of int
     | IsPlayerTurn

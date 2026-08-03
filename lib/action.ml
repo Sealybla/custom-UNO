@@ -24,7 +24,13 @@ module Server_to_client = struct
                         current_player_name : String.t;
                         pending_draws : Int.t;
                         stacking_enabled : Bool.t }
-    | Hand_updated of { your_hand : Card.t List.t }
+    (* [playable_ids] is what the engine would accept from this player right
+       now, including out-of-turn jump-ins; the UI highlights exactly these
+       rather than second-guessing the ruleset *)
+    | Hand_updated of
+        { your_hand : Card.t List.t
+        ; playable_ids : Int.t List.t
+        }
     | Pile_updated of
         { top_card : Card.t
         ; current_color : Card.Color.t

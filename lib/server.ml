@@ -87,11 +87,20 @@ let send_hands (room : Room.t) state =
     | None -> ()
     | Some client ->
       let hand = hand_of_player state player in
+      (* asked per player, because with jump-in enabled someone who is not
+         the current player may still have a legal move *)
+      let playable_ids =
+        Rule_engine.playable_card_ids
+          room.ruleset
+          state
+          ~player_id:(Player.get_id player)
+      in
       if not (Pipe.is_closed client.writer)
       then
         Pipe.write_without_pushback
           client.writer
-          (Action.Server_to_client.Hand_updated { your_hand = hand }))
+          (Action.Server_to_client.Hand_updated
+             { your_hand = hand; playable_ids }))
 ;;
 
 (* current player + whether a pass is legal + any open stack's value; sent
@@ -128,6 +137,9 @@ let broadcast_game_started (room : Room.t) state =
              ; pending_draws = state.Game_state.pending_draws
              ; stacking_enabled
              }));
+  (* Game_started carries the hand but not what is playable; send that too so
+     the opening player sees highlights before anyone has acted *)
+  send_hands room state;
   broadcast room (hand_counts_event state);
   broadcast room (turn_changed_event room state)
 ;;
@@ -331,6 +343,26 @@ let maybe_bot_calls_uno (room : Room.t) (next_state : Game_state.t) =
         | _ -> ()))
 ;;
 
+(* A jump-in is an accepted play from someone who was not the current player.
+   The turn leapt to them, so everyone from the seat whose turn it was up to
+   (not including) the jumper lost their go. The regular skip diffing below
+   cannot see this: it measures turns_advanced, and JumpToActor moves the
+   turn without advancing it. *)
+let broadcast_jump_in (room : Room.t) ~(before : Game_state.t) ~actor_id =
+  let num_players = List.length before.players in
+  let dir = if Direction.equal before.direction Clockwise then 1 else -1 in
+  let rec seats_passed idx acc =
+    if Int.equal idx actor_id || List.length acc >= num_players
+    then List.rev acc
+    else seats_passed ((idx + dir + num_players) % num_players) (idx :: acc)
+  in
+  List.iter (seats_passed before.turn []) ~f:(fun idx ->
+    match name_of_player_id before idx with
+    | Some player_name ->
+      broadcast room (Action.Server_to_client.Player_skipped { player_name })
+    | None -> ())
+;;
+
 (* An UNO press never moves the turn and never triggers an ordinary draw, so
    it reports itself rather than going through the skip/forced-draw diffing
    below. Whoever gained cards paid a penalty; if nobody did, the call stood.
@@ -506,6 +538,15 @@ let start_engine_loop t (room : Room.t) request_reader =
                       ~after:next_state
                       ~caller_name:player_name
                   | _ ->
+                    (* an accepted move from someone who was not the current
+                       player means they jumped in *)
+                    if not
+                         (Int.equal current_state.Game_state.turn player_id)
+                    then
+                      broadcast_jump_in
+                        room
+                        ~before:current_state
+                        ~actor_id:player_id;
                     broadcast_notifications
                       room
                       ~before:current_state
@@ -687,6 +728,17 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                              ; pending_draws = game.Game_state.pending_draws
                              ; stacking_enabled =
                                  Rule_engine.Ruleset.uses_stacking room.ruleset
+                             }
+                           (* Game_started has no playable ids, so a client
+                              rebuilding from this snapshot would think
+                              nothing was playable until the next action *)
+                         ; Action.Server_to_client.Hand_updated
+                             { your_hand = hand_of_player game player
+                             ; playable_ids =
+                                 Rule_engine.playable_card_ids
+                                   room.ruleset
+                                   game
+                                   ~player_id:(Player.get_id player)
                              }
                          ; hand_counts_event game
                          ; turn_changed_event room game

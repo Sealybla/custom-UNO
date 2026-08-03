@@ -88,8 +88,11 @@ let event_json (event : Action.Server_to_client.t) =
       (jstr current_player_name)
       pending_draws
       stacking_enabled
-  | Hand_updated { your_hand } ->
-    sprintf {|{"type":"hand","hand":%s}|} (jlist (List.map your_hand ~f:card_json))
+  | Hand_updated { your_hand; playable_ids } ->
+    sprintf
+      {|{"type":"hand","hand":%s,"playable":%s}|}
+      (jlist (List.map your_hand ~f:card_json))
+      (jlist (List.map playable_ids ~f:Int.to_string))
   | Pile_updated { top_card; current_color; pending_draws } ->
     sprintf
       {|{"type":"pile","top_card":%s,"current_color":%s,"pending":%d}|}

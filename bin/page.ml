@@ -101,6 +101,9 @@ let html =
   #rules-status.err { background:rgba(224,51,44,.25); }
   #rules-status.ok { background:rgba(24,168,80,.25); }
   #rules-status:empty { display:none; }
+  /* the editor has drifted from what the server was actually sent */
+  #rules-btn.needs-apply { background:var(--c-yellow); color:var(--ink);
+    animation:pulse 1.2s ease-in-out infinite; }
   ul#lobby-players { list-style:none; padding:0; margin:.2rem 0 1rem; display:flex;
     flex-wrap:wrap; gap:.5rem; }
   ul#lobby-players li { background:rgba(255,255,255,.14); border-radius:999px;
@@ -408,6 +411,7 @@ let html =
         <span style="opacity:.8">+ toggles:</span>
         <button class="preset toggle" id="toggle-stacking">Stacking</button>
         <button class="preset toggle" id="toggle-drawuntil">Draw until playable</button>
+        <button class="preset toggle" id="toggle-jumpin" title="play out of turn on an exact match">Jump in</button>
       </div>
       <div id="check-status"></div>
       <textarea id="rules-text" rows="12" spellcheck="false"></textarea>
@@ -482,6 +486,7 @@ let html =
             <code>stack is open</code>
             <code>drew playable card</code>
             <code>pending draws > 0</code>
+            <code>card matches exactly</code>
             <code>your turn</code>
             <code>always</code>
           </div>
@@ -501,6 +506,7 @@ let html =
             <code>skip next player</code>
             <code>open stack</code>
             <code>close stack</code>
+            <code>jump in</code>
             <code>advance turn</code>
           </div>
         </div>
@@ -573,16 +579,27 @@ const PRESET_DESC = {
   'stacking with draw until playable':
     'Stacking + draw-until: chain same-value cards; when stuck, keep drawing until you can play.',
 };
-function presetName(){
+const JUMP_IN_DESC =
+  'Jump in: when your card is an exact match of the top card you may play it ' +
+  'out of turn, skipping everyone between you and the last player.';
+// jump-in composes onto any of the four bases, giving the eight preset names
+// in lib/presets.ml
+function baseName(){
   const s = $('toggle-stacking').classList.contains('active');
   const d = $('toggle-drawuntil').classList.contains('active');
   return s && d ? 'stacking with draw until playable'
        : s ? 'stacking' : d ? 'draw until playable' : 'standard';
 }
+function jumpInOn(){ return $('toggle-jumpin').classList.contains('active'); }
+function presetName(){
+  const base = baseName();
+  if (!jumpInOn()) return base;
+  return base === 'standard' ? 'jump in' : base + ' with jump in';
+}
 function presetText(){
-  const name = presetName();
-  return '# ' + PRESET_DESC[name] + '\n' +
-    'use ' + name + '\n\n' +
+  const desc = PRESET_DESC[baseName()] + (jumpInOn() ? '\n# ' + JUMP_IN_DESC : '');
+  return '# ' + desc + '\n' +
+    'use ' + presetName() + '\n\n' +
     '# Add house rules below - they combine with the preset above.\n' +
     '# Redefining a rule with the same name replaces the preset version.\n';
 }
@@ -602,6 +619,7 @@ const WHEN_OPTIONS = [
   ['stack is open', 'a stack is open'],
   ['drew playable card', 'the drawn card is playable'],
   ['pending draws > N', 'penalty draws are pending'],
+  ['card matches exactly', 'same color AND number as the top card'],
   ['player calls uno', 'the UNO button was pressed'],
   ['has uno', 'the presser is down to one card'],
   ['someone has uno', 'someone else is catchable'],
@@ -623,6 +641,7 @@ const EFF_OPTIONS = [
   ['skip next player', 'skip the next player'],
   ['open stack', 'open a stack: stay on turn, chain that value'],
   ['close stack', 'close the stack (Done does this)'],
+  ['jump in', 'take the turn, skipping everyone in between'],
   ['mark uno called', 'the presser is safe'],
   ['penalize caller N cards', 'fine the presser'],
   ['penalize uncalled player N cards', 'fine the player who got caught'],
@@ -632,7 +651,9 @@ let name = null;
 let code = null;
 const freshState = () => ({ players:[], hand:[], top:null, color:null, current:null,
               counts:{}, inGame:false, pileStack:[], pending:0,
-              canPass:false, stackValue:null, stacking:false });
+              canPass:false, stackValue:null, stacking:false,
+              // card ids the server says are legal for us right now
+              playable:new Set() });
 let state = freshState();
 let pendingWild = null;
 let lastPlayedId = null;
@@ -765,6 +786,8 @@ function apply(ev, fx){
       state.current = ev.current_player; state.counts = {};
       state.pileStack = [ev.top_card]; state.pending = ev.pending || 0;
       state.stacking = !!ev.stacking; state.canPass = false; state.stackValue = null;
+      // a 'hand' event follows immediately with the real set
+      state.playable = new Set();
       dirty.seats = dirty.pile = dirty.hand = dirty.turn = true;
       $('log').innerHTML = ''; $('win-overlay').hidden = true;
       setView('game'); layoutSeats();
@@ -777,7 +800,11 @@ function apply(ev, fx){
           fresh.forEach((c, i) => fx.push({kind:'ownDraw', id:c.id, delay:i*90,
                                            from:rect($('draw-pile'))}));
       }
-      state.hand = orderedHand(ev.hand); dirty.hand = true;
+      state.hand = orderedHand(ev.hand);
+      state.playable = new Set(ev.playable || []);
+      // turn too: highlights change without the turn changing when a
+      // jump-in becomes available on somebody else's go
+      dirty.hand = dirty.turn = true;
       break;
     }
     case 'pile': {
@@ -864,21 +891,11 @@ function apply(ev, fx){
 const NUMBER_VALUES = new Set(['Zero','One','Two','Three','Four','Five',
                                'Six','Seven','Eight','Nine']);
 
-// mirrors Game_rules.matches_color: no colour in force (the game opened on a
-// flipped wild) means every card satisfies the colour test
-const matchesColor = (card) =>
-  state.color === 'NoColor' || card.color === state.color;
-
-function isPlayable(card){
-  if (state.stackValue) return card.value === state.stackValue;
-  if (state.pending > 0)
-    // only stacking another +2/+4 dodges a pending penalty
-    return card.value === 'Wild4' ||
-           (card.value === 'Plus' &&
-            (matchesColor(card) || (state.top && state.top.value === 'Plus')));
-  if (card.value === 'Wild' || card.value === 'Wild4') return true;
-  return matchesColor(card) || (state.top && card.value === state.top.value);
-}
+// Legality comes from the server (Rule_engine.playable_card_ids), which
+// simulates each play against the live ruleset. The browser deliberately
+// does not reimplement it: house rules can say anything, and an out-of-turn
+// jump-in is playable while it is somebody else's turn.
+const isPlayable = (card) => state.playable.has(card.id);
 
 // lift + glow every playable card; gold-pulse the ones that can be chained
 // as a same-value stack (only meaningful when the ruleset can open stacks)
@@ -888,7 +905,7 @@ function updateHighlights(){
   for (const c of state.hand) copies[c.value] = (copies[c.value] || 0) + 1;
   for (const slot of $('hand').children){
     const card = state.hand.find(c => String(c.id) === slot.dataset.cid);
-    const playable = !!(myTurn && card && isPlayable(card));
+    const playable = !!(card && isPlayable(card));
     const stackable = playable && state.stacking && NUMBER_VALUES.has(card.value) &&
       (state.stackValue ? true : copies[card.value] > 1);
     slot.classList.toggle('playable', playable);
@@ -1251,6 +1268,13 @@ $('uno-btn').onclick = async () => {
   const r = await api('/api/uno', {method:'POST'}); if (!r.ok) toast(r.error);
 };
 $('start-btn').onclick = async () => {
+  // last line of defence against playing a ruleset nobody sent
+  const unsent = appliedText !== null &&
+                 $('rules-text').value.trim() !== appliedText.trim();
+  if (unsent && confirm('The house rules in the editor have not been ' +
+                        'submitted.\nSubmit them before starting?')){
+    if (!await applyRules()) return;   // parse error: stay in the lobby
+  }
   const r = await api('/api/start', {method:'POST'}); if (!r.ok) toast(r.error);
 };
 $('win-back').onclick = () => { $('win-overlay').hidden = true; setView('lobby'); };
@@ -1277,12 +1301,36 @@ $('leave-lobby').onclick = leaveParty;
 $('leave-game').onclick = () => {
   if (confirm('Leave the game? A bot will take over your hand.')) leaveParty();
 };
-$('rules-btn').onclick = async () => {
-  const r = await api('/api/rules', {method:'POST', body: $('rules-text').value});
+// what the SERVER is actually playing; the textarea is only a draft until
+// this is sent. Toggling a preset used to change the text and nothing else,
+// which looked exactly like a broken rule.
+let appliedText = null;
+
+async function applyRules(){
+  if (!code || !name) return false;   // not in a room yet: nothing to send to
+  const text = $('rules-text').value;
+  const r = await api('/api/rules', {method:'POST', body: text});
   const s = $('rules-status');
-  if (r.ok){ s.textContent = 'Rules accepted'; s.className = 'ok'; }
-  else { s.textContent = r.error; s.className = 'err'; }
-};
+  if (r.ok){
+    appliedText = text;
+    s.textContent = 'Rules applied - this is what the game will use';
+    s.className = 'ok';
+  } else {
+    s.textContent = r.error; s.className = 'err';
+  }
+  markRulesDirty();
+  return r.ok;
+}
+
+// nag whenever the box has drifted from what was actually sent
+function markRulesDirty(){
+  const dirtyRules =
+    appliedText !== null && $('rules-text').value.trim() !== appliedText.trim();
+  $('rules-btn').classList.toggle('needs-apply', dirtyRules);
+  $('rules-btn').textContent = dirtyRules ? 'Submit rules *' : 'Submit rules';
+}
+
+$('rules-btn').onclick = applyRules;
 
 /* ---------- rules editor helpers ---------- */
 let lastLoaded = '';
@@ -1316,7 +1364,7 @@ async function checkRules(){
   } catch (e){ st.textContent = ''; }
 }
 function scheduleCheck(){ clearTimeout(checkT); checkT = setTimeout(checkRules, 600); }
-$('rules-text').addEventListener('input', scheduleCheck);
+$('rules-text').addEventListener('input', () => { markRulesDirty(); scheduleCheck(); });
 
 /* one-click warning fix: splice the missing effect into the named rule's
    "do" line. 'play the card' goes first (like every built-in), 'advance
@@ -1341,24 +1389,31 @@ function applyFix(w){
   checkRules();
 }
 
-// the toggles compose: stacking and draw-until can be on together
-function setPreset(stacking, drawuntil){
+// the toggles compose: any mix of stacking, draw-until and jump-in
+function setPreset(stacking, drawuntil, jumpin){
   const ta = $('rules-text');
   if (ta.value.trim() !== lastLoaded.trim() &&
       !confirm('Replace the current rule text?')) return;
   $('toggle-stacking').classList.toggle('active', stacking);
   $('toggle-drawuntil').classList.toggle('active', drawuntil);
+  $('toggle-jumpin').classList.toggle('active', jumpin);
   ta.value = presetText();
   lastLoaded = ta.value;
   checkRules();
   loadOverrideList();
+  // clicking a toggle IS the decision - send it, or the lobby would show a
+  // preset the server never received
+  applyRules();
 }
 const toggleOn = id => $(id).classList.contains('active');
-$('preset-standard').onclick = () => setPreset(false, false);
-$('toggle-stacking').onclick = () =>
-  setPreset(!toggleOn('toggle-stacking'), toggleOn('toggle-drawuntil'));
-$('toggle-drawuntil').onclick = () =>
-  setPreset(toggleOn('toggle-stacking'), !toggleOn('toggle-drawuntil'));
+const flip = (id) => setPreset(
+  toggleOn('toggle-stacking') !== (id === 'toggle-stacking'),
+  toggleOn('toggle-drawuntil') !== (id === 'toggle-drawuntil'),
+  toggleOn('toggle-jumpin') !== (id === 'toggle-jumpin'));
+$('preset-standard').onclick = () => setPreset(false, false, false);
+$('toggle-stacking').onclick = () => flip('toggle-stacking');
+$('toggle-drawuntil').onclick = () => flip('toggle-drawuntil');
+$('toggle-jumpin').onclick = () => flip('toggle-jumpin');
 
 document.querySelectorAll('.cheat code').forEach(c => c.onclick = () => {
   const ta = $('rules-text');

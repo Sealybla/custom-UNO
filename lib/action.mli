@@ -22,7 +22,10 @@ module Server_to_client : sig
                         current_player_name : String.t;
                         pending_draws : Int.t;
                         stacking_enabled : Bool.t }
-    | Hand_updated of { your_hand : Card.t List.t }
+    | Hand_updated of
+        { your_hand : Card.t List.t
+        ; playable_ids : Int.t List.t
+        }
     | Pile_updated of
         { top_card : Card.t
         ; current_color : Card.Color.t

@@ -150,6 +150,19 @@ rule "false uno call" priority 180:
 |}
 ;;
 
+(* Jump-in: the only play rule with no "your turn", which is what lets it
+   fire out of turn. "jump in" moves the turn to whoever played, so the
+   "advance turn" after it carries on from them and everyone in between
+   loses their go. Swap the condition for any other test - "card is plus
+   two", "card matches value" - to change what may be jumped on. *)
+let jump_in =
+  {|
+rule "jump in" priority 130:
+  when card matches exactly and not your turn and not stack is open
+  do jump in, play the card, set color from card, advance turn
+|}
+;;
+
 let standard_text =
   base_specials
   ^ immediate_draws
@@ -176,11 +189,24 @@ let stacking_draw_until_text =
   stacking_specials ^ deferred_draws ^ stack_rules ^ draw_until_stack ^ uno_rules
 ;;
 
+(* each variant again with jumping in allowed; appended in the same order as
+   the hand-coded Rule_engine variants so the round-trip tests line up *)
+let jump_in_text = standard_text ^ jump_in
+let stacking_jump_in_text = stacking_text ^ jump_in
+let draw_until_jump_in_text = draw_until_text ^ jump_in
+
+let stacking_draw_until_jump_in_text = stacking_draw_until_text ^ jump_in
+
 let all =
   [ "standard", standard_text
   ; "stacking", stacking_text
   ; "draw until playable", draw_until_text
   ; "stacking with draw until playable", stacking_draw_until_text
+  ; "jump in", jump_in_text
+  ; "stacking with jump in", stacking_jump_in_text
+  ; "draw until playable with jump in", draw_until_jump_in_text
+  ; "stacking with draw until playable with jump in",
+    stacking_draw_until_jump_in_text
   ]
 ;;
 

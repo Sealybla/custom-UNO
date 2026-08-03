@@ -109,6 +109,8 @@ let parse_atom (toks : tokens) : (Rule.Condition.t * tokens) Or_error.t =
     Ok (MatchesTopColor, rest)
   | (Word "card", _) :: (Word "matches", _) :: (Word "value", _) :: rest ->
     Ok (MatchesTopValue, rest)
+  | (Word "card", _) :: (Word "matches", _) :: (Word "exactly", _) :: rest ->
+    Ok (MatchesTopExactly, rest)
   | (Word "card", _) :: (Word "is", _) :: (Word "wild", _) :: rest ->
     Ok (IsWildCard, rest)
   | (Word "card", _) :: (Word "is", _) :: (Word "skip", _) :: rest ->
@@ -216,6 +218,7 @@ let parse_effect (toks : tokens) : (Game_state.Effect.t list * tokens) Or_error.
   | (Word ("close" | "clear"), _) :: (Word "stack", _) :: rest ->
     Ok ([ ClearStackingValue ], rest)
   | (Word "advance", _) :: (Word "turn", _) :: rest -> Ok ([ AdvanceTurn ], rest)
+  | (Word "jump", _) :: (Word "in", _) :: rest -> Ok ([ JumpToActor ], rest)
   | (Word "skip", _) :: (Word "next", _) :: (Word "player", _) :: rest ->
     Ok ([ AdvanceTurn; AdvanceTurn ], rest)
   | (Word "mark", _) :: (Word "uno", _) :: (Word "called", _) :: rest ->

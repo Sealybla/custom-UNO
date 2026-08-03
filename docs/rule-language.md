@@ -54,6 +54,7 @@ never duplicates anything. Ids are assigned after this merge.
 | `your turn` | `IsPlayerTurn` |
 | `card matches color` | `MatchesTopColor` |
 | `card matches value` | `MatchesTopValue` |
+| `card matches exactly` | `MatchesTopExactly` (same printed colour *and* number; wilds never match) |
 | `card is wild` | `IsWildCard` |
 | `card is skip` | `IsSkip` |
 | `card is reverse` | `IsReverse` |
@@ -91,6 +92,7 @@ Parentheses override.
 | `open stack` | `SetStackingValue` |
 | `close stack` (or `clear stack`) | `ClearStackingValue` |
 | `advance turn` | `AdvanceTurn` |
+| `jump in` | `JumpToActor` (the turn moves to whoever played) |
 | `skip next player` | sugar for `AdvanceTurn; AdvanceTurn` |
 | `mark uno called` | `MarkUnoCalled` (shuts the presser's own catch window) |
 | `penalize caller N cards` | `PenalizeUnoCaller N` |
@@ -104,6 +106,48 @@ text can't name.
 **Implicit `CheckWinner`:** the parser appends `Mutate CheckWinner`
 immediately after every `play the card`. Forgetting it would mean wins
 silently never register — too sharp a footgun to leave to users.
+
+## Playing out of turn (jump-in)
+
+Nothing in the engine checks whose turn it is — that gate is the `your turn`
+condition, which every ordinary play rule happens to carry. **Leave it out and
+the rule fires whenever its other conditions hold, no matter whose turn it
+is.** That is all "jumping in" is:
+
+```
+rule "jump in" priority 130:
+  when card matches exactly and not your turn and not stack is open
+  do jump in, play the card, set color from card, advance turn
+```
+
+`jump in` moves the turn to whoever played, and the `advance turn` after it
+carries on from there — so everyone sitting between the player whose turn it
+was and the one who jumped loses their go. With seats `A B C D`, the turn on
+`B`, and `D` jumping in, `B` and `C` are skipped and play resumes at `A`.
+
+**The condition is yours to pick.** `card matches exactly` (same colour *and*
+number as the top card) is only the default that ships with the `jump in`
+preset. Anything the language can express works:
+
+```
+when card is plus two and not your turn              # jump in with any +2
+when card matches value and not your turn            # looser: number only
+when card matches exactly and not your turn and pending draws > 0
+```
+
+Notes:
+
+- **Wilds never match `card matches exactly`.** They have no printed colour,
+  so a wild-on-wild jump would set the active colour to `NoColor`, which makes
+  every card playable. If you want wild jumps, write `when card is wild and
+  not your turn` and pair it with `set color to declared`.
+- **Keep `not stack is open`** in stacking rulesets, or a jump-in can barge
+  into someone's open stack and strand it.
+- The jumped-in card's own effect does *not* fire — a jumped Skip does not
+  additionally skip. Add a higher-priority rule if you want that.
+- The UI highlights whatever the engine would accept (it asks the server
+  rather than guessing), so a custom jump condition lights up correctly
+  without any client change.
 
 ## The UNO button
 

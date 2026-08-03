@@ -306,6 +306,29 @@ module Ruleset = struct
     ]
   ;;
 
+  (* Jump-in: play out of turn on an exact match of the top card. This is the
+     one play rule that deliberately omits IsPlayerTurn - nothing else gates
+     the turn, so leaving it out is all it takes. JumpToActor moves the turn
+     to whoever played, and the AdvanceTurn after it carries on from there,
+     so everyone in between loses their go.
+
+     Blocked mid-stack: barging into someone's open stack would strand it. *)
+  let jump_in_rules : t =
+    [ { id = 40
+      ; priority = 130
+      ; condition =
+          And (MatchesTopExactly, And (Not IsPlayerTurn, Not StackIsOpen))
+      ; actions =
+          [ Mutate JumpToActor
+          ; Mutate PlayTriggeringCard
+          ; Mutate CheckWinner
+          ; Mutate SetColorFromTriggeringCard
+          ; Mutate AdvanceTurn
+          ]
+      }
+    ]
+  ;;
+
   let default : t =
     base_special_rules
     @ immediate_draw_rules
@@ -343,6 +366,16 @@ module Ruleset = struct
       ; draw_until_stack_rule
       ]
     @ uno_rules
+  ;;
+
+  (* every variant above, again with jumping in allowed. Appended rather
+     than woven in, so the preset texts can be built the same way. *)
+  let jump_in_variant : t = default @ jump_in_rules
+  let stacking_jump_in_variant : t = stacking_variant @ jump_in_rules
+  let draw_until_jump_in_variant : t = draw_until_variant @ jump_in_rules
+
+  let stacking_draw_until_jump_in_variant : t =
+    stacking_draw_until_variant @ jump_in_rules
   ;;
 
   (* does any rule open a stack? tells the UI to mark stackable cards *)
@@ -399,6 +432,19 @@ let rec eval_condition
     (match evt with
      | CardPlayed { card; _ } ->
        Card.Value.equal (Card.get_value card) (Card.get_value state.top_card)
+     | _ -> false)
+  | MatchesTopExactly ->
+    (match evt with
+     | CardPlayed { card; _ } ->
+       (* a wild has no printed colour or number, so it never matches
+          exactly - see the comment on the constructor *)
+       let is_wild (c : Card.t) =
+         match Card.get_value c with Wild | Wild4 -> true | _ -> false
+       in
+       (not (is_wild card))
+       && (not (is_wild state.top_card))
+       && Card.Color.equal (Card.get_color card) (Card.get_color state.top_card)
+       && Card.Value.equal (Card.get_value card) (Card.get_value state.top_card)
      | _ -> false)
   | IsWildCard ->
     (match evt with
@@ -552,21 +598,38 @@ let apply_action
   Game_state.update_uno_window next_state ~actor_id:player_id ~event:evt
 ;;
 
+(* Which of this player's cards the ruleset would accept right now, found by
+   simulating each play. Asking the engine rather than reimplementing card
+   legality is what keeps the UI honest for rules it has never heard of -
+   an out-of-turn jump-in shows up here for free, whatever condition the
+   player wrote for it. Cheap: a hand times a ruleset is a few hundred
+   condition checks. *)
+let playable_card_ids (rules : Ruleset.t) (state : Game_state.t) ~player_id
+  : int list
+  =
+  match state.winner with
+  | Some _ -> []
+  | None ->
+    (match List.nth state.players player_id with
+     | None -> []
+     | Some player ->
+       List.filter (Player.get_hand player) ~f:(fun card_id ->
+         (* any real colour stands in for a wild's declaration *)
+         apply_action
+           rules
+           state
+           ~player_id
+           ~action:(Play { card_id; declared_color = Some Red })
+         |> Or_error.is_ok))
+;;
+
 (* Simulates every move the current player could make. When a pass is legal
    but no card play and no draw is, pressing the done button is a formality
    the server performs for them (e.g. mid-stack with nothing to continue). *)
 let only_pass_available (rules : Ruleset.t) (state : Game_state.t) : bool =
   pass_available rules state
-  &&
-  match List.nth state.players state.turn with
-  | None -> false
-  | Some player ->
-    let try_action action =
-      apply_action rules state ~player_id:state.turn ~action |> Or_error.is_ok
-    in
-    (not
-       (List.exists (Player.get_hand player) ~f:(fun card_id ->
-          (* any real color works for simulating a wild's declaration *)
-          try_action (Play { card_id; declared_color = Some Red }))))
-    && not (try_action Draw)
+  && List.is_empty (playable_card_ids rules state ~player_id:state.turn)
+  && not
+       (apply_action rules state ~player_id:state.turn ~action:Draw
+        |> Or_error.is_ok)
 ;;

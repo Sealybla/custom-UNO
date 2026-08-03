@@ -17,7 +17,7 @@ let print_event (event : Action.Server_to_client.t) =
         (top_card : Card.t) (current_color : Card.Color.t) (pending_draws : int)];
     print_s [%message "your hand" (your_hand : Card.t list)];
     print_s [%message "turn" (current_player_name : string)]
-  | Hand_updated { your_hand } ->
+  | Hand_updated { your_hand; playable_ids = _ } ->
     print_s [%message "your hand" (your_hand : Card.t list)]
   | Pile_updated { top_card; current_color; pending_draws } ->
     print_s

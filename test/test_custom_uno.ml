@@ -921,6 +921,130 @@ let%expect_test "any card opens the game on a flipped wild" =
     |}]
 ;;
 
+(* ---------- jumping in (playing out of turn) ---------- *)
+
+(* seats a b c d, a red seven on the pile, and d holding its twin. The turn
+   starts on b, so a jump from d has to skip b and c. *)
+let jump_setup ~turn =
+  let top = { Card.color = Red; value = Seven; id = 800 } in
+  let twin = { Card.color = Red; value = Seven; id = 801 } in
+  let filler n = { Card.color = Blue; value = Two; id = 810 + n } in
+  ( top
+  , Game_state.for_testing
+      ~player_hands:
+        [ "a", [ filler 0 ]
+        ; "b", [ filler 1 ]
+        ; "c", [ filler 2 ]
+        ; "d", [ twin; filler 3 ]
+        ]
+      ~top_card:top
+      ~draw_pile:(Game_state.create_card_deck ())
+      ~pending_draws:0
+      ~turn )
+;;
+
+let jump_rules = Rule_engine.Ruleset.jump_in_variant
+
+let%expect_test "an exact match plays out of turn and skips the seats between" =
+  let _top, t = jump_setup ~turn:1 in
+  let t =
+    Rule_engine.apply_action
+      jump_rules
+      t
+      ~player_id:3
+      ~action:(Play { card_id = 801; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  (* the turn leapt to d and then advanced, so play resumes at a *)
+  let jumper_hand = List.length (Player.get_hand (List.nth_exn t.players 3)) in
+  print_s
+    [%message
+      (t.turn : int) (jumper_hand : int) (t.current_color : Card.Color.t)];
+  [%expect {| ((t.turn 0) (jumper_hand 1) (t.current_color Red)) |}]
+;;
+
+let%expect_test "jumping in needs the exact card, and the rule to allow it" =
+  let _top, t = jump_setup ~turn:1 in
+  (* c holds a blue two: not an exact match, so still out of turn *)
+  let wrong_card =
+    Rule_engine.apply_action
+      jump_rules
+      t
+      ~player_id:2
+      ~action:(Play { card_id = 812; declared_color = None })
+  in
+  (* the same jump under a ruleset without the rule *)
+  let no_rule =
+    Rule_engine.apply_action
+      Rule_engine.Ruleset.default
+      t
+      ~player_id:3
+      ~action:(Play { card_id = 801; declared_color = None })
+  in
+  print_s
+    [%message
+      (Or_error.is_error wrong_card : bool) (Or_error.is_error no_rule : bool)];
+  [%expect
+    {|
+    (("Or_error.is_error wrong_card" true) ("Or_error.is_error no_rule" true))
+    |}]
+;;
+
+(* the current player's own exact match is an ordinary play, not a jump: the
+   turn must still move on by one rather than staying put *)
+let%expect_test "the current player is unaffected by the jump-in rule" =
+  let _top, t = jump_setup ~turn:3 in
+  let t =
+    Rule_engine.apply_action
+      jump_rules
+      t
+      ~player_id:3
+      ~action:(Play { card_id = 801; declared_color = None })
+    |> Or_error.ok_exn
+  in
+  print_s [%message (t.turn : int)];
+  [%expect {| (t.turn 0) |}]
+;;
+
+(* wilds have no printed colour or number; letting one match "exactly" would
+   set the active colour to NoColor and make everything playable *)
+let%expect_test "a wild never counts as an exact match" =
+  let wild_top = { Card.color = NoColor; value = Wild; id = 820 } in
+  let other_wild = { Card.color = NoColor; value = Wild; id = 821 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", []; "b", []; "c", [ other_wild ] ]
+      ~top_card:wild_top
+      ~draw_pile:(Game_state.create_card_deck ())
+      ~pending_draws:0
+      ~turn:0
+  in
+  let rejected =
+    Or_error.is_error
+      (Rule_engine.apply_action
+         jump_rules
+         t
+         ~player_id:2
+         ~action:(Play { card_id = 821; declared_color = Some Red }))
+  in
+  print_s [%message "wild jumped onto a wild" (rejected : bool)];
+  [%expect {| ("wild jumped onto a wild" (rejected true)) |}]
+;;
+
+(* the UI highlights whatever this returns, so it must include a jump-in
+   while it is somebody else's turn - and nothing at all without the rule *)
+let%expect_test "playable ids expose an out-of-turn jump" =
+  let _top, t = jump_setup ~turn:1 in
+  let with_rule =
+    Rule_engine.playable_card_ids jump_rules t ~player_id:3
+  in
+  let without_rule =
+    Rule_engine.playable_card_ids Rule_engine.Ruleset.default t ~player_id:3
+  in
+  print_s [%message (with_rule : int list) (without_rule : int list)];
+  [%expect {| ((with_rule (801)) (without_rule ())) |}]
+;;
+
 (* ---------- the UNO button ---------- *)
 
 (* Three players. "a" is one card away from UNO and holds a spare so that
@@ -1163,6 +1287,27 @@ let%expect_test "parsed combined ruleset equals hand-coded variant" =
   [%expect {| parsed rules match the hand-coded ruleset |}]
 ;;
 
+(* jump-in composes onto each of the four bases *)
+let%expect_test "parsed jump-in rulesets equal their hand-coded variants" =
+  check_against_hand_coded Presets.jump_in_text Rule_engine.Ruleset.jump_in_variant;
+  check_against_hand_coded
+    Presets.stacking_jump_in_text
+    Rule_engine.Ruleset.stacking_jump_in_variant;
+  check_against_hand_coded
+    Presets.draw_until_jump_in_text
+    Rule_engine.Ruleset.draw_until_jump_in_variant;
+  check_against_hand_coded
+    Presets.stacking_draw_until_jump_in_text
+    Rule_engine.Ruleset.stacking_draw_until_jump_in_variant;
+  [%expect
+    {|
+    parsed rules match the hand-coded ruleset
+    parsed rules match the hand-coded ruleset
+    parsed rules match the hand-coded ruleset
+    parsed rules match the hand-coded ruleset
+    |}]
+;;
+
 (* `use <preset>` expands to the same rules as pasting the preset text *)
 let%expect_test "use expands presets, combines, extends, and overrides" =
   let count text =
@@ -1203,7 +1348,7 @@ rule "pass on stack" priority 120:
     ("List.length rules" 15)
     ("List.length rules" 14)
     (e
-     "line 1: unknown preset 'nonsense mode' after 'use' (available: standard, stacking, draw until playable, stacking with draw until playable)")
+     "line 1: unknown preset 'nonsense mode' after 'use' (available: standard, stacking, draw until playable, stacking with draw until playable, jump in, stacking with jump in, draw until playable with jump in, stacking with draw until playable with jump in)")
     |}]
 ;;
 
