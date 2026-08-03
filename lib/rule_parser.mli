@@ -20,6 +20,7 @@ module Lint : sig
     type t =
       | Missing_play
       | Missing_advance
+      | Dead_rule (* an identical condition always wins over this rule *)
     [@@deriving sexp, compare, equal]
   end
 

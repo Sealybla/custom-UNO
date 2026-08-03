@@ -336,8 +336,18 @@ assert equality with the hand-coded `Rule.t` values.
 ## Overriding a built-in rule
 
 The engine runs exactly ONE rule per click — the highest-priority match —
-so a custom rule never layers onto normal play; it competes with it. The
-way to change how a card behaves is to redefine the preset's rule under
+so a custom rule never layers onto normal play; it competes with it.
+
+**Tie-breaking is explicit**: when several matching rules share the top
+priority, the one defined earliest in the ruleset text wins (the engine
+sorts by priority, then by the parser-assigned id, which follows
+definition order — see `Rule_engine.process_event`; a test pins this).
+Since `use <preset>` expands at the top of the text, a custom rule at the
+same priority as a built-in loses the tie and silently never fires — the
+checker flags the identical-condition case as a dead rule. To beat a
+built-in, either replace it by name or outrank it.
+
+The way to change how a card behaves is to redefine the preset's rule under
 its own name (rules merge by name, later definition wins) with the full
 effect list:
 
@@ -403,8 +413,31 @@ Every room has its own lobby, game, engine loop, and ruleset — the
 `submit_rules_rpc : string -> unit Or_error.t` lets any room member
 replace that room's ruleset before a game starts (rejected mid-game);
 parse errors come back over the wire for the rule editor to render, and
-successful updates broadcast `Rules_updated` to the room. The terminal
-client submits with `rules <file>`.
+successful updates broadcast `Rules_updated` — carrying the accepted text
+— so every member's editor syncs to the same rules (late joiners get the
+text in their state snapshot, marked with an empty player name). The
+terminal client submits with `rules <file>`.
+
+Players can optionally log in on the join screen (`/api/login`; unknown
+usernames are signed up on the spot) to keep a personal library of saved
+rule "modes" — named snapshots of the rules editor's text. Logged-in
+players get a "My modes" row in the lobby: click a mode to load it into
+the editor (then submit as usual), save the current text under a name, or
+delete one. Accounts and modes persist in a sexp file (`-users` flag,
+default `uno-users.sexp`) handled entirely by the web bridge in
+`bin/web.ml` + `lib/accounts.ml`; passwords are salted-MD5 (a speed bump
+appropriate for a card game, not real security), and login tokens are
+in-memory only — a server restart just means logging in again.
+
+The lobby has a ready gate: `set_ready_rpc : bool -> unit Or_error.t`
+toggles the caller's flag, `Lobby_updated` carries `ready_players` (and
+`last_winner`, shown as a crown over that player in the lobby), and
+`start_game_rpc` refuses until every member is ready, naming who is still
+missing. Ready flags clear when a game starts, so rematches need a fresh
+round of readying; leaving the lobby clears yours. The web lobby shows a
+ready toggle, per-player ready tags, and a start button that stays
+disabled until everyone is in; the terminal client uses `ready` /
+`unready`.
 
 The web UI (served at `http://localhost:<port+1>/`) is click-only
 gameplay: clickable hand, draw pile, pass button, and a color picker for

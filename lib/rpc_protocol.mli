@@ -32,3 +32,6 @@ val get_state_rpc
 val submit_rules_rpc : (String.t, unit Or_error.t) Rpc.Rpc.t
 
 val start_game_rpc : (Unit.t, unit Or_error.t) Rpc.Rpc.t
+(* toggle the caller's lobby ready flag; the game can only start when
+   every player in the room is ready *)
+val set_ready_rpc : (Bool.t, unit Or_error.t) Rpc.Rpc.t

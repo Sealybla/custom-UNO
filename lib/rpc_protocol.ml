@@ -82,3 +82,13 @@ let start_game_rpc =
     ~bin_response:[%bin_type_class: unit Or_error.t]
     ~include_in_error_count:Only_on_exn
 ;;
+(* toggle the caller's lobby ready flag; the game can only start when
+   every player in the room is ready *)
+let set_ready_rpc =
+  Rpc.Rpc.create
+    ~name:"set-ready"
+    ~version:1
+    ~bin_query:Bool.bin_t
+    ~bin_response:[%bin_type_class: unit Or_error.t]
+    ~include_in_error_count:Only_on_exn
+;;

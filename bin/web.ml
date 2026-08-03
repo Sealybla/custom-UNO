@@ -18,14 +18,63 @@ end
 type t =
   { sessions : Session.t String.Table.t
   ; rpc_port : int
+  ; accounts : Accounts.t
+  ; users_file : string
+  ; tokens : string String.Table.t (* login token -> display name *)
+  ; token_random : Random.State.t
   }
 
 let session_expiry = Time_ns.Span.of_sec 8.
 
+(* accounts live in one sexp file; missing means a fresh store, but a file
+   that exists and cannot be parsed is fatal - dying at boot beats silently
+   clobbering everyone's saved modes on the next write *)
+let load_accounts users_file =
+  match%bind Sys.file_exists users_file with
+  | `No -> return (Accounts.create ())
+  | `Yes | `Unknown ->
+    (match%map
+       Monitor.try_with (fun () ->
+         Reader.load_sexp_exn users_file Accounts.Snapshot.t_of_sexp)
+     with
+     | Ok snap -> Accounts.of_snapshot snap
+     | Error exn ->
+       Core.eprintf
+         ">>> Cannot read users file '%s': %s\n"
+         users_file
+         (Exn.to_string (Monitor.extract_exn exn));
+       Core.exit 1)
+;;
+
+let save_accounts t =
+  don't_wait_for
+    (match%map
+       Monitor.try_with (fun () ->
+         Writer.save_sexp
+           t.users_file
+           (Accounts.Snapshot.sexp_of_t (Accounts.snapshot t.accounts)))
+     with
+     | Ok () -> ()
+     | Error exn ->
+       Core.eprintf
+         "!! Failed to save users file '%s': %s\n"
+         t.users_file
+         (Exn.to_string (Monitor.extract_exn exn)))
+;;
+
 (* a browser that stops polling counts as disconnected: closing its RPC
    connection triggers the game server's usual dropout handling *)
-let create ~rpc_port =
-  let t = { sessions = String.Table.create (); rpc_port } in
+let create ~rpc_port ~users_file =
+  let%map accounts = load_accounts users_file in
+  let t =
+    { sessions = String.Table.create ()
+    ; rpc_port
+    ; accounts
+    ; users_file
+    ; tokens = String.Table.create ()
+    ; token_random = Random.State.make_self_init ()
+    }
+  in
   Clock_ns.every (Time_ns.Span.of_sec 3.) (fun () ->
     let now = Time_ns.now () in
     Hashtbl.filter_inplace t.sessions ~f:(fun (session : Session.t) ->
@@ -66,10 +115,12 @@ let card_json (card : Card.t) =
 
 let event_json (event : Action.Server_to_client.t) =
   match event with
-  | Lobby_updated { players } ->
+  | Lobby_updated { players; ready_players; last_winner } ->
     sprintf
-      {|{"type":"lobby","players":%s}|}
+      {|{"type":"lobby","players":%s,"ready":%s,"last_winner":%s}|}
       (jlist (List.map players ~f:jstr))
+      (jlist (List.map ready_players ~f:jstr))
+      (match last_winner with Some w -> jstr w | None -> "null")
   | Game_started
       { your_hand
       ; top_card
@@ -128,11 +179,12 @@ let event_json (event : Action.Server_to_client.t) =
       {|{"type":"countdown","player":%s,"seconds":%d}|}
       (jstr player_name)
       seconds
-  | Rules_updated { player_name; num_rules } ->
+  | Rules_updated { player_name; num_rules; rules_text } ->
     sprintf
-      {|{"type":"rules_updated","player":%s,"num_rules":%d}|}
+      {|{"type":"rules_updated","player":%s,"num_rules":%d,"rules_text":%s}|}
       (jstr player_name)
       num_rules
+      (jstr rules_text)
   | Action_rejected { reason } ->
     sprintf {|{"type":"rejected","reason":%s}|} (jstr reason)
   | Player_skipped { player_name } ->
@@ -259,6 +311,11 @@ let submit_rules t ~code ~name ~text =
     rpc_result (Rpc.Rpc.dispatch Rpc_protocol.submit_rules_rpc session.conn text))
 ;;
 
+let set_ready t ~code ~name ~is_ready =
+  with_session t ~code ~name ~f:(fun session ->
+    rpc_result (Rpc.Rpc.dispatch Rpc_protocol.set_ready_rpc session.conn is_ready))
+;;
+
 let poll t ~code ~name =
   with_session t ~code ~name ~f:(fun session ->
     let events = Queue.to_list session.events in
@@ -301,6 +358,41 @@ let color_of_string = function
   | _ -> None
 ;;
 
+(* ---------- optional accounts: login + saved rule modes ---------- *)
+
+let generate_token t =
+  String.init 32 ~f:(fun _ ->
+    "0123456789abcdef".[Random.State.int t.token_random 16])
+;;
+
+let modes_json modes =
+  jlist
+    (List.map modes ~f:(fun (m : Accounts.Mode.t) ->
+       sprintf {|{"name":%s,"text":%s}|} (jstr m.name) (jstr m.rules_text)))
+;;
+
+let account_json ?created ~user ~token ~modes () =
+  sprintf
+    {|{"ok":true%s,"user":%s,"token":%s,"modes":%s}|}
+    (match created with
+     | None -> ""
+     | Some c -> sprintf {|,"created":%b|} c)
+    (jstr user)
+    (jstr token)
+    (modes_json modes)
+;;
+
+let with_token t uri ~f =
+  match
+    Option.bind (Uri.get_query_param uri "token") ~f:(Hashtbl.find t.tokens)
+  with
+  | Some username -> f username
+  | None ->
+    respond_json
+      (error_body
+         (Error.of_string "Not logged in (or the server restarted) - log in again"))
+;;
+
 let handle t ~body req =
   let uri = Cohttp.Request.uri req in
   let with_ident f =
@@ -326,7 +418,8 @@ let handle t ~body req =
            (jstr
               (match w.kind with
                | Missing_play -> "missing_play"
-               | Missing_advance -> "missing_advance"))
+               | Missing_advance -> "missing_advance"
+               | Dead_rule -> "dead_rule"))
            (jstr w.message)
        in
        respond_json
@@ -364,6 +457,14 @@ let handle t ~body req =
         respond_json (sprintf {|{"ok":true,"events":%s}|} (jlist events)))
   | "/api/start" ->
     with_ident (fun ~code ~name -> respond_result (start_game t ~code ~name))
+  | "/api/ready" ->
+    with_ident (fun ~code ~name ->
+      let is_ready =
+        match Uri.get_query_param uri "on" with
+        | Some "false" -> false
+        | _ -> true
+      in
+      respond_result (set_ready t ~code ~name ~is_ready))
   | "/api/draw" ->
     with_ident (fun ~code ~name ->
       respond_result (take_action t ~code ~name ~action:Action.Client_to_server.Draw))
@@ -396,5 +497,58 @@ let handle t ~body req =
     with_ident (fun ~code ~name ->
       let%bind text = Cohttp_async.Body.to_string body in
       respond_result (submit_rules t ~code ~name ~text))
+  | "/api/login" ->
+    (* body is "username\npassword"; unknown usernames are signed up *)
+    let%bind body = Cohttp_async.Body.to_string body in
+    (match String.lsplit2 body ~on:'\n' with
+     | None ->
+       respond_json
+         ~status:`Bad_request
+         (error_body (Error.of_string "malformed login request"))
+     | Some (username, password) ->
+       (match Accounts.login t.accounts ~username ~password with
+        | Error err -> respond_json (error_body err)
+        | Ok (status, user, modes) ->
+          save_accounts t;
+          let token = generate_token t in
+          Hashtbl.set t.tokens ~key:token ~data:user;
+          let created = match status with `Created -> true | `Logged_in -> false in
+          Core.print_s [%message "Login" (user : string) (created : bool)];
+          respond_json (account_json ~created ~user ~token ~modes ())))
+  | "/api/me" ->
+    (* restore a remembered session after a page reload *)
+    with_token t uri ~f:(fun user ->
+      let token = Option.value (Uri.get_query_param uri "token") ~default:"" in
+      let modes = Accounts.modes t.accounts ~username:user in
+      respond_json (account_json ~user ~token ~modes ()))
+  | "/api/mode-save" ->
+    with_token t uri ~f:(fun user ->
+      match Uri.get_query_param uri "mode" with
+      | None ->
+        respond_json
+          ~status:`Bad_request
+          (error_body (Error.of_string "missing mode name"))
+      | Some mode_name ->
+        let%bind rules_text = Cohttp_async.Body.to_string body in
+        (match
+           Accounts.save_mode t.accounts ~username:user ~mode_name ~rules_text
+         with
+         | Error err -> respond_json (error_body err)
+         | Ok modes ->
+           save_accounts t;
+           respond_json (sprintf {|{"ok":true,"modes":%s}|} (modes_json modes))))
+  | "/api/mode-delete" ->
+    with_token t uri ~f:(fun user ->
+      match Uri.get_query_param uri "mode" with
+      | None ->
+        respond_json
+          ~status:`Bad_request
+          (error_body (Error.of_string "missing mode name"))
+      | Some mode_name ->
+        (match Accounts.delete_mode t.accounts ~username:user ~mode_name with
+         | Error err -> respond_json (error_body err)
+         | Ok modes ->
+           save_accounts t;
+           respond_json (sprintf {|{"ok":true,"modes":%s}|} (modes_json modes))))
   | _ -> Cohttp_async.Server.respond `Not_found
 ;;

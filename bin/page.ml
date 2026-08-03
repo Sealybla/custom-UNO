@@ -106,8 +106,16 @@ let html =
     animation:pulse 1.2s ease-in-out infinite; }
   ul#lobby-players { list-style:none; padding:0; margin:.2rem 0 1rem; display:flex;
     flex-wrap:wrap; gap:.5rem; }
+  ul#lobby-players li.ready { box-shadow:0 0 0 2.5px var(--c-green); }
+  ul#lobby-players li .tag { margin-left:.45rem; font-size:.78rem; opacity:.7; }
+  ul#lobby-players li.ready .tag { color:#8fe3a8; opacity:1; }
+  ul#lobby-players li .crown { position:absolute; top:-1.15em; left:50%;
+    transform:translateX(-50%) rotate(-14deg); font-size:1.05em;
+    filter:drop-shadow(0 2px 2px rgba(0,0,0,.4)); }
+  #ready-btn.active { background:var(--c-green); color:#fff; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
   ul#lobby-players li { background:rgba(255,255,255,.14); border-radius:999px;
-    padding:.35rem .9rem; font-weight:700; }
+    padding:.35rem .9rem; font-weight:700; position:relative; margin-top:.9em; }
   /* rules editor helpers */
   .preset-row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; margin-bottom:.5rem; }
   button.preset, button.small { padding:.3rem .8rem; font-size:.82rem;
@@ -125,6 +133,9 @@ let html =
   #override-list code { cursor:pointer; padding:.14rem .45rem; border-radius:6px;
     background:rgba(255,255,255,.1); }
   #override-list code:hover { background:rgba(255,206,0,.35); }
+  .mode-del { padding:.1rem .45rem; margin-left:-.35rem; opacity:.7; }
+  .mode-del:hover { opacity:1; background:var(--c-red); color:#fff; }
+  #login-user, #login-pw { border-radius:8px; padding:.4rem .6rem; width:9.5rem; }
   .panel details { margin:.7rem 0 0; background:rgba(0,0,0,.28); border-radius:12px;
     padding:.55rem .9rem; }
   .panel summary { cursor:pointer; font-weight:800; }
@@ -389,6 +400,22 @@ let html =
       <button id="join-btn">Join</button>
     </div>
     <div id="join-err" class="err" style="margin-top:.6rem"></div>
+
+    <div style="margin-top:1.1rem; border-top:2px dashed rgba(255,255,255,.25); padding-top:.8rem">
+      <div id="login-form">
+        <div style="opacity:.7; font-weight:800; margin:.1rem 0 .5rem">— optional: log in to save custom modes —</div>
+        <div style="display:flex; gap:.5rem; justify-content:center; flex-wrap:wrap">
+          <input id="login-user" placeholder="username" maxlength="24" autocomplete="username">
+          <input id="login-pw" placeholder="password" type="password" maxlength="64" autocomplete="current-password">
+          <button id="login-btn" class="small">Log in / sign up</button>
+        </div>
+      </div>
+      <div id="login-info" hidden>
+        <span id="login-who" style="font-weight:800"></span>
+        <button id="logout-btn" class="small">Log out</button>
+      </div>
+      <div id="login-err" class="err" style="margin-top:.4rem"></div>
+    </div>
   </div>
 
   <div id="view-lobby" class="lobby-grid" hidden>
@@ -399,9 +426,11 @@ let html =
         <span id="copy-done" class="ok"></span>
       </p>
       <ul id="lobby-players"></ul>
-      <button id="start-btn">Start game</button>
+      <button id="ready-btn">I'm ready</button>
+      <button id="start-btn" disabled>Start game</button>
       <button id="leave-lobby" class="leave">Leave lobby</button>
-      <div id="lobby-status" class="ok" style="margin-top:.6rem"></div>
+      <div id="start-hint" style="margin-top:.5rem; font-size:.85rem; opacity:.8"></div>
+      <div id="lobby-status" class="ok" style="margin-top:.3rem"></div>
     </div>
     <div class="panel">
       <h2>House rules</h2>
@@ -412,6 +441,12 @@ let html =
         <button class="preset toggle" id="toggle-stacking">Stacking</button>
         <button class="preset toggle" id="toggle-drawuntil">Draw until playable</button>
         <button class="preset toggle" id="toggle-jumpin" title="play out of turn on an exact match">Jump in</button>
+      </div>
+      <div id="modes-row" class="preset-row" hidden>
+        <span style="opacity:.8">My modes:</span>
+        <span id="mode-chips" style="display:contents"></span>
+        <input id="mode-name" placeholder="save as…" maxlength="40" style="width:7.5rem">
+        <button id="mode-save" class="small">Save current</button>
       </div>
       <div id="check-status"></div>
       <textarea id="rules-text" rows="12" spellcheck="false"></textarea>
@@ -510,7 +545,7 @@ let html =
             <code>advance turn</code>
           </div>
         </div>
-        <p style="opacity:.75; font-size:.82rem">Join conditions with <b>and</b> / <b>or</b> / <b>not</b>, parentheses to group. Higher priority wins when several rules match.</p>
+        <p style="opacity:.75; font-size:.82rem">Join conditions with <b>and</b> / <b>or</b> / <b>not</b>, parentheses to group. When several rules match, the highest priority wins; on a tie, the rule defined first wins (so built-ins pulled in by <b>use</b> beat same-priority rules below them — replace them by name or use a higher priority).</p>
       </details>
 
       <p style="margin:.7rem 0 0"><button id="rules-btn">Submit rules</button></p>
@@ -653,7 +688,8 @@ const freshState = () => ({ players:[], hand:[], top:null, color:null, current:n
               counts:{}, inGame:false, pileStack:[], pending:0,
               canPass:false, stackValue:null, stacking:false,
               // card ids the server says are legal for us right now
-              playable:new Set() });
+              playable:new Set(),
+              ready:[], lastWinner:null });
 let state = freshState();
 let pendingWild = null;
 let lastPlayedId = null;
@@ -774,7 +810,10 @@ async function api(path, opts = {}){
 function apply(ev, fx){
   switch (ev.type){
     case 'lobby':
-      state.players = ev.players; dirty.lobby = true;
+      state.players = ev.players;
+      state.ready = ev.ready || [];
+      state.lastWinner = ev.last_winner || null;
+      dirty.lobby = true;
       if (!state.inGame) setView('lobby');
       break;
     case 'game_started':
@@ -879,9 +918,25 @@ function apply(ev, fx){
       showWin(ev.winner);
       break;
     case 'rules_updated':
-      $('rules-status').textContent = ev.player + ' set ' + ev.num_rules + ' house rules';
-      $('rules-status').className = 'ok';
-      logLine(ev.player + ' updated the rules');
+      // everyone's editor mirrors the room's accepted rules; an empty
+      // player marks a state snapshot rather than a fresh edit
+      if (ev.rules_text){
+        // this text IS what the server accepted, so it also settles the
+        // "editor has unsent changes" nag for everyone in the room
+        appliedText = ev.rules_text;
+        if (ev.rules_text !== $('rules-text').value){
+          $('rules-text').value = ev.rules_text;
+          lastLoaded = ev.rules_text;
+          scheduleCheck();
+        }
+        markRulesDirty();
+      }
+      if (ev.player){
+        $('rules-status').textContent = ev.player + ' set ' + ev.num_rules + ' house rules';
+        $('rules-status').className = 'ok';
+        logLine(ev.player + ' updated the rules');
+        if (ev.player !== name) toast(ev.player + ' updated the rules');
+      }
       break;
     case 'rejected': toast(ev.reason); break;
   }
@@ -934,9 +989,33 @@ function renderLobby(){
   const lp = $('lobby-players'); lp.innerHTML = '';
   for (const p of state.players){
     const li = document.createElement('li');
-    li.textContent = p === name ? p + ' (you)' : p;
+    const rdy = state.ready.includes(p);
+    li.classList.toggle('ready', rdy);
+    if (p === state.lastWinner){
+      const c = document.createElement('span');
+      c.className = 'crown'; c.textContent = '👑';
+      c.title = 'won the last game';
+      li.append(c);
+    }
+    li.append(document.createTextNode(p === name ? p + ' (you)' : p));
+    const tag = document.createElement('span');
+    tag.className = 'tag';
+    tag.textContent = rdy ? '✔ ready' : '· not ready';
+    li.append(tag);
     lp.append(li);
   }
+  const meReady = state.ready.includes(name);
+  const rb = $('ready-btn');
+  rb.textContent = meReady ? 'Not ready' : 'I’m ready';
+  rb.classList.toggle('active', meReady);
+  const allReady = state.players.length >= 2 &&
+    state.players.every(p => state.ready.includes(p));
+  $('start-btn').disabled = !allReady;
+  const waiting = state.players.filter(p => !state.ready.includes(p));
+  $('start-hint').textContent =
+    state.players.length < 2 ? 'Waiting for more players to join…'
+    : allReady ? 'Everyone is ready - anyone can start the game!'
+    : 'Waiting for: ' + waiting.join(', ');
 }
 
 function seatOf(player){
@@ -1267,6 +1346,10 @@ $('pass-btn').onclick = async () => {
 $('uno-btn').onclick = async () => {
   const r = await api('/api/uno', {method:'POST'}); if (!r.ok) toast(r.error);
 };
+$('ready-btn').onclick = async () => {
+  const r = await api('/api/ready?on=' + !state.ready.includes(name), {method:'POST'});
+  if (!r.ok) toast(r.error);
+};
 $('start-btn').onclick = async () => {
   // last line of defence against playing a ruleset nobody sent
   const unsent = appliedText !== null &&
@@ -1557,6 +1640,95 @@ $('b-append').onclick = () => {
   checkRules();
 };
 renderChips();
+
+/* ---------- optional login + saved rule modes ---------- */
+let auth = null; // {user, token, modes:[{name,text}]}
+
+function setAuth(a){
+  auth = a;
+  if (a) localStorage.setItem('uno-auth', JSON.stringify({user:a.user, token:a.token}));
+  else localStorage.removeItem('uno-auth');
+  renderAuth();
+}
+function renderAuth(){
+  $('login-form').hidden = !!auth;
+  $('login-info').hidden = !auth;
+  if (auth) $('login-who').textContent = '🔑 ' + auth.user + ' ';
+  renderModes();
+}
+function renderModes(){
+  $('modes-row').hidden = !auth;
+  if (!auth) return;
+  const box = $('mode-chips'); box.innerHTML = '';
+  for (const m of auth.modes){
+    const c = document.createElement('button');
+    c.className = 'preset toggle';
+    c.textContent = m.name;
+    c.title = 'load "' + m.name + '" into the editor';
+    c.onclick = () => loadMode(m);
+    box.append(c);
+    const x = document.createElement('button');
+    x.className = 'small mode-del';
+    x.textContent = '×';
+    x.title = 'delete "' + m.name + '"';
+    x.onclick = async () => {
+      if (!confirm('Delete mode "' + m.name + '"?')) return;
+      const r = await api('/api/mode-delete?token=' + auth.token +
+                          '&mode=' + encodeURIComponent(m.name), {method:'POST'});
+      if (r.ok){ auth.modes = r.modes; renderModes(); } else toast(r.error);
+    };
+    box.append(x);
+  }
+}
+function loadMode(m){
+  const ta = $('rules-text');
+  if (ta.value.trim() !== lastLoaded.trim() &&
+      !confirm('Replace the current rule text?')) return;
+  ta.value = m.text;
+  lastLoaded = m.text;
+  $('toggle-stacking').classList.remove('active');
+  $('toggle-drawuntil').classList.remove('active');
+  checkRules();
+  loadOverrideList();
+}
+$('login-btn').onclick = async () => {
+  const u = $('login-user').value.trim(), p = $('login-pw').value;
+  if (!u || !p){ $('login-err').textContent = 'enter a username and a password'; return; }
+  const r = await api('/api/login', {method:'POST', body: u + '\n' + p});
+  if (!r.ok){ $('login-err').textContent = r.error; return; }
+  $('login-err').textContent = '';
+  $('login-pw').value = '';
+  setAuth({user:r.user, token:r.token, modes:r.modes});
+  if (r.created) toast('Account created - welcome, ' + r.user + '!');
+  if (!$('name-input').value) $('name-input').value = r.user;
+};
+$('login-pw').addEventListener('keydown', e => {
+  if (e.key === 'Enter') $('login-btn').click();
+});
+$('logout-btn').onclick = () => setAuth(null);
+$('mode-save').onclick = async () => {
+  const mn = $('mode-name').value.trim();
+  if (!mn){ toast('Give the mode a name first'); return; }
+  const r = await api('/api/mode-save?token=' + auth.token +
+                      '&mode=' + encodeURIComponent(mn),
+                      {method:'POST', body: $('rules-text').value});
+  if (r.ok){
+    auth.modes = r.modes; $('mode-name').value = '';
+    renderModes(); toast('Saved mode "' + mn + '"');
+  } else toast(r.error);
+};
+// restore a remembered login (token dies with a server restart; that just
+// means logging in again)
+(async () => {
+  try {
+    const saved = JSON.parse(localStorage.getItem('uno-auth') || 'null');
+    if (!saved) return;
+    const r = await api('/api/me?token=' + saved.token, {method:'POST'});
+    if (r.ok) setAuth({user:r.user, token:r.token, modes:r.modes});
+    else localStorage.removeItem('uno-auth');
+  } catch (e){}
+})();
+renderAuth();
 
 /* ---------- join / snapshot / polling ---------- */
 async function refreshState(){
