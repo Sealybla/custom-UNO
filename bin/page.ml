@@ -133,6 +133,30 @@ let html =
   #table-settings input[type=number] { width:4.6rem; border-radius:8px;
     padding:.3rem .45rem; font-size:.88rem; }
   .cheat-note { opacity:.7; font-size:.78rem; margin:.1rem 0 .3rem; }
+  #recipes-head { margin:.7rem 0 0; font-size:.78rem; text-transform:uppercase;
+    letter-spacing:.08em; opacity:.7; }
+  #recipes { display:grid; grid-template-columns:repeat(auto-fill,minmax(11.5rem,1fr));
+    gap:.55rem; margin:.45rem 0 .2rem; }
+  .recipe { border:1px solid rgba(255,255,255,.22); border-radius:12px;
+    background:rgba(255,255,255,.06); padding:.55rem .65rem; cursor:pointer;
+    display:flex; gap:.55rem; align-items:flex-start;
+    transition:border-color .15s, background .15s; }
+  .recipe:hover { border-color:rgba(255,206,0,.6); }
+  .recipe.on { border-color:var(--c-yellow); background:rgba(255,206,0,.13); }
+  .recipe .r-mini { flex:0 0 1.5rem; height:2.1rem; border-radius:5px; position:relative;
+    box-shadow:0 2px 4px rgba(0,0,0,.4); }
+  .recipe .r-mini::after { content:attr(data-g); position:absolute; inset:0;
+    display:grid; place-items:center; color:#fff; font-weight:800; font-size:.72rem;
+    text-shadow:0 1px 2px rgba(0,0,0,.5); }
+  .recipe .r-t { font-weight:650; font-size:.82rem; line-height:1.25; display:block; }
+  .recipe.on .r-t::after { content:" ✓"; color:var(--c-yellow); }
+  .recipe .r-d { opacity:.72; font-size:.74rem; line-height:1.3; margin-top:.15rem; display:block; }
+  .recipe input { width:3rem; margin:0 .15rem; border-radius:6px; border:none;
+    padding:.1rem .3rem; font-size:.74rem; }
+  .r-red { background:var(--c-red); } .r-blue { background:var(--c-blue); }
+  .r-green { background:var(--c-green); } .r-yellow { background:#d4a900; }
+  #custom-rules > summary { cursor:pointer; font-size:.95rem; margin:.9rem 0 .3rem;
+    user-select:none; opacity:.9; }
   #check-status button { margin-left:.5rem; padding:.05rem .5rem; font-size:.72rem; }
   #override-list { display:flex; flex-wrap:wrap; gap:.35rem; margin-top:.5rem; font-size:.83rem; }
   #override-list code { cursor:pointer; padding:.14rem .45rem; border-radius:6px;
@@ -474,12 +498,17 @@ let html =
         <label class="set-lbl" title="seconds before the server plays for a stalled player (default 20; 0 = no clock)">turn timer
           <input id="set-timer" type="number" min="0" max="300" step="5" value="20"> s</label>
       </div>
+      <div id="recipes-head">House rules — click to add</div>
+      <div id="recipes"></div>
       <div id="modes-row" class="preset-row" hidden>
         <span style="opacity:.8">My modes:</span>
         <span id="mode-chips" style="display:contents"></span>
         <input id="mode-name" placeholder="save as…" maxlength="40" style="width:7.5rem">
         <button id="mode-save" class="small">Save current</button>
       </div>
+
+      <details id="custom-rules">
+        <summary>✍️ Custom rules — write your own (builder, editor, all phrases)</summary>
       <div id="check-status"></div>
       <textarea id="rules-text" rows="12" spellcheck="false"></textarea>
 
@@ -620,6 +649,7 @@ let html =
           </div>
         </div>
         <p style="opacity:.75; font-size:.82rem">Join conditions with <b>and</b> / <b>or</b> / <b>not</b>, parentheses to group. When several rules match, the highest priority wins; on a tie, the rule defined first wins (so built-ins pulled in by <b>use</b> beat same-priority rules below them — replace them by name or use a higher priority).</p>
+      </details>
       </details>
 
       <p style="margin:.7rem 0 0"><button id="rules-btn">Submit rules</button></p>
@@ -1624,6 +1654,7 @@ let checkT = null;
 async function checkRules(){
   const text = $('rules-text').value;
   const st = $('check-status');
+  syncRecipes();
   if (!text.trim()){ st.textContent = ''; return; }
   try {
     const r = await api('/api/check-rules', {method:'POST', body:text});
@@ -1761,6 +1792,135 @@ function applySettingsToText(){
 }
 $('set-deal').onchange = applySettingsToText;
 $('set-timer').onchange = applySettingsToText;
+
+/* ---------- house-rule recipe cards ----------
+   A recipe is a named rule (or a settings pair) the card inserts into the
+   text; the text stays the single source of truth. Card state is derived
+   from the text by name-match, the same machinery preset overrides use,
+   so hand-editing the rule flips the card and vice versa. */
+const RECIPES = [
+  { id:'noaf', cls:'r-red', g:'⊘', title:'No action finish',
+    desc:'can’t go out on a skip, reverse, +2, +4 or wild',
+    rule:'no action finish',
+    text: () => 'rule "no action finish" priority 200:\n' +
+      '  when card is action and hand size = 1\n' +
+      '  do reject "no going out on an action card"' },
+  { id:'t4', cls:'r-blue', g:'+4', title:'Targeted +4',
+    desc:'a wild +4 hits a player you pick, not the next one',
+    rule:'play plus four', marker:'chosen player draws',
+    text: () => 'rule "play plus four" priority 110:\n' +
+      '  when card is plus four and your turn\n' +
+      '  do play the card, set color to declared, chosen player draws 4 cards, advance turn' },
+  { id:'speed', cls:'r-yellow', g:'⚡', title:'Speed UNO',
+    desc:'deal 5 cards, 10-second turns', settings:{deal:5, timer:10} },
+  { id:'sevens', cls:'r-green', g:'7', title:'Cruel sevens',
+    desc:'a 7 makes everyone else draw', param:{def:2, min:1, max:10}, suffix:'cards',
+    rule:'cruel sevens',
+    paramRe:/rule "cruel sevens"[\s\S]*?everyone else draws (\d+)/,
+    text: n => 'rule "cruel sevens" priority 60:\n' +
+      '  when card is 7 and (card matches color or card matches value) and your turn\n' +
+      '  do play the card, set color from card, everyone else draws ' + n + ' cards, advance turn' },
+  { id:'panic', cls:'r-red', g:'∅', title:'Endgame panic',
+    desc:'draw pile under 10: every draw comes doubled',
+    rule:'endgame panic',
+    text: () => 'rule "endgame panic" priority 5:\n' +
+      '  when player draws and your turn and draw pile < 10\n' +
+      '  do draw 2 cards' },
+  { id:'hoard', cls:'r-blue', g:'🂠', title:'No hoarding',
+    desc:'no drawing while holding more than', param:{def:15, min:5, max:29}, suffix:'cards',
+    rule:'no hoarding',
+    paramRe:/rule "no hoarding"[\s\S]*?hand size > (\d+)/,
+    text: n => 'rule "no hoarding" priority 200:\n' +
+      '  when player draws and hand size > ' + n + '\n' +
+      '  do reject "you have enough cards already"' },
+];
+
+function recipeOn(r, t){
+  if (r.settings)
+    return new RegExp('^\\s*deal ' + r.settings.deal + ' cards\\s*$', 'm').test(t) &&
+      new RegExp('^\\s*turn timer ' + r.settings.timer + ' seconds\\s*$', 'm').test(t);
+  if (!new RegExp('^\\s*rule "' + r.rule + '"', 'm').test(t)) return false;
+  return r.marker ? t.includes(r.marker) : true;
+}
+
+// drop a named rule: its header line, its indented body, one trailing blank
+function removeRuleBlock(text, ruleName){
+  const out = []; let skip = false;
+  for (const l of text.split('\n')){
+    if (new RegExp('^\\s*rule "' + ruleName + '"').test(l)){ skip = true; continue; }
+    if (skip){
+      if (/^\s+\S/.test(l)) continue;
+      skip = false;
+      if (l.trim() === '') continue;
+    }
+    out.push(l);
+  }
+  return out.join('\n');
+}
+
+function appendRecipe(text, r){
+  const n = r.param ? (parseInt($('rp-' + r.id).value, 10) || r.param.def) : null;
+  return text.replace(/\s*$/, '') + '\n\n' + r.text(n) + '\n';
+}
+
+function toggleRecipe(r){
+  const ta = $('rules-text');
+  if (ta.value.trim() === '') ta.value = presetText();
+  if (r.settings){
+    // ride the Table row: same directive lines, same surgical editing
+    const on = recipeOn(r, ta.value);
+    $('set-deal').value = on ? DEFAULT_DEAL : r.settings.deal;
+    $('set-timer').value = on ? DEFAULT_TIMER : r.settings.timer;
+    applySettingsToText();
+    return;
+  }
+  let t = removeRuleBlock(ta.value, r.rule);
+  if (!recipeOn(r, ta.value)) t = appendRecipe(t, r);
+  ta.value = t;
+  lastLoaded = t;
+  checkRules();
+  applyRules();
+}
+
+function syncRecipes(){
+  const t = $('rules-text').value;
+  for (const r of RECIPES){
+    $('rc-' + r.id).classList.toggle('on', recipeOn(r, t));
+    if (r.paramRe && !$('rp-' + r.id).matches(':focus')){
+      const m = t.match(r.paramRe);
+      if (m) $('rp-' + r.id).value = m[1];
+    }
+  }
+}
+
+for (const r of RECIPES){
+  const d = document.createElement('div');
+  d.className = 'recipe'; d.id = 'rc-' + r.id;
+  d.setAttribute('role', 'button'); d.tabIndex = 0;
+  d.innerHTML = '<span class="r-mini ' + r.cls + '" data-g="' + r.g + '"></span>' +
+    '<span><span class="r-t">' + r.title + '</span><span class="r-d">' + r.desc +
+    (r.param ? ' <input id="rp-' + r.id + '" type="number" min="' + r.param.min +
+      '" max="' + r.param.max + '" value="' + r.param.def + '"> ' + r.suffix : '') +
+    '</span></span>';
+  d.onclick = () => toggleRecipe(r);
+  d.onkeydown = e => {
+    if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggleRecipe(r); }
+  };
+  $('recipes').appendChild(d);
+  if (r.param){
+    const inp = $('rp-' + r.id);
+    inp.onclick = e => e.stopPropagation();
+    inp.onkeydown = e => e.stopPropagation();
+    inp.onchange = e => {
+      e.stopPropagation();
+      if (!$('rc-' + r.id).classList.contains('on')) return;
+      const ta = $('rules-text');
+      const t = appendRecipe(removeRuleBlock(ta.value, r.rule), r);
+      ta.value = t; lastLoaded = t;
+      checkRules(); applyRules();
+    };
+  }
+}
 
 document.querySelectorAll('.cheat code').forEach(c => c.onclick = () => {
   const ta = $('rules-text');
