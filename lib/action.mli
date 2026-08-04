@@ -19,6 +19,7 @@ module Server_to_client : sig
     | Lobby_updated of
         { players : String.t List.t
         ; ready_players : String.t List.t (* subset of players who clicked ready *)
+        ; bot_players : String.t List.t (* subset of players that are bots *)
         ; last_winner : String.t Option.t (* winner of this room's last game *)
         }
     | Game_started of { your_hand : Card.t List.t;

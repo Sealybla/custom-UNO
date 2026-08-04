@@ -92,3 +92,14 @@ let set_ready_rpc =
     ~bin_response:[%bin_type_class: unit Or_error.t]
     ~include_in_error_count:Only_on_exn
 ;;
+
+(* add a bot to the lobby (true) or drop the most recently added one
+   (false); bots fill seats up to the room's participant cap *)
+let set_bots_rpc =
+  Rpc.Rpc.create
+    ~name:"set-bots"
+    ~version:1
+    ~bin_query:Bool.bin_t
+    ~bin_response:[%bin_type_class: unit Or_error.t]
+    ~include_in_error_count:Only_on_exn
+;;

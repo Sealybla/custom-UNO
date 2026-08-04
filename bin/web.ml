@@ -115,11 +115,12 @@ let card_json (card : Card.t) =
 
 let event_json (event : Action.Server_to_client.t) =
   match event with
-  | Lobby_updated { players; ready_players; last_winner } ->
+  | Lobby_updated { players; ready_players; bot_players; last_winner } ->
     sprintf
-      {|{"type":"lobby","players":%s,"ready":%s,"last_winner":%s}|}
+      {|{"type":"lobby","players":%s,"ready":%s,"bots":%s,"last_winner":%s}|}
       (jlist (List.map players ~f:jstr))
       (jlist (List.map ready_players ~f:jstr))
+      (jlist (List.map bot_players ~f:jstr))
       (match last_winner with Some w -> jstr w | None -> "null")
   | Game_started
       { your_hand
@@ -334,6 +335,11 @@ let set_ready t ~code ~name ~is_ready =
     rpc_result (Rpc.Rpc.dispatch Rpc_protocol.set_ready_rpc session.conn is_ready))
 ;;
 
+let set_bots t ~code ~name ~add =
+  with_session t ~code ~name ~f:(fun session ->
+    rpc_result (Rpc.Rpc.dispatch Rpc_protocol.set_bots_rpc session.conn add))
+;;
+
 let poll t ~code ~name =
   with_session t ~code ~name ~f:(fun session ->
     let events = Queue.to_list session.events in
@@ -486,6 +492,14 @@ let handle t ~body req =
         | _ -> true
       in
       respond_result (set_ready t ~code ~name ~is_ready))
+  | "/api/bots" ->
+    with_ident (fun ~code ~name ->
+      let add =
+        match Uri.get_query_param uri "add" with
+        | Some "false" -> false
+        | _ -> true
+      in
+      respond_result (set_bots t ~code ~name ~add))
   | "/api/draw" ->
     with_ident (fun ~code ~name ->
       respond_result (take_action t ~code ~name ~action:Action.Client_to_server.Draw))

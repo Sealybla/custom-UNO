@@ -4,12 +4,13 @@ open! Custom_uno
 
 let print_event (event : Action.Server_to_client.t) =
   match event with
-  | Lobby_updated { players; ready_players; last_winner } ->
+  | Lobby_updated { players; ready_players; bot_players; last_winner } ->
     print_s
       [%message
         "lobby"
           (players : string list)
           (ready_players : string list)
+          (bot_players : string list)
           (last_winner : string option)]
   | Game_started
       { your_hand; top_card; current_color; player_names; current_player_name

@@ -35,6 +35,10 @@ module Room = struct
     ; mutable autopilot : string option (* player whose turn timed out *)
     ; mutable auto_passes : int (* consecutive server-made formality passes *)
     ; ready : String.Hash_set.t (* lobby members who clicked ready *)
+    ; bots : String.Hash_set.t
+      (* bots somebody deliberately added, as opposed to a seat a bot took
+         over when its player dropped mid-game. The difference matters at
+         game over: added bots stay for the rematch, takeovers do not. *)
     ; mutable last_winner : string option (* winner of this room's last game *)
     }
 end
@@ -56,6 +60,10 @@ type t =
 
 let request_queue_size_budget = 1024
 
+(* humans and bots share one table; 10 is the most a hand of 7 each can be
+   dealt from a 108-card deck with room left to draw *)
+let max_participants = 10
+
 (* room-wide broadcast *)
 (* official UNO's table size, and kind to the deck: 108 cards minus 10
    seven-card hands and the flipped top still leaves a 37-card draw pile.
@@ -69,12 +77,26 @@ let broadcast (room : Room.t) event =
     then Pipe.write_without_pushback client.writer event)
 ;;
 
-(* the lobby roster with ready flags and the reigning champion *)
+(* a bot is always willing to play, so it never holds up the ready gate *)
+let is_bot_name (room : Room.t) name =
+  match Hashtbl.find room.clients name with
+  | Some c -> c.Client_connection.is_bot
+  | None -> false
+;;
+
+let human_count (room : Room.t) =
+  Hashtbl.count room.clients ~f:(fun c -> not c.Client_connection.is_bot)
+;;
+
+(* the lobby roster with ready flags, who is a bot, and the reigning champion *)
 let lobby_event (room : Room.t) =
+  let names = Hashtbl.keys room.clients in
   Action.Server_to_client.Lobby_updated
-    { players = Hashtbl.keys room.clients
+    { players = names
     ; ready_players =
-        List.filter (Hashtbl.keys room.clients) ~f:(Hash_set.mem room.ready)
+        List.filter names ~f:(fun n ->
+          Hash_set.mem room.ready n || is_bot_name room n)
+    ; bot_players = List.filter names ~f:(is_bot_name room)
     ; last_winner = room.last_winner
     }
 ;;
@@ -524,10 +546,67 @@ let broadcast_notifications
          { direction = after.direction })
 ;;
 
-(* a room with nobody in it and no running game can be forgotten *)
+(* A bot occupies a seat exactly like a player: same table, same writer. It
+   has no client on the other end, so its pipe is drained forever - without
+   that, every broadcast would queue up in a pipe nobody ever reads. *)
+let add_bot (room : Room.t) : unit Or_error.t =
+  if Option.is_some room.game_state
+  then Or_error.error_string "Cannot add bots once the game has started"
+  else if Hashtbl.length room.clients >= max_participants
+  then
+    Or_error.errorf
+      "Room is full (%d players max)"
+      max_participants
+  else (
+    let name =
+      let rec pick n =
+        let candidate = sprintf "Bot %d" n in
+        if Hashtbl.mem room.clients candidate then pick (n + 1) else candidate
+      in
+      pick 1
+    in
+    let reader, writer = Pipe.create () in
+    don't_wait_for (Pipe.drain reader);
+    Hashtbl.set
+      room.clients
+      ~key:name
+      ~data:{ Client_connection.name; writer; is_bot = true };
+    Hash_set.add room.bots name;
+    Core.print_s [%message "Bot added" (room.code : string) (name : string)];
+    Ok ())
+;;
+
+(* drops the most recently added bot, so the button is a plain counter *)
+let remove_bot (room : Room.t) : unit Or_error.t =
+  if Option.is_some room.game_state
+  then Or_error.error_string "Cannot remove bots once the game has started"
+  else (
+    match
+      List.sort (Hash_set.to_list room.bots) ~compare:String.compare
+      |> List.last
+    with
+    | None -> Or_error.error_string "There are no bots to remove"
+    | Some name ->
+      (match Hashtbl.find room.clients name with
+       | Some c -> Pipe.close c.writer
+       | None -> ());
+      Hashtbl.remove room.clients name;
+      Hash_set.remove room.bots name;
+      Hash_set.remove room.ready name;
+      Ok ())
+;;
+
+(* A room with no HUMANS and no running game can be forgotten - bots alone
+   must not keep it alive, or every abandoned lobby with a bot in it would
+   leak a room and its engine loop. *)
 let maybe_remove_room t (room : Room.t) =
-  if Hashtbl.is_empty room.clients && Option.is_none room.game_state
+  if human_count room = 0 && Option.is_none room.game_state
   then (
+    Hashtbl.iter room.clients ~f:(fun c ->
+      if not (Pipe.is_closed c.writer) then Pipe.close c.writer);
+    Hashtbl.clear room.clients;
+    Hash_set.clear room.bots;
+    Hash_set.clear room.ready;
     Hashtbl.remove t.rooms room.code;
     Pipe.close room.request_writer;
     Core.print_s [%message "Room closed" (room.code : string)])
@@ -649,8 +728,12 @@ let start_engine_loop t (room : Room.t) request_reader =
                             { winner_name; standings });
                        room.game_state <- None;
                        room.last_winner <- Some winner_name;
+                       (* bots somebody added stay for a rematch; seats a
+                          bot only took over because its player dropped are
+                          cleared out *)
                        Hashtbl.filter_inplace room.clients ~f:(fun client ->
-                         not client.is_bot);
+                         (not client.is_bot)
+                         || Hash_set.mem room.bots client.name);
                        broadcast room (lobby_event room);
                        maybe_remove_room t room
                      | None -> ())
@@ -687,6 +770,7 @@ let create_room t =
     ; autopilot = None
     ; auto_passes = 0
     ; ready = String.Hash_set.create ()
+    ; bots = String.Hash_set.create ()
     ; last_winner = None
     }
   in
@@ -760,6 +844,15 @@ let start
                        return
                          (Or_error.error_string
                             "Username already taken in this room")
+                     else if Hashtbl.length room.clients >= max_participants
+                     then
+                       (* bots occupy seats too, so a room full of them
+                          turns people away just like a room of players *)
+                       return
+                         (Or_error.errorf
+                            "Room is full (%d players max) - remove a bot to \
+                             make space"
+                            max_participants)
                      else (
                        state.player_name <- Some name;
                        state.room <- Some room;
@@ -909,7 +1002,8 @@ let start
                 let player_names = Hashtbl.keys room.clients in
                 let not_ready =
                   List.filter player_names ~f:(fun name ->
-                    not (Hash_set.mem room.ready name))
+                    (not (Hash_set.mem room.ready name))
+                    && not (is_bot_name room name))
                 in
                 if List.length player_names < 2
                 then return (Or_error.error_string "Need at least 2 players")
@@ -945,6 +1039,16 @@ let start
                     (* the first player's turn timer starts now *)
                     drive_or_auto_pass room initial_state;
                     return (Ok ()))))
+        ; Rpc.Rpc.implement Rpc_protocol.set_bots_rpc (fun state add ->
+            match in_room state with
+            | Error e -> return (Error e)
+            | Ok (_player_name, room) ->
+              let result = if add then add_bot room else remove_bot room in
+              (match result with
+               | Error _ as e -> return e
+               | Ok () ->
+                 broadcast room (lobby_event room);
+                 return (Ok ())))
         ; Rpc.Rpc.implement Rpc_protocol.set_ready_rpc (fun state is_ready ->
             match in_room state with
             | Error e -> return (Error e)

@@ -108,6 +108,7 @@ let html =
     flex-wrap:wrap; gap:.5rem; }
   ul#lobby-players li.ready { box-shadow:0 0 0 2.5px var(--c-green); }
   ul#lobby-players li .tag { margin-left:.45rem; font-size:.78rem; opacity:.7; }
+  ul#lobby-players li.bot { background:rgba(255,255,255,.08); font-style:italic; }
   ul#lobby-players li.ready .tag { color:#8fe3a8; opacity:1; }
   ul#lobby-players li .crown { position:absolute; top:-1.15em; left:50%;
     transform:translateX(-50%) rotate(-14deg); font-size:1.05em;
@@ -459,6 +460,13 @@ let html =
         <span id="copy-done" class="ok"></span>
       </p>
       <ul id="lobby-players"></ul>
+      <div class="preset-row" style="justify-content:center">
+        <span style="opacity:.8">Bots:</span>
+        <button id="bot-remove" class="small">−</button>
+        <span id="bot-count" style="font-weight:800">0</span>
+        <button id="bot-add" class="small">+ Add bot</button>
+        <span id="seat-count" style="opacity:.7; font-size:.85rem"></span>
+      </div>
       <button id="ready-btn">I'm ready</button>
       <button id="start-btn" disabled>Start game</button>
       <button id="leave-lobby" class="leave">Leave lobby</button>
@@ -842,7 +850,9 @@ const freshState = () => ({ players:[], hand:[], top:null, color:null, current:n
               swapTargets:new Set(),
               // names of players who have gone out while the game continues
               out:[],
-              ready:[], lastWinner:null });
+              ready:[], bots:[], lastWinner:null });
+// must match Server.max_participants
+const MAX_PLAYERS = 10;
 let state = freshState();
 let pendingWild = null;
 let lastPlayedId = null;
@@ -975,6 +985,7 @@ function apply(ev, fx){
     case 'lobby':
       state.players = ev.players;
       state.ready = ev.ready || [];
+      state.bots = ev.bots || [];
       state.lastWinner = ev.last_winner || null;
       dirty.lobby = true;
       if (!state.inGame) setView('lobby');
@@ -1194,13 +1205,23 @@ function renderLobby(){
       c.title = 'won the last game';
       li.append(c);
     }
-    li.append(document.createTextNode(p === name ? p + ' (you)' : p));
+    const bot = (state.bots || []).includes(p);
+    li.classList.toggle('bot', bot);
+    li.append(document.createTextNode(
+      bot ? '🤖 ' + p : (p === name ? p + ' (you)' : p)));
     const tag = document.createElement('span');
     tag.className = 'tag';
-    tag.textContent = rdy ? '✔ ready' : '· not ready';
+    // a bot is always willing, so saying "ready" about it is just noise
+    tag.textContent = bot ? '· bot' : (rdy ? '✔ ready' : '· not ready');
     li.append(tag);
     lp.append(li);
   }
+  const bots = (state.bots || []).length;
+  $('bot-count').textContent = bots;
+  $('bot-add').disabled = state.players.length >= MAX_PLAYERS;
+  $('bot-remove').disabled = bots === 0;
+  $('seat-count').textContent =
+    state.players.length + ' / ' + MAX_PLAYERS + ' seats';
   const meReady = state.ready.includes(name);
   const rb = $('ready-btn');
   rb.textContent = meReady ? 'Not ready' : 'I’m ready';
@@ -1596,6 +1617,14 @@ $('pass-btn').onclick = async () => {
 };
 $('uno-btn').onclick = async () => {
   const r = await api('/api/uno', {method:'POST'}); if (!r.ok) toast(r.error);
+};
+$('bot-add').onclick = async () => {
+  const r = await api('/api/bots?add=true', {method:'POST'});
+  if (!r.ok) toast(r.error);
+};
+$('bot-remove').onclick = async () => {
+  const r = await api('/api/bots?add=false', {method:'POST'});
+  if (!r.ok) toast(r.error);
 };
 $('ready-btn').onclick = async () => {
   const r = await api('/api/ready?on=' + !state.ready.includes(name), {method:'POST'});
