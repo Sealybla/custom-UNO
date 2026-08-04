@@ -157,6 +157,32 @@ let html =
   .r-green { background:var(--c-green); } .r-yellow { background:#d4a900; }
   #custom-rules > summary { cursor:pointer; font-size:.95rem; margin:.9rem 0 .3rem;
     user-select:none; opacity:.9; }
+  /* smart editor: a colored copy of the text sits behind a transparent
+     textarea, so both must share every metric that affects layout */
+  #ed-wrap { position:relative; }
+  #ed-wrap textarea, #hl, #ed-mirror { font-family:ui-monospace,monospace;
+    font-size:.85rem; line-height:1.5; padding:.5rem .6rem; margin:0;
+    box-sizing:border-box; width:100%; white-space:pre-wrap; overflow-wrap:break-word; }
+  #hl, #ed-mirror { position:absolute; inset:0; overflow:hidden;
+    border:1px solid transparent; pointer-events:none; }
+  #hl { background:#140c0c; color:#ffe9c9; }
+  #ed-mirror { visibility:hidden; }
+  #ed-wrap textarea { position:relative; display:block; background:transparent;
+    color:transparent; caret-color:#ffe9c9; resize:vertical; }
+  .e-kw { color:#ffce00; font-weight:600; } .e-cond { color:#7cc7ff; }
+  .e-eff { color:#8fe3a8; } .e-str { color:#ffb0b0; } .e-num { color:#ffd97a; }
+  .e-cm { opacity:.55; }
+  #ac-pop { position:absolute; z-index:5; background:#2c1b18;
+    border:1px solid rgba(255,206,0,.5); border-radius:8px; overflow:hidden;
+    box-shadow:0 6px 18px rgba(0,0,0,.5); font-size:.78rem; max-width:26rem; }
+  #ac-pop div { padding:.3rem .7rem; cursor:pointer; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; }
+  #ac-pop div.sel { background:rgba(255,206,0,.2); }
+  #ac-pop b { font-family:ui-monospace,monospace; font-weight:600; }
+  #ac-pop small { opacity:.65; margin-left:.6rem; }
+  #phrase-help { min-height:1.1rem; font-size:.76rem; opacity:.85;
+    margin:.25rem 0 0; font-family:ui-monospace,monospace; }
+  #phrase-help b { color:var(--c-yellow); }
   #check-status button { margin-left:.5rem; padding:.05rem .5rem; font-size:.72rem; }
   #override-list { display:flex; flex-wrap:wrap; gap:.35rem; margin-top:.5rem; font-size:.83rem; }
   #override-list code { cursor:pointer; padding:.14rem .45rem; border-radius:6px;
@@ -510,7 +536,12 @@ let html =
       <details id="custom-rules">
         <summary>✍️ Custom rules — write your own (builder, editor, all phrases)</summary>
       <div id="check-status"></div>
-      <textarea id="rules-text" rows="12" spellcheck="false"></textarea>
+      <div id="ed-wrap">
+        <pre id="hl" aria-hidden="true"></pre>
+        <textarea id="rules-text" rows="12" spellcheck="false"></textarea>
+        <div id="ac-pop" hidden></div>
+      </div>
+      <div id="phrase-help"></div>
 
       <details id="builder">
         <summary>🛠 Compose a new rule without typing</summary>
@@ -1644,6 +1675,8 @@ async function applyRules(){
 
 // nag whenever the box has drifted from what was actually sent
 function markRulesDirty(){
+  renderHl();   // every programmatic editor write passes through here or
+                // checkRules; with transparent text the overlay IS the display
   const dirtyRules =
     appliedText !== null && $('rules-text').value.trim() !== appliedText.trim();
   $('rules-btn').classList.toggle('needs-apply', dirtyRules);
@@ -1659,6 +1692,7 @@ let checkT = null;
 async function checkRules(){
   const text = $('rules-text').value;
   const st = $('check-status');
+  renderHl();
   syncRecipes();
   if (!text.trim()){ st.textContent = ''; return; }
   try {
@@ -1972,7 +2006,242 @@ document.querySelectorAll('.cheat code').forEach(c => c.onclick = () => {
   const ta = $('rules-text');
   ta.setRangeText(c.textContent, ta.selectionStart, ta.selectionEnd, 'end');
   ta.focus();
+  renderHl();
   scheduleCheck();
+});
+
+/* ---------- smart editor: coloring, autocomplete, caret help ----------
+   The textarea's own text is transparent; a synced <pre> behind it carries
+   the colors. Every programmatic value-set flows through checkRules or
+   markRulesDirty, both of which re-render, so the display never lies. */
+const ED = $('rules-text');
+
+function escH(s){
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderHl(){
+  let mode = 'top';
+  const html = ED.value.split('\n').map(line => {
+    // a # opens a comment only outside quotes (an even count precedes it)
+    const cmM = line.match(/#(?=(?:[^"]*"[^"]*")*[^"]*$)/);
+    let code = line, cm = '';
+    if (cmM){ code = line.slice(0, cmM.index); cm = line.slice(cmM.index); }
+    const first = (code.match(/^\s*([a-z]+)/i) || [])[1];
+    if (first && /^(rule|use|remove|deal|turn)$/i.test(first)) mode = 'top';
+    let out = '';
+    const re = /("[^"]*"?)|(\d+)|([A-Za-z][A-Za-z']*)|(\s+)|(.)/g;
+    let m;
+    while ((m = re.exec(code))){
+      if (m[1]) out += '<span class="e-str">' + escH(m[1]) + '</span>';
+      else if (m[2]) out += '<span class="e-num">' + m[2] + '</span>';
+      else if (m[3]){
+        const w = m[3].toLowerCase();
+        if (w === 'when'){ mode = 'cond'; out += '<span class="e-kw">' + m[3] + '</span>'; }
+        else if (w === 'do'){ mode = 'eff'; out += '<span class="e-kw">' + m[3] + '</span>'; }
+        else if (w === 'and' || w === 'or' || w === 'not')
+          out += '<span class="e-kw">' + m[3] + '</span>';
+        else if (mode === 'top' &&
+                 /^(rule|priority|use|remove|deal|turn|timer|seconds?|cards?|off)$/.test(w))
+          out += '<span class="e-kw">' + m[3] + '</span>';
+        else if (mode === 'cond') out += '<span class="e-cond">' + escH(m[3]) + '</span>';
+        else if (mode === 'eff') out += '<span class="e-eff">' + escH(m[3]) + '</span>';
+        else out += escH(m[3]);
+      }
+      else if (m[4]) out += m[4];
+      else out += escH(m[5]);
+    }
+    if (cm) out += '<span class="e-cm">' + escH(cm) + '</span>';
+    return out;
+  }).join('\n');
+  $('hl').innerHTML = html + '\n';
+}
+
+/* the cheat sheet is the single source of phrases: harvest its entries so
+   autocomplete and caret help stay in sync with the DSL automatically */
+function phrasePat(t){
+  let e = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  e = e.replace(/"[^"]*"/, '"[^"]*"');
+  e = e.replace(/\b\d+\b/g, '\\d+');
+  e = e.replace(/\b(red|yellow|green|blue)\b/, '(?:red|yellow|green|blue)');
+  return new RegExp(e, 'gi');
+}
+const ACD = { cond:[], eff:[], top:[] };
+const PHRASES = [];
+{
+  let group = '';
+  document.querySelectorAll('.cheat h4, .cheat code').forEach(el => {
+    if (el.tagName === 'H4'){ group = el.textContent; return; }
+    const item = { t: el.textContent, d: el.title || '' };
+    PHRASES.push({ ...item, re: phrasePat(item.t) });
+    if (/Condition/i.test(group)) ACD.cond.push(item);
+    else if (/Effect/i.test(group)) ACD.eff.push(item);
+    else ACD.top.push(item);
+  });
+  ACD.top.unshift({ t: 'rule "my rule" priority 60:',
+    d: 'start a new rule - follow with a when line and a do line' });
+}
+
+let acItems = [], acSel = 0, acStart = 0;
+
+function acContext(){
+  const pos = ED.selectionStart;
+  if (pos !== ED.selectionEnd) return null;
+  const before = ED.value.slice(0, pos);
+  const ls = before.lastIndexOf('\n') + 1;
+  const line = before.slice(ls);
+  if (/^\s*#/.test(line)) return null;
+  let ctx = null, m;
+  if (/\bdo\b/i.test(line) && (m = line.match(/^([\s\S]*(?:\bdo\b|,))([^,]*)$/i)))
+    ctx = { kind:'eff', start: ls + m[1].length, frag: m[2] };
+  else if ((m = line.match(/^([\s\S]*(?:\bwhen\b|\band\b|\bor\b|\bnot\b|\())([^()]*)$/i)))
+    ctx = { kind:'cond', start: ls + m[1].length, frag: m[2] };
+  else if (/^\s*rule\b/i.test(line)) return null;
+  else {
+    m = line.match(/^(\s*)([\s\S]*)$/);
+    ctx = { kind:'top', start: ls + m[1].length, frag: m[2] };
+  }
+  const lead = ctx.frag.match(/^\s*/)[0].length;
+  ctx.start += lead;
+  ctx.frag = ctx.frag.slice(lead);
+  return ctx;
+}
+
+function acFilter(list, frag){
+  const f = frag.toLowerCase();
+  const pre = [], sub = [];
+  for (const it of list){
+    const t = it.t.toLowerCase();
+    if (t.startsWith(f)) pre.push(it);
+    else if (f.length >= 2 && t.includes(f)) sub.push(it);
+  }
+  return pre.concat(sub).slice(0, 8);
+}
+
+let edLineH = 0, edMirror = null;
+function caretXY(){
+  if (!edMirror){
+    edMirror = document.createElement('div');
+    edMirror.id = 'ed-mirror';
+    edMirror.setAttribute('aria-hidden', 'true');
+    $('ed-wrap').appendChild(edMirror);
+  }
+  edMirror.textContent = ED.value.slice(0, ED.selectionStart);
+  const mark = document.createElement('span');
+  mark.textContent = '​';
+  edMirror.appendChild(mark);
+  return { x: mark.offsetLeft, y: mark.offsetTop - ED.scrollTop };
+}
+
+function paintAc(){
+  const p = $('ac-pop');
+  p.innerHTML = '';
+  acItems.forEach((it, i) => {
+    const d = document.createElement('div');
+    if (i === acSel) d.className = 'sel';
+    d.innerHTML = '<b>' + escH(it.t) + '</b>' +
+      (it.d ? '<small>' + escH(it.d) + '</small>' : '');
+    d.onmousedown = e => e.preventDefault();  // keep focus in the editor
+    d.onclick = () => acAccept(it);
+    d.onmouseenter = () => { acSel = i; paintAc(); setHelp(it); };
+    p.appendChild(d);
+  });
+}
+
+function placeAc(){
+  const p = $('ac-pop');
+  if (!edLineH) edLineH = parseFloat(getComputedStyle(ED).lineHeight) || 18;
+  const { x, y } = caretXY();
+  const wrap = $('ed-wrap');
+  p.style.left = Math.max(0, Math.min(x, wrap.clientWidth - p.offsetWidth - 4)) + 'px';
+  p.style.top = (y + edLineH + 2) + 'px';
+}
+
+function setHelp(it){
+  $('phrase-help').innerHTML =
+    it ? '<b>' + escH(it.t) + '</b> — ' + escH(it.d) : '';
+}
+
+function updateHelp(){
+  if (!$('ac-pop').hidden && acItems[acSel]){ setHelp(acItems[acSel]); return; }
+  const pos = ED.selectionStart;
+  const ls = ED.value.lastIndexOf('\n', pos - 1) + 1;
+  let le = ED.value.indexOf('\n', pos);
+  if (le < 0) le = ED.value.length;
+  const line = ED.value.slice(ls, le), col = pos - ls;
+  let best = null;
+  for (const p of PHRASES){
+    p.re.lastIndex = 0;
+    let m;
+    while ((m = p.re.exec(line))){
+      if (m.index > col) break;
+      if (col <= m.index + m[0].length){
+        if (!best || m[0].length > best.t.length) best = { t: m[0], d: p.d };
+        break;
+      }
+    }
+  }
+  setHelp(best);
+}
+
+function closeAc(){
+  $('ac-pop').hidden = true;
+  acItems = [];
+  updateHelp();
+}
+
+function acAccept(it){
+  ED.setRangeText(it.t, acStart, ED.selectionStart, 'end');
+  renderHl();
+  markRulesDirty();
+  scheduleCheck();
+  closeAc();
+  ED.focus();
+}
+
+function updateAc(){
+  const ctx = acContext();
+  if (!ctx || !ctx.frag){ closeAc(); return; }
+  const list = ACD[ctx.kind];
+  acItems = acFilter(list, ctx.frag);
+  if (!acItems.length ||
+      (acItems.length === 1 && acItems[0].t.toLowerCase() === ctx.frag.toLowerCase())){
+    closeAc();
+    return;
+  }
+  acStart = ctx.start;
+  acSel = 0;
+  paintAc();
+  $('ac-pop').hidden = false;
+  placeAc();
+  updateHelp();
+}
+
+ED.addEventListener('input', () => { renderHl(); updateAc(); });
+ED.addEventListener('scroll', () => {
+  $('hl').scrollTop = ED.scrollTop;
+  $('hl').scrollLeft = ED.scrollLeft;
+  if (!$('ac-pop').hidden) closeAc();
+});
+ED.addEventListener('click', () => { closeAc(); updateHelp(); });
+ED.addEventListener('keyup', e => {
+  if ($('ac-pop').hidden &&
+      ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key))
+    updateHelp();
+});
+ED.addEventListener('blur', () => setTimeout(() => { $('ac-pop').hidden = true; }, 150));
+ED.addEventListener('keydown', e => {
+  if ($('ac-pop').hidden) return;
+  if (e.key === 'ArrowDown'){
+    e.preventDefault(); acSel = (acSel + 1) % acItems.length; paintAc(); updateHelp();
+  } else if (e.key === 'ArrowUp'){
+    e.preventDefault();
+    acSel = (acSel + acItems.length - 1) % acItems.length; paintAc(); updateHelp();
+  } else if (e.key === 'Enter' || e.key === 'Tab'){
+    e.preventDefault(); acAccept(acItems[acSel]);
+  } else if (e.key === 'Escape'){
+    e.preventDefault(); closeAc();
+  }
 });
 
 /* the current preset's rules, offered for copy-and-customize: clicking one
