@@ -66,6 +66,11 @@ let print_event (event : Action.Server_to_client.t) =
     print_s [%message "hands moved" (moves : (string * string) list)]
   | Jumped_in { player_name } ->
     print_s [%message "jumped in" (player_name : string)]
+  | Player_dropped { player_name } ->
+    print_s
+      [%message "player dropped - the table plays for them" (player_name : string)]
+  | Player_rejoined { player_name } ->
+    print_s [%message "player reconnected" (player_name : string)]
 ;;
 
 let help =

@@ -1124,6 +1124,16 @@ function apply(ev, fx){
       logLine((ev.player === name ? 'you' : ev.player) + ' jumped in!');
       if (fx) fx.push({kind:'jumpin', player:ev.player});
       break;
+    case 'player_dropped':
+      if (ev.player !== name){
+        logLine(ev.player + ' disconnected — the table plays for them');
+        toast(ev.player + ' disconnected — the table plays for them');
+      }
+      break;
+    case 'player_rejoined':
+      logLine((ev.player === name ? 'you' : ev.player) + ' reconnected');
+      if (ev.player !== name) toast(ev.player + ' is back!');
+      break;
     case 'game_over':
       state.inGame = false;
       hideCountdown();
@@ -1638,6 +1648,8 @@ async function leaveParty(){
   if (polling){ clearInterval(polling); polling = null; }
   sessionStorage.removeItem('uno-name');
   sessionStorage.removeItem('uno-code');
+  localStorage.removeItem('uno-last-name');
+  localStorage.removeItem('uno-last-code');
   name = null; code = null;
   state = freshState();
   pendingWild = null; lastPlayedId = null; handOrder = [];
@@ -2574,10 +2586,17 @@ async function joinAs(v){
       name = null;
       sessionStorage.removeItem('uno-name');
       sessionStorage.removeItem('uno-code');
+      localStorage.removeItem('uno-last-name');
+      localStorage.removeItem('uno-last-code');
       return;
     }
     sessionStorage.setItem('uno-name', v);
     sessionStorage.setItem('uno-code', code);
+    // localStorage survives a closed tab or crashed browser, so a fresh
+    // tab can walk straight back into a live game (the server hands the
+    // seat back from the stand-in bot)
+    localStorage.setItem('uno-last-name', v);
+    localStorage.setItem('uno-last-code', code);
     $('room-code').textContent = code;
     $('game-code').textContent = 'ROOM ' + code;
     setView('lobby');
@@ -2653,11 +2672,12 @@ $('rules-text').value = presetText();
 lastLoaded = $('rules-text').value;
 checkRules();
 
-// invite links carry ?code=XXXX; a saved session (per-tab) wins unless the
-// link points at a different room
+// invite links carry ?code=XXXX; a saved session (per-tab refresh) wins,
+// then the last game this browser was in (reconnect after a closed tab or
+// crash), unless the link points at a different room
 const urlCode = (new URLSearchParams(location.search).get('code') || '').toUpperCase();
-const savedName = sessionStorage.getItem('uno-name');
-const savedCode = sessionStorage.getItem('uno-code');
+const savedName = sessionStorage.getItem('uno-name') || localStorage.getItem('uno-last-name');
+const savedCode = sessionStorage.getItem('uno-code') || localStorage.getItem('uno-last-code');
 if (savedName && savedCode && (!urlCode || urlCode === savedCode)){
   $('name-input').value = savedName;
   code = savedCode;

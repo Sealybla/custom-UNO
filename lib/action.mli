@@ -74,5 +74,9 @@ module Server_to_client : sig
     | Hands_moved of { moves : (String.t * String.t) List.t }
     (* an accepted out-of-turn play: this player grabbed the turn *)
     | Jumped_in of { player_name : String.t }
+    (* mid-game connection changes: the seat plays on as a bot while its
+       player is gone, and goes back to them when they reconnect *)
+    | Player_dropped of { player_name : String.t }
+    | Player_rejoined of { player_name : String.t }
   [@@deriving sexp, compare, equal, bin_io]
 end
