@@ -165,6 +165,13 @@ let parse_atom (toks : tokens) : (Rule.Condition.t * tokens) Or_error.t =
     Ok (HandSizeGreaterThan n, rest)
   | (Word "hand", _) :: (Word "size", _) :: (Equals, _) :: (Int n, _) :: rest ->
     Ok (HandSizeEquals n, rest)
+  | (Word "any", _) :: (Word "opponent", _) :: (Word "has", _)
+    :: (Word "more", _) :: (Word "than", _) :: (Int n, _)
+    :: (Word ("card" | "cards"), _) :: rest ->
+    Ok (AnyOpponentHandGreaterThan n, rest)
+  | (Word "any", _) :: (Word "opponent", _) :: (Word "has", _) :: (Int n, _)
+    :: (Word ("card" | "cards"), _) :: rest ->
+    Ok (AnyOpponentHandEquals n, rest)
   | (Word "top", _) :: (Word "card", _) :: (Word "is", _) :: (Int n, line) :: rest ->
     if n >= 0 && n <= 9
     then Ok (TopCardIsNumber n, rest)
@@ -402,6 +409,31 @@ let parse_ruleset_named src
          Or_error.errorf
            "line %d: turn timer needs 'N seconds' or 'off'"
            line)
+    (* removal is positional, like redefinition: it drops the rule from
+       everything defined ABOVE it, and a later rule may re-add the name *)
+    | (Token.Word "remove", line) :: (Token.Word "rule", _)
+      :: (Token.Str name, _) :: rest ->
+      if List.exists acc ~f:(fun (n, _) -> String.Caseless.equal n name)
+      then
+        go
+          rest
+          (List.filter acc ~f:(fun (n, _) ->
+             not (String.Caseless.equal n name)))
+          ~allow_use
+      else (
+        let have = List.rev_map acc ~f:fst in
+        Or_error.errorf
+          "line %d: no rule named \"%s\" to remove (defined so far: %s)"
+          line
+          name
+          (if List.is_empty have
+           then "none - put it after the `use` line"
+           else String.concat ~sep:", " have))
+    | (Token.Word "remove", line) :: _ ->
+      Or_error.errorf
+        "line %d: remove rule needs the quoted rule name, like: remove rule \
+         \"play plus four\""
+        line
     | (Token.Word "use", line) :: rest when allow_use ->
       (* the preset name is every word to the end of the line *)
       let name_words, rest =
@@ -428,8 +460,8 @@ let parse_ruleset_named src
          go rest (List.rev included @ acc) ~allow_use)
     | _ ->
       Or_error.errorf
-        "expected 'rule', 'use <preset>', 'deal N cards' or 'turn timer ...' \
-         to start a line (%s)"
+        "expected 'rule', 'use <preset>', 'remove rule \"name\"', 'deal N \
+         cards' or 'turn timer ...' to start a line (%s)"
         (where toks)
   in
   let%bind named = go toks [] ~allow_use:true in

@@ -30,6 +30,8 @@ module Condition = struct
     | ActiveColorIs of Card.Color.t (* the table's color to match right now *)
     | HandSizeGreaterThan of int (* the ACTING player's hand, before the play *)
     | HandSizeEquals of int
+    | AnyOpponentHandEquals of int (* some player OTHER than the actor holds exactly N *)
+    | AnyOpponentHandGreaterThan of int
     | TopCardIsNumber of int (* what's SHOWING on the pile, not what's played *)
     | TopCardIsAction (* the pile shows a skip/reverse/+2/+4/wild *)
     | DirectionIsClockwise

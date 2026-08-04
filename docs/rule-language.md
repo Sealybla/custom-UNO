@@ -46,6 +46,18 @@ one (case-insensitive) **replaces** it in place. That is how an extension
 tweaks a preset rule — redefine it under the same name — and why `use`
 never duplicates anything. Ids are assigned after this merge.
 
+Subtraction works the same way: `remove rule "play plus four"` drops the
+named rule from everything defined **above** it, so it belongs after the
+`use` line it edits (removing a name nothing defined is an error that
+lists what exists). The cards that rule powered simply become unplayable —
+no rule accepts them. Removal is positional like redefinition: a later
+rule with the same name re-adds it.
+
+```
+use standard
+remove rule "play plus four"   # +4s are dead cards now
+```
+
 ## Conditions
 
 | Text | `Rule.Condition.t` |
@@ -67,6 +79,7 @@ never duplicates anything. Ids are assigned after this merge.
 | `active color is red` (etc.) | `ActiveColorIs Red` |
 | `pending draws > N` | `PendingDrawsGreaterThan N` |
 | `hand size > N` / `hand size = N` | `HandSizeGreaterThan N` / `HandSizeEquals N` — the acting player's hand, counted before a played card leaves it |
+| `any opponent has N cards` / `any opponent has more than N cards` | `AnyOpponentHandEquals N` / `AnyOpponentHandGreaterThan N` — some player *other than the actor*; leader-watch and defense rules (`someone else has uno` is the `= 1` special case the built-in UNO rules use) |
 | `top card is N` (0–9) / `top card is action` | `TopCardIsNumber N` / `TopCardIsAction` — what's *showing on the pile*, testable on any action (unlike `card is …`, which tests the played card) |
 | `direction is clockwise` / `direction is counter` | `DirectionIsClockwise` (counter parses as its negation) |
 | `draw pile is empty` / `draw pile < N` | `DrawPileLessThan 1` / `DrawPileLessThan N` — endgame triggers; the pile still reshuffles automatically |

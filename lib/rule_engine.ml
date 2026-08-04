@@ -530,6 +530,27 @@ let rec eval_condition
      | PassRequested { player }
      | UnoCalled { player } ->
        Game_state.hand_size state (Player.get_id player) = n)
+  (* "opponent" = any player other than the actor. Their hands are never
+     mid-change when a rule is judged, so there is no before/after subtlety
+     like the actor's own hand has *)
+  | AnyOpponentHandEquals n ->
+    (match evt with
+     | CardPlayed { player; _ }
+     | DrawRequested { player }
+     | PassRequested { player }
+     | UnoCalled { player } ->
+       List.exists state.players ~f:(fun p ->
+         (not (Int.equal (Player.get_id p) (Player.get_id player)))
+         && List.length (Player.get_hand p) = n))
+  | AnyOpponentHandGreaterThan n ->
+    (match evt with
+     | CardPlayed { player; _ }
+     | DrawRequested { player }
+     | PassRequested { player }
+     | UnoCalled { player } ->
+       List.exists state.players ~f:(fun p ->
+         (not (Int.equal (Player.get_id p) (Player.get_id player)))
+         && List.length (Player.get_hand p) > n))
   | TopCardIsNumber n ->
     (match Card.Value.of_digit n with
      | Some v -> Card.Value.equal (Card.get_value state.top_card) v

@@ -580,6 +580,7 @@ let html =
             <code title="no passing: draw one card at a time until you can play">use draw until playable</code>
             <code title="both variants combined">use stacking with draw until playable</code>
             <code title="ADD-ON: use it after a base preset — 7s swap hands with the next player, 0s rotate all hands">use seven zero</code>
+            <code title="drop a rule pulled in by use — the cards it powered become unplayable. Put it AFTER the use line; a later rule with the same name re-adds it">remove rule "play plus four"</code>
             <h4 style="margin-top:.6rem">Settings</h4>
             <div class="cheat-note">not rules — no when/do, just a line of its own:<br>
             <b>deal</b> &lt;1–30&gt; <b>cards</b> · <b>turn timer</b> &lt;5–300&gt; <b>seconds</b> · <b>turn timer off</b></div>
@@ -601,6 +602,8 @@ let html =
             <code title="the played card is any 0-9, whatever its color">card is number</code>
             <code title="the acting player holds exactly this many cards (counted before the card leaves the hand)">hand size = 1</code>
             <code title="the acting player holds more than this many cards">hand size > 6</code>
+            <code title="some player OTHER than you holds exactly that many — leader-watch rules">any opponent has 1 card</code>
+            <code title="some player other than you holds more than that many">any opponent has more than 10 cards</code>
             <code title="the pile SHOWS this number (whatever you're doing) — different from 'card is 7', which tests the card you're playing">top card is 7</code>
             <code title="the pile shows a skip, reverse, +2, +4 or wild">top card is action</code>
             <code title="play is moving clockwise — write 'direction is counter' for the other way">direction is clockwise</code>
@@ -795,6 +798,8 @@ const WHEN_OPTIONS = [
   ['pending draws > N', 'penalty draws are pending'],
   ['hand size = N', 'the acting player holds exactly N cards'],
   ['hand size > N', 'the acting player holds more than N cards'],
+  ['any opponent has N cards', 'some other player holds exactly N'],
+  ['any opponent has more than N cards', 'some other player holds more than N'],
   ['top card is N', 'the pile shows a specific number (0-9)'],
   ['top card is action', 'the pile shows a skip/reverse/+2/+4/wild'],
   ['direction is clockwise', 'play is moving clockwise'],
@@ -1807,7 +1812,7 @@ const RECIPES = [
       '  do reject "no going out on an action card"' },
   { id:'t4', cls:'r-blue', g:'+4', title:'Targeted +4',
     desc:'a wild +4 hits a player you pick, not the next one',
-    rule:'play plus four', marker:'chosen player draws',
+    rule:'play plus four', marker:'chosen player draws', conflicts:['no4'],
     text: () => 'rule "play plus four" priority 110:\n' +
       '  when card is plus four and your turn\n' +
       '  do play the card, set color to declared, chosen player draws 4 cards, advance turn' },
@@ -1833,9 +1838,24 @@ const RECIPES = [
     text: n => 'rule "no hoarding" priority 200:\n' +
       '  when player draws and hand size > ' + n + '\n' +
       '  do reject "you have enough cards already"' },
+  { id:'no4', cls:'r-yellow', g:'✕4', title:'No +4s',
+    desc:'wild +4s become dead cards — unplayable',
+    line:'remove rule "play plus four"', conflicts:['t4'] },
+  { id:'tax', cls:'r-green', g:'+2', title:'Leader tax',
+    desc:'while someone is on their last card, +2s double and hit a player you pick',
+    rule:'leader tax',
+    text: () => 'rule "leader tax" priority 105:\n' +
+      '  when card is plus two and any opponent has 1 card and your turn\n' +
+      '  do play the card, set color from card, chosen player draws 4 cards, advance turn' },
 ];
 
+function lineRe(r){
+  const esc = r.line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('^\\s*' + esc + '\\s*$', 'm');
+}
+
 function recipeOn(r, t){
+  if (r.line) return lineRe(r).test(t);
   if (r.settings)
     return new RegExp('^\\s*deal ' + r.settings.deal + ' cards\\s*$', 'm').test(t) &&
       new RegExp('^\\s*turn timer ' + r.settings.timer + ' seconds\\s*$', 'm').test(t);
@@ -1863,6 +1883,21 @@ function appendRecipe(text, r){
   return text.replace(/\s*$/, '') + '\n\n' + r.text(n) + '\n';
 }
 
+function stripRecipe(t, r){
+  if (r.line) return t.split('\n').filter(l => !lineRe(r).test(l)).join('\n');
+  if (r.rule) return removeRuleBlock(t, r.rule);
+  return t;
+}
+
+// a directive line must sit AFTER the use line it subtracts from
+function insertLine(t, line){
+  const lines = t.split('\n');
+  let at = 0;
+  lines.forEach((l, i) => { if (/^\s*use\s+/i.test(l)) at = i + 1; });
+  lines.splice(at, 0, line);
+  return lines.join('\n');
+}
+
 function toggleRecipe(r){
   const ta = $('rules-text');
   if (ta.value.trim() === '') ta.value = presetText();
@@ -1874,8 +1909,19 @@ function toggleRecipe(r){
     applySettingsToText();
     return;
   }
-  let t = removeRuleBlock(ta.value, r.rule);
-  if (!recipeOn(r, ta.value)) t = appendRecipe(t, r);
+  const wasOn = recipeOn(r, ta.value);
+  let t = stripRecipe(ta.value, r);
+  if (!wasOn){
+    // two recipes fighting over the same rule can't both hold
+    for (const cid of (r.conflicts || [])){
+      const c = RECIPES.find(x => x.id === cid);
+      if (c && recipeOn(c, t)){
+        t = stripRecipe(t, c);
+        toast(r.title + ' replaces ' + c.title);
+      }
+    }
+    t = r.line ? insertLine(t, r.line) : appendRecipe(t, r);
+  }
   ta.value = t;
   lastLoaded = t;
   checkRules();
