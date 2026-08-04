@@ -62,8 +62,14 @@ never duplicates anything. Ids are assigned after this merge.
 | `card is plus four` | `IsPlusFour` |
 | `card is N` (0–9, e.g. `card is 7`) | `IsNumber N` |
 | `card is red` (etc.) | `IsCardColor Red` |
+| `card is action` | `IsActionCard` (skip, reverse, +2, +4 or wild) |
+| `card is number` | `IsNumberCard` (any 0–9, whatever its color) |
 | `active color is red` (etc.) | `ActiveColorIs Red` |
 | `pending draws > N` | `PendingDrawsGreaterThan N` |
+| `hand size > N` / `hand size = N` | `HandSizeGreaterThan N` / `HandSizeEquals N` — the acting player's hand, counted before a played card leaves it |
+| `top card is N` (0–9) / `top card is action` | `TopCardIsNumber N` / `TopCardIsAction` — what's *showing on the pile*, testable on any action (unlike `card is …`, which tests the played card) |
+| `direction is clockwise` / `direction is counter` | `DirectionIsClockwise` (counter parses as its negation) |
+| `draw pile is empty` / `draw pile < N` | `DrawPileLessThan 1` / `DrawPileLessThan N` — endgame triggers; the pile still reshuffles automatically |
 | `continues stack` | `ContinuesStack` |
 | `stack is open` | `StackIsOpen` |
 | `drew playable card` | `DrewPlayableCard` |
@@ -116,13 +122,14 @@ doubled" wants the second.
 | `swap hands with chosen player` | `SwapHandsWithChosen` (the actor names the target; the web UI shows a player picker) |
 | `rotate hands` | `RotateHands` (every hand moves one seat in play direction) |
 | `everyone else draws N cards` | `AllOthersDraw N` |
+| `chosen player draws N cards` | `ChosenPlayerDraws N` — the actor aims the card at any player (same picker as chosen swaps); unlike swaps, a winning final card still delivers its draws, matching the official +2/+4 |
+| `reject "message"` | `Reject` — fail the whole action: the move becomes illegal and the clicker sees the message |
 
-Each effect becomes a `Mutate` in `Rule.t.actions`. `Sequence` and
-`Chain_event` are not exposed in v1: the flat effect list already is a
-sequence, and `Chain_event` needs concrete `Player.t`/`Card.t` values that
-text can't name.
+`Rule.t.actions` is a plain `Game_state.Effect.t list`, applied in order;
+the first failing effect rejects the whole action and the state never
+changes.
 
-**Implicit `CheckWinner`:** the parser appends `Mutate CheckWinner`
+**Implicit `CheckWinner`:** the parser appends `CheckWinner`
 immediately after every `play the card`. Forgetting it would mean wins
 silently never register — too sharp a footgun to leave to users.
 
@@ -213,6 +220,52 @@ Notes:
 - These rules override like any other: redefine `"sevens swap hands"` by
   name to change what a 7 does (e.g. `everyone else draws 2 cards` for a
   crueler table).
+
+## Blocking plays (reject)
+
+`reject "message"` fails the whole action: any effects before it are
+discarded, the move is illegal, and the player who clicked sees the
+message. The playability simulation sees the same error, so blocked cards
+don't even light up in the hand. A blocking rule only needs to OUTRANK
+whatever rule would have accepted the play:
+
+```
+rule "no action finish" priority 200:
+  when card is action and hand size = 1
+  do reject "you cannot go out on an action card"
+```
+
+`hand size = 1` counts the acting player's hand before the card leaves
+it, so this fires exactly when an action card would have been the last
+card. Leaving `your turn` out of the condition means it also blocks
+out-of-turn jump-ins — usually what a table constraint wants, which is
+why the checker doesn't nag reject-rules about the missing guard (or
+about the missing `play the card`; not playing is the point).
+
+## Settings
+
+Directives configure the game the rules run in; they can sit anywhere in
+the text alongside `use` and `rule` lines:
+
+| Text | Effect |
+| --- | --- |
+| `deal N cards` | each player starts with N cards (default 7, N from 1 to 30) |
+| `turn timer N seconds` | seconds before the server plays for a stalled player (default 20, N from 5 to 300) |
+| `turn timer off` | no clock: turns wait forever |
+
+Like same-named rules, a later settings line replaces an earlier one, and
+submitting text with no such line returns the room to the default.
+Starting a game checks the deck can cover the table: every hand plus the
+flipped top card must fit in 108. Settings compose into whole game feels
+a saved mode can capture:
+
+```
+# Speed UNO
+use standard
+use seven zero
+deal 5 cards
+turn timer 10 seconds
+```
 
 ## The UNO button
 
@@ -467,7 +520,10 @@ button, which is never turn-gated.
 4. **A ruleset file is complete** — it does not merge with defaults. Users
    start from a template containing the default rules and edit it. An
    `include defaults` directive can come later.
-5. **v1 exposes no `Chain_event`/`Sequence`.**
+5. **Actions are a flat effect list.** An earlier draft reserved
+   `Chain_event`/`Sequence` AST nodes for rules that trigger other rules;
+   they were never constructed and have been removed. Reintroduce
+   deliberately if that power is ever wanted.
 
 ## Parser implementation plan
 

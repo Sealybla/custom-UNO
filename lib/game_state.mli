@@ -3,7 +3,6 @@ open! Core
 module Card_registry : sig
   type t = Card.t Int.Map.t [@@deriving sexp, compare, equal, bin_io]
 
-  val of_cards : Card.t List.t -> t
   val find : t -> int -> Card.t Or_error.t
 end
 
@@ -11,16 +10,16 @@ module Effect : sig
   type t =
     | PlayTriggeringCard
     | SetActiveColor of Card.Color.t
-    | SetColorFromTriggeringCard 
+    | SetColorFromTriggeringCard
     | SetDeclaredColor
-    | AddPendingDraws of int 
-    | ApplyPendingDraws 
+    | AddPendingDraws of int
+    | ApplyPendingDraws
     | ExecuteDraw of int
     | DrawForNextPlayer of int
     | DrawUntilPlayable
     | DrawAndDecide
     | ReverseDirection
-    | SetStackingValue 
+    | SetStackingValue
     | ClearStackingValue
     | AdvanceTurn
     | JumpToActor
@@ -32,13 +31,16 @@ module Effect : sig
     | SwapHandsWithChosen
     | RotateHands
     | AllOthersDraw of int
+    | ChosenPlayerDraws of int (* the aimed-at player draws (targeted +4) *)
+    | Reject of string (* fail the whole action with this message *)
   [@@deriving sexp, compare, equal, bin_io]
 end
 
-(* the rejection text SwapHandsWithChosen produces when the play declared
-   no target. The server greps for it when simulating playability, turning
-   "would be legal, but needs a target" into the UI's player picker. *)
-val swap_target_needed : string
+(* the rejection text the chosen-target effects (SwapHandsWithChosen,
+   ChosenPlayerDraws) produce when the play declared no target. The server
+   greps for it when simulating playability, turning "would be legal, but
+   needs a target" into the UI's player picker. *)
+val target_needed : string
 
 type t =
   { players : Player.t list
@@ -68,12 +70,6 @@ val for_testing
 
 val create_card_deck : unit -> Card.t List.t
 val shuffle : ?random_state:Random.State.t -> Card.t List.t -> Card.t List.t
-val draw_card : t -> (Card.t * t) Or_error.t
-val update_player : t -> Player.t -> t
-val draw_card_player : t -> int -> t Or_error.t
-val update_top_card : t -> Card.t -> t
-val card_of_event : Event.t -> Card.t Or_error.t
-val player_of_event : Event.t -> Player.t Or_error.t
 
 val create
   :  ?random_state:Random.State.t
@@ -83,9 +79,6 @@ val create
   -> t Or_error.t
 
 val hand_size : t -> int -> int
-
-(* a gameplay move consumes a turn; an UNO press does not *)
-val is_gameplay_event : Event.t -> bool
 val apply_effect : t -> event:Event.t -> Effect.t -> t Or_error.t
 
 (* recomputes who can be caught for not calling UNO; called once per action

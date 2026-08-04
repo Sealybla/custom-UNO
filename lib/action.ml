@@ -3,7 +3,6 @@ open! Core
 (* Actions sent from a player's client to the central server *)
 module Client_to_server = struct
   type t =
-    | Join_lobby of { player_name : String.t }
     | Play of
         { card_id : Int.t
         ; declared_color : Card.Color.t Option.t
@@ -13,7 +12,6 @@ module Client_to_server = struct
     | Draw
     | Pass
     | Call_uno
-    | Quit
   [@@deriving sexp, compare, equal, bin_io]
 end
 

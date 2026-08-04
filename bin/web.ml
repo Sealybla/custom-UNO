@@ -360,14 +360,6 @@ let respond_result result =
   | Error err -> respond_json (error_body err)
 ;;
 
-let color_of_string = function
-  | "red" -> Some Card.Color.Red
-  | "green" -> Some Card.Color.Green
-  | "blue" -> Some Card.Color.Blue
-  | "yellow" -> Some Card.Color.Yellow
-  | _ -> None
-;;
-
 (* ---------- optional accounts: login + saved rule modes ---------- *)
 
 let generate_token t =
@@ -420,7 +412,7 @@ let handle t ~body req =
     (* parse-only dry run for live editor feedback; no session needed *)
     let%bind text = Cohttp_async.Body.to_string body in
     (match Rule_parser.parse_ruleset_checked text with
-     | Ok (rules, warnings) ->
+     | Ok (parsed, warnings) ->
        let warning_json (w : Rule_parser.Lint.t) =
          sprintf
            {|{"rule":%s,"kind":%s,"message":%s,"fix":%s}|}
@@ -439,8 +431,14 @@ let handle t ~body req =
        in
        respond_json
          (sprintf
-            {|{"ok":true,"num_rules":%d,"warnings":%s}|}
-            (List.length rules)
+            {|{"ok":true,"num_rules":%d,"deals":%s,"timer":%s,"warnings":%s}|}
+            (List.length parsed.rules)
+            (match parsed.hand_size with
+             | Some n -> Int.to_string n
+             | None -> "null")
+            (match parsed.turn_timer with
+             | Some n -> Int.to_string n
+             | None -> "null")
             (jlist (List.map warnings ~f:warning_json)))
      | Error err -> respond_json (error_body err))
   | "/api/preset-rules" ->
@@ -499,7 +497,7 @@ let handle t ~body req =
           (error_body (Error.of_string "missing or invalid card_id"))
       | Some card_id ->
         let declared_color =
-          Option.bind (Uri.get_query_param uri "color") ~f:color_of_string
+          Option.bind (Uri.get_query_param uri "color") ~f:Card.Color.of_string
         in
         let swap_with = Uri.get_query_param uri "swap_with" in
         respond_result

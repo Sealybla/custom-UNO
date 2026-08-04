@@ -7,6 +7,11 @@ open! Async
     new room starts with. *)
 val start
   :  ?ruleset:Rule_engine.Ruleset.t
+  -> ?hand_size:int (* cards dealt per player (default 7); `deal N cards`
+                       in a room's rules overrides it per room *)
+  -> ?turn_timer:int (* seconds before the server plays for a stalled human
+                        (default 20; 0 = never); `turn timer N seconds` in
+                        a room's rules overrides it per room *)
   -> port:int
   -> unit
   -> (Socket.Address.Inet.t, int) Tcp.Server.t Deferred.t

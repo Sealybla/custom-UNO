@@ -51,12 +51,22 @@ module Effect = struct
     | SwapHandsWithNext
     (* like SwapHandsWithNext but with the player the actor named when
        playing the card (the authentic seven-zero 7); rejects the play
-       with [swap_target_needed] when no target was declared *)
+       with [target_needed] when no target was declared *)
     | SwapHandsWithChosen
     (* every hand moves one seat in the play direction (seven-zero's 0) *)
     | RotateHands
     (* every player except the actor draws (chaos house rules) *)
     | AllOthersDraw of int
+    (* the player the actor aimed the card at draws (targeted +4 rules);
+       rejects with [target_needed] when no target was declared. NO winner
+       guard: like the built-in +2/+4, a winning final card still delivers
+       its draws. *)
+    | ChosenPlayerDraws of int
+    (* fail the whole action with this message. A rule that wins the click
+       and rejects it makes that move ILLEGAL - the playability simulation
+       sees the error, so the UI won't even light the card up. This is how
+       blocking rules work ("no going out on an action card"). *)
+    | Reject of string
   [@@deriving sexp, compare, equal, bin_io]
 end
 
@@ -218,7 +228,7 @@ let draw_n t player_id n =
     draw_card_player s player_id)
 ;;
 
-let swap_target_needed = "Choose a player to swap hands with"
+let target_needed = "Choose another player to aim this card at"
 
 (* trade two players' entire hands. No catch-window bookkeeping here:
    update_uno_window recomputes it from the actor's final hand after every
@@ -270,8 +280,7 @@ let create ?random_state ~player_names ~hand_size () : t Or_error.t =
   in
   let%bind t =
     List.fold_result players ~init:t ~f:(fun t player ->
-      List.fold_result (List.init hand_size ~f:Fn.id) ~init:t ~f:(fun t _ ->
-        draw_card_player t (Player.get_id player)))
+      draw_n t (Player.get_id player) hand_size)
   in
   let%map card, t = draw_card t in
   update_top_card t card
@@ -315,24 +324,18 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
   | AddPendingDraws n -> Ok { t with pending_draws = t.pending_draws + n }
   | ApplyPendingDraws ->
     let%bind player = player_of_event event in
-    let n = t.pending_draws in
-    let%map t =
-      List.fold_result (List.init n ~f:Fn.id) ~init:t ~f:(fun s _ ->
-        draw_card_player s (Player.get_id player))
-    in
+    let%map t = draw_n t (Player.get_id player) t.pending_draws in
     { t with pending_draws = 0 }
   | ExecuteDraw n ->
     let%bind player = player_of_event event in
-    List.fold_result (List.init n ~f:Fn.id) ~init:t ~f:(fun s _ ->
-      draw_card_player s (Player.get_id player))
+    draw_n t (Player.get_id player) n
   | DrawForNextPlayer count ->
     (* the target is the NEXT player in turn order (respecting direction),
        not the actor - and whose turn it is does not change *)
     let dir = if Direction.equal t.direction Clockwise then 1 else -1 in
     let num_players = List.length t.players in
     let player_id = (t.turn + dir + num_players) % num_players in
-    List.fold_result (List.init count ~f:Fn.id) ~init:t ~f:(fun s _ ->
-      draw_card_player s player_id)
+    draw_n t player_id count
   | DrawUntilPlayable ->
     (* one card per draw click, the turn staying put either way; a playable
        draw sets drew_playable for rules that condition on it *)
@@ -425,7 +428,7 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
       | Event.CardPlayed { swap_with = Some target; _ } ->
         Ok (swap_hands t ~a:(Player.get_id player) ~b:(Player.get_id target))
       | Event.CardPlayed { swap_with = None; _ } ->
-        Or_error.error_string swap_target_needed
+        Or_error.error_string target_needed
       | _ ->
         Or_error.error_string
           "'swap hands with chosen player' only makes sense on a card play")
@@ -449,6 +452,19 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
     List.fold_result t.players ~init:t ~f:(fun acc p ->
       let id = Player.get_id p in
       if id = actor then Ok acc else draw_n acc id count)
+  | ChosenPlayerDraws n ->
+    (match event with
+     | Event.CardPlayed { swap_with = Some target; _ } ->
+       draw_n t (Player.get_id target) n
+     | Event.CardPlayed { swap_with = None; _ } ->
+       Or_error.error_string target_needed
+     | _ ->
+       Or_error.error_string
+         "'chosen player draws' only makes sense on a card play")
+  | Reject message ->
+    (* the error unwinds the whole action, so any effects before this one
+       are discarded too - the state never changes on a rejected move *)
+    Or_error.error_string message
   | JumpToActor ->
     let%map player = player_of_event event in
     (* the interrupted player may have been mid-decision on a drawn card;

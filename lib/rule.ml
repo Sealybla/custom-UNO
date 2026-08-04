@@ -18,14 +18,22 @@ module Condition = struct
     | IsWildCard
     | PendingDrawsGreaterThan of int
     | IsPlayerTurn
-    | IsSkip 
-    | IsReverse 
+    | IsSkip
+    | IsReverse
     | IsDrawAction
     | IsPlusTwo
     | IsPlusFour
     | IsNumber of int (* the card is this number, 0-9 *)
     | IsCardColor of Card.Color.t (* the card's printed color; wilds have none *)
+    | IsActionCard (* skip, reverse, +2, +4 or wild *)
+    | IsNumberCard (* any 0-9, whatever its color *)
     | ActiveColorIs of Card.Color.t (* the table's color to match right now *)
+    | HandSizeGreaterThan of int (* the ACTING player's hand, before the play *)
+    | HandSizeEquals of int
+    | TopCardIsNumber of int (* what's SHOWING on the pile, not what's played *)
+    | TopCardIsAction (* the pile shows a skip/reverse/+2/+4/wild *)
+    | DirectionIsClockwise
+    | DrawPileLessThan of int (* endgame triggers; `draw pile is empty` = < 1 *)
     | ContinuesStack
     | StackIsOpen
     | DrewPlayableCard
@@ -42,18 +50,11 @@ module Condition = struct
   [@@deriving sexp, compare, equal, bin_io]
 end
 
-module Action_AST = struct
-  type t =
-    | Mutate of Game_state.Effect.t
-    | Chain_event of Event.t
-    | Sequence of t list
-  [@@deriving sexp, compare, equal, bin_io]
-end
-
 type t =
   { id : int
   ; priority : Priority.t
   ; condition : Condition.t
-  ; actions : Action_AST.t list
+  ; actions : Game_state.Effect.t list
+    (* applied in order; the first failing effect rejects the whole action *)
   }
 [@@deriving sexp, compare, equal, bin_io]

@@ -5,8 +5,24 @@ open! Core
    a later rule with the same name as an earlier one replaces it in place,
    so preset rules can be redefined without duplication. Ids are assigned
    sequentially after that merge; priority defaults to 50 when omitted.
-   The result is compatible with Rule_engine.Ruleset.t. *)
+   The result is compatible with Rule_engine.Ruleset.t. Rules only - the
+   tests' entry point; production uses parse_ruleset_full to also get the
+   settings directives. *)
 val parse_ruleset : string -> Rule.t List.t Or_error.t
+
+(* rules plus the ruleset's settings - directives like `deal N cards` that
+   configure the game rather than react to events *)
+module Parsed : sig
+  type t =
+    { rules : Rule.t list
+    ; hand_size : int option (* from `deal N cards`; None = the default 7 *)
+    ; turn_timer : int option
+      (* from `turn timer N seconds` (or `turn timer off` = Some 0);
+         None = the server default *)
+    }
+end
+
+val parse_ruleset_full : string -> Parsed.t Or_error.t
 
 (* parse_ruleset plus lint warnings for editor feedback. Warnings flag
    authoring footguns without rejecting the ruleset: since the engine runs
@@ -35,4 +51,4 @@ module Lint : sig
   [@@deriving sexp, compare, equal]
 end
 
-val parse_ruleset_checked : string -> (Rule.t List.t * Lint.t List.t) Or_error.t
+val parse_ruleset_checked : string -> (Parsed.t * Lint.t List.t) Or_error.t

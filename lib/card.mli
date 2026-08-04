@@ -8,6 +8,9 @@ module Color : sig
     | Yellow
     | NoColor
   [@@deriving enumerate, sexp, compare, equal, bin_io]
+
+  (* the four playable colors by lowercase name; NoColor has no name *)
+  val of_string : string -> t option
 end
 
 module Value : sig

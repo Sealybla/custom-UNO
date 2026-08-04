@@ -11,6 +11,8 @@ module Token = struct
     | LParen
     | RParen
     | Greater
+    | Equals
+    | Less
 
   let to_string = function
     | Word w -> w
@@ -21,6 +23,8 @@ module Token = struct
     | LParen -> "("
     | RParen -> ")"
     | Greater -> ">"
+    | Equals -> "="
+    | Less -> "<"
   ;;
 end
 
@@ -56,6 +60,10 @@ let tokenize_line ~line_num line ~init : tokens Or_error.t =
       then punct Token.RParen
       else if Char.equal c '>'
       then punct Token.Greater
+      else if Char.equal c '='
+      then punct Token.Equals
+      else if Char.equal c '<'
+      then punct Token.Less
       else if Char.equal c '"'
       then (
         match String.index_from line (i + 1) '"' with
@@ -99,12 +107,9 @@ let expect_word (toks : tokens) word =
 ;;
 
 let color_of_word word line : Card.Color.t Or_error.t =
-  match word with
-  | "red" -> Ok Red
-  | "green" -> Ok Green
-  | "blue" -> Ok Blue
-  | "yellow" -> Ok Yellow
-  | _ ->
+  match Card.Color.of_string word with
+  | Some color -> Ok color
+  | None ->
     Or_error.errorf
       "line %d: unknown color '%s' (expected red, green, blue, yellow, or declared)"
       line
@@ -148,10 +153,38 @@ let parse_atom (toks : tokens) : (Rule.Condition.t * tokens) Or_error.t =
     :: (Word (("red" | "green" | "blue" | "yellow") as color), line) :: rest ->
     let%map color = color_of_word color line in
     IsCardColor color, rest
+  | (Word "card", _) :: (Word "is", _) :: (Word "action", _) :: rest ->
+    Ok (IsActionCard, rest)
+  | (Word "card", _) :: (Word "is", _) :: (Word "number", _) :: rest ->
+    Ok (IsNumberCard, rest)
   | (Word "active", _) :: (Word "color", _) :: (Word "is", _)
     :: (Word color, line) :: rest ->
     let%map color = color_of_word color line in
     ActiveColorIs color, rest
+  | (Word "hand", _) :: (Word "size", _) :: (Greater, _) :: (Int n, _) :: rest ->
+    Ok (HandSizeGreaterThan n, rest)
+  | (Word "hand", _) :: (Word "size", _) :: (Equals, _) :: (Int n, _) :: rest ->
+    Ok (HandSizeEquals n, rest)
+  | (Word "top", _) :: (Word "card", _) :: (Word "is", _) :: (Int n, line) :: rest ->
+    if n >= 0 && n <= 9
+    then Ok (TopCardIsNumber n, rest)
+    else
+      Or_error.errorf
+        "line %d: 'top card is %d' - card numbers go from 0 to 9"
+        line
+        n
+  | (Word "top", _) :: (Word "card", _) :: (Word "is", _) :: (Word "action", _)
+    :: rest -> Ok (TopCardIsAction, rest)
+  | (Word "direction", _) :: (Word "is", _) :: (Word "clockwise", _) :: rest ->
+    Ok (DirectionIsClockwise, rest)
+    (* one atom covers both directions: counter is just its negation *)
+  | (Word "direction", _) :: (Word "is", _)
+    :: (Word ("counter" | "counterclockwise"), _) :: rest ->
+    Ok (Not DirectionIsClockwise, rest)
+  | (Word "draw", _) :: (Word "pile", _) :: (Word "is", _) :: (Word "empty", _)
+    :: rest -> Ok (DrawPileLessThan 1, rest)
+  | (Word "draw", _) :: (Word "pile", _) :: (Less, _) :: (Int n, _) :: rest ->
+    Ok (DrawPileLessThan n, rest)
   | (Word "pending", _) :: (Word "draws", _) :: (Greater, _) :: (Int n, _) :: rest ->
     Ok (PendingDrawsGreaterThan n, rest)
   | (Word "continues", _) :: (Word "stack", _) :: rest -> Ok (ContinuesStack, rest)
@@ -246,6 +279,17 @@ let parse_effect (toks : tokens) : (Game_state.Effect.t list * tokens) Or_error.
   | (Word "rotate", _) :: (Word "hands", _) :: rest -> Ok ([ RotateHands ], rest)
   | (Word "everyone", _) :: (Word "else", _) :: (Word "draws", _) :: (Int n, _)
     :: (Word ("card" | "cards"), _) :: rest -> Ok ([ AllOthersDraw n ], rest)
+  | (Word "chosen", _) :: (Word "player", _) :: (Word "draws", _) :: (Int n, _)
+    :: (Word ("card" | "cards"), _) :: rest -> Ok ([ ChosenPlayerDraws n ], rest)
+    (* the quoted message is what the player who clicked sees *)
+  | (Word "reject", _) :: (Str msg, line) :: rest ->
+    if String.is_empty (String.strip msg)
+    then Or_error.errorf "line %d: reject needs a non-empty quoted message" line
+    else Ok ([ Reject msg ], rest)
+  | (Word "reject", line) :: _ ->
+    Or_error.errorf
+      "line %d: reject needs a quoted message, like: reject \"not allowed\""
+      line
   | (Word "mark", _) :: (Word "uno", _) :: (Word "called", _) :: rest ->
     Ok ([ MarkUnoCalled ], rest)
   | (Word "penalize", _) :: (Word "caller", _) :: (Int n, _)
@@ -292,18 +336,72 @@ let parse_rule (toks : tokens) : ((string * Rule.t) * tokens) Or_error.t =
      let%bind condition, toks = parse_condition toks in
      let%bind toks = expect_word toks "do" in
      let%map effects, toks = parse_effects toks in
-     let actions = List.map effects ~f:(fun e -> Rule.Action_AST.Mutate e) in
-     (name, { Rule.id = 0; priority; condition; actions }), toks)
+     (name, { Rule.id = 0; priority; condition; actions = effects }), toks)
 ;;
 
-let parse_ruleset_named src : (string * Rule.t) list Or_error.t =
+(* settings live beside the rules: directives like `deal 9 cards` are not
+   rules (nothing triggers them), they configure the game the rules run in *)
+module Parsed = struct
+  type t =
+    { rules : Rule.t list
+    ; hand_size : int option (* from `deal N cards`; None = the default 7 *)
+    ; turn_timer : int option
+      (* from `turn timer N seconds` (or `turn timer off` = Some 0);
+         None = the server default *)
+    }
+end
+
+let max_deal = 30
+let min_timer = 5
+let max_timer = 300
+
+let parse_ruleset_named src
+  : ((string * Rule.t) list * int option * int option) Or_error.t
+  =
   let%bind toks = tokenize src in
+  (* like same-named rules, a later `deal`/`turn timer` line replaces an
+     earlier one *)
+  let hand_size = ref None in
+  let turn_timer = ref None in
   let rec go toks acc ~allow_use =
     match toks with
     | [] -> Ok (List.rev acc)
     | (Token.Word "rule", _) :: rest ->
       let%bind named, rest = parse_rule rest in
       go rest (named :: acc) ~allow_use
+    | (Token.Word "deal", line) :: (Token.Int n, _)
+      :: (Token.Word ("card" | "cards"), _) :: rest ->
+      if n < 1 || n > max_deal
+      then
+        Or_error.errorf
+          "line %d: 'deal %d cards' - deal between 1 and %d"
+          line
+          n
+          max_deal
+      else (
+        hand_size := Some n;
+        go rest acc ~allow_use)
+    | (Token.Word "turn", line) :: (Token.Word "timer", _) :: rest ->
+      (match rest with
+       | (Token.Int n, _) :: (Token.Word ("second" | "seconds"), _) :: rest ->
+         if n < min_timer || n > max_timer
+         then
+           Or_error.errorf
+             "line %d: 'turn timer %d seconds' - between %d and %d, or off"
+             line
+             n
+             min_timer
+             max_timer
+         else (
+           turn_timer := Some n;
+           go rest acc ~allow_use)
+       | (Token.Word "off", _) :: rest ->
+         turn_timer := Some 0;
+         go rest acc ~allow_use
+       | _ ->
+         Or_error.errorf
+           "line %d: turn timer needs 'N seconds' or 'off'"
+           line)
     | (Token.Word "use", line) :: rest when allow_use ->
       (* the preset name is every word to the end of the line *)
       let name_words, rest =
@@ -330,7 +428,8 @@ let parse_ruleset_named src : (string * Rule.t) list Or_error.t =
          go rest (List.rev included @ acc) ~allow_use)
     | _ ->
       Or_error.errorf
-        "expected 'rule' or 'use <preset>' to start a line (%s)"
+        "expected 'rule', 'use <preset>', 'deal N cards' or 'turn timer ...' \
+         to start a line (%s)"
         (where toks)
   in
   let%bind named = go toks [] ~allow_use:true in
@@ -348,12 +447,19 @@ let parse_ruleset_named src : (string * Rule.t) list Or_error.t =
   | [] -> Or_error.error_string "no rules found"
   | _ ->
     Ok
-      (List.mapi merged ~f:(fun i (name, rule) ->
-         name, { rule with Rule.id = i + 1 }))
+      ( List.mapi merged ~f:(fun i (name, rule) ->
+          name, { rule with Rule.id = i + 1 })
+      , !hand_size
+      , !turn_timer )
+;;
+
+let parse_ruleset_full src : Parsed.t Or_error.t =
+  Or_error.map (parse_ruleset_named src) ~f:(fun (named, hand_size, turn_timer) ->
+    { Parsed.rules = List.map named ~f:snd; hand_size; turn_timer })
 ;;
 
 let parse_ruleset src : Rule.t list Or_error.t =
-  Or_error.map (parse_ruleset_named src) ~f:(List.map ~f:snd)
+  Or_error.map (parse_ruleset_full src) ~f:(fun p -> p.Parsed.rules)
 ;;
 
 (* -------- lint: authoring footguns worth warning about, not rejecting.
@@ -375,7 +481,7 @@ let rec condition_requires (cond : Rule.Condition.t) ~positive ~f =
 let is_card_play_atom : Rule.Condition.t -> bool = function
   | MatchesTopColor | MatchesTopValue | MatchesTopExactly | IsWildCard
   | IsSkip | IsReverse | IsPlusTwo | IsPlusFour | IsNumber _
-  | IsCardColor _ | ContinuesStack -> true
+  | IsCardColor _ | IsActionCard | IsNumberCard | ContinuesStack -> true
   | _ -> false
 ;;
 
@@ -416,13 +522,6 @@ let rec condition_guarantees (cond : Rule.Condition.t) ~f =
   | atom -> f atom
 ;;
 
-let rec action_uses (act : Rule.Action_AST.t) ~f =
-  match act with
-  | Mutate eff -> f eff
-  | Chain_event _ -> false
-  | Sequence acts -> List.exists acts ~f:(action_uses ~f)
-;;
-
 (* structured warnings so the editor can offer a one-click fix: the kind
    says which effect is missing, the rule name says where to insert it *)
 module Lint = struct
@@ -449,10 +548,16 @@ end
 
 let lint (named : (string * Rule.t) list) : Lint.t list =
   List.concat_map named ~f:(fun (name, rule) ->
-    let uses f = List.exists rule.actions ~f:(action_uses ~f) in
+    let uses f = List.exists rule.actions ~f in
     let requires f = condition_requires rule.condition ~positive:true ~f in
     let plays =
       uses (function Game_state.Effect.PlayTriggeringCard -> true | _ -> false)
+    in
+    (* a rejecting rule exists to NOT play the card, and blocking rules
+       legitimately apply to any player (jump-ins included) - exempt from
+       the missing-play and missing-turn nags *)
+    let rejects =
+      uses (function Game_state.Effect.Reject _ -> true | _ -> false)
     in
     let ends_turn =
       uses (function
@@ -474,7 +579,7 @@ let lint (named : (string * Rule.t) list) : Lint.t list =
         | _ -> false)
     in
     List.filter_opt
-      [ (if requires is_card_play_atom && not plays
+      [ (if requires is_card_play_atom && (not plays) && not rejects
          then
            Some
              { Lint.rule_name = name
@@ -541,7 +646,8 @@ let lint (named : (string * Rule.t) list) : Lint.t list =
            condition_requires rule.condition ~positive:false ~f:is_turn_atom
          in
          let uno_only = condition_guarantees rule.condition ~f:is_uno_atom in
-         if (not guarded) && (not jump_in_style) && not uno_only
+         if (not guarded) && (not jump_in_style) && (not uno_only)
+            && not rejects
          then
            Some
              { Lint.rule_name = name
@@ -588,7 +694,8 @@ let dead_rule_warnings (named : (string * Rule.t) list) : Lint.t list =
 ;;
 
 (* parse plus the lint warnings, for editor feedback *)
-let parse_ruleset_checked src : (Rule.t list * Lint.t list) Or_error.t =
-  let%map named = parse_ruleset_named src in
-  List.map named ~f:snd, lint named @ dead_rule_warnings named
+let parse_ruleset_checked src : (Parsed.t * Lint.t list) Or_error.t =
+  let%map named, hand_size, turn_timer = parse_ruleset_named src in
+  ( { Parsed.rules = List.map named ~f:snd; hand_size; turn_timer }
+  , lint named @ dead_rule_warnings named )
 ;;

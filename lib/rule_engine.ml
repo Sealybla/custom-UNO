@@ -13,10 +13,10 @@ module Ruleset = struct
       ; priority = 100
       ; condition = And (IsWildCard, IsPlayerTurn)
       ; actions =
-          [ Mutate PlayTriggeringCard
-          ; Mutate CheckWinner
-          ; Mutate SetDeclaredColor
-          ; Mutate AdvanceTurn
+          [ PlayTriggeringCard
+          ; CheckWinner
+          ; SetDeclaredColor
+          ; AdvanceTurn
           ]
       }
     ; { id = 3
@@ -26,11 +26,11 @@ module Ruleset = struct
             ( IsSkip
             , And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn) )
       ; actions =
-          [ Mutate PlayTriggeringCard
-          ; Mutate CheckWinner
-          ; Mutate SetColorFromTriggeringCard
-          ; Mutate AdvanceTurn
-          ; Mutate AdvanceTurn
+          [ PlayTriggeringCard
+          ; CheckWinner
+          ; SetColorFromTriggeringCard
+          ; AdvanceTurn
+          ; AdvanceTurn
           ]
       }
     ; { id = 4
@@ -40,11 +40,11 @@ module Ruleset = struct
             ( IsReverse
             , And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn) )
       ; actions =
-          [ Mutate PlayTriggeringCard
-          ; Mutate CheckWinner
-          ; Mutate SetColorFromTriggeringCard
-          ; Mutate ReverseDirection
-          ; Mutate AdvanceTurn
+          [ PlayTriggeringCard
+          ; CheckWinner
+          ; SetColorFromTriggeringCard
+          ; ReverseDirection
+          ; AdvanceTurn
           ]
       }
     ]
@@ -61,24 +61,24 @@ module Ruleset = struct
             ( IsPlusTwo
             , And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn) )
       ; actions =
-          [ Mutate PlayTriggeringCard
-          ; Mutate CheckWinner
-          ; Mutate SetColorFromTriggeringCard
-          ; Mutate (DrawForNextPlayer 2)
-          ; Mutate AdvanceTurn
-          ; Mutate AdvanceTurn
+          [ PlayTriggeringCard
+          ; CheckWinner
+          ; SetColorFromTriggeringCard
+          ; (DrawForNextPlayer 2)
+          ; AdvanceTurn
+          ; AdvanceTurn
           ]
       }
     ; { id = 8
       ; priority = 110
       ; condition = And (IsPlusFour, IsPlayerTurn)
       ; actions =
-          [ Mutate PlayTriggeringCard
-          ; Mutate CheckWinner
-          ; Mutate SetDeclaredColor
-          ; Mutate (DrawForNextPlayer 4)
-          ; Mutate AdvanceTurn
-          ; Mutate AdvanceTurn
+          [ PlayTriggeringCard
+          ; CheckWinner
+          ; SetDeclaredColor
+          ; (DrawForNextPlayer 4)
+          ; AdvanceTurn
+          ; AdvanceTurn
           ]
       }
     ]
@@ -92,10 +92,10 @@ module Ruleset = struct
       ; priority = 100
       ; condition = And (IsWildCard, And (IsPlayerTurn, Not StackIsOpen))
       ; actions =
-          [ Mutate PlayTriggeringCard
-          ; Mutate CheckWinner
-          ; Mutate SetDeclaredColor
-          ; Mutate AdvanceTurn
+          [ PlayTriggeringCard
+          ; CheckWinner
+          ; SetDeclaredColor
+          ; AdvanceTurn
           ]
       }
     ; { id = 3
@@ -107,11 +107,11 @@ module Ruleset = struct
                 ( Or (MatchesTopColor, MatchesTopValue)
                 , And (IsPlayerTurn, Not StackIsOpen) ) )
       ; actions =
-          [ Mutate PlayTriggeringCard
-          ; Mutate CheckWinner
-          ; Mutate SetColorFromTriggeringCard
-          ; Mutate AdvanceTurn
-          ; Mutate AdvanceTurn
+          [ PlayTriggeringCard
+          ; CheckWinner
+          ; SetColorFromTriggeringCard
+          ; AdvanceTurn
+          ; AdvanceTurn
           ]
       }
     ; { id = 4
@@ -123,11 +123,11 @@ module Ruleset = struct
                 ( Or (MatchesTopColor, MatchesTopValue)
                 , And (IsPlayerTurn, Not StackIsOpen) ) )
       ; actions =
-          [ Mutate PlayTriggeringCard
-          ; Mutate CheckWinner
-          ; Mutate SetColorFromTriggeringCard
-          ; Mutate ReverseDirection
-          ; Mutate AdvanceTurn
+          [ PlayTriggeringCard
+          ; CheckWinner
+          ; SetColorFromTriggeringCard
+          ; ReverseDirection
+          ; AdvanceTurn
           ]
       }
     ]
@@ -146,22 +146,22 @@ module Ruleset = struct
                 ( Or (MatchesTopColor, MatchesTopValue)
                 , And (IsPlayerTurn, Not StackIsOpen) ) )
       ; actions =
-          [ Mutate PlayTriggeringCard
-          ; Mutate CheckWinner
-          ; Mutate SetColorFromTriggeringCard
-          ; Mutate (AddPendingDraws 2)
-          ; Mutate AdvanceTurn
+          [ PlayTriggeringCard
+          ; CheckWinner
+          ; SetColorFromTriggeringCard
+          ; (AddPendingDraws 2)
+          ; AdvanceTurn
           ]
       }
     ; { id = 8
       ; priority = 110
       ; condition = And (IsPlusFour, And (IsPlayerTurn, Not StackIsOpen))
       ; actions =
-          [ Mutate PlayTriggeringCard
-          ; Mutate CheckWinner
-          ; Mutate SetDeclaredColor
-          ; Mutate (AddPendingDraws 4)
-          ; Mutate AdvanceTurn
+          [ PlayTriggeringCard
+          ; CheckWinner
+          ; SetDeclaredColor
+          ; (AddPendingDraws 4)
+          ; AdvanceTurn
           ]
       }
       (* while a penalty is pending, anything except stacking another +2/+4
@@ -173,7 +173,7 @@ module Ruleset = struct
           And
             ( PendingDrawsGreaterThan 0
             , And (IsPlayerTurn, Not (Or (IsPlusTwo, IsPlusFour))) )
-      ; actions = [ Mutate ApplyPendingDraws; Mutate AdvanceTurn ]
+      ; actions = [ ApplyPendingDraws; AdvanceTurn ]
       }
     ]
   ;;
@@ -184,10 +184,10 @@ module Ruleset = struct
     ; priority = 10
     ; condition = And (Or (MatchesTopColor, MatchesTopValue), IsPlayerTurn)
     ; actions =
-        [ Mutate PlayTriggeringCard
-        ; Mutate CheckWinner
-        ; Mutate SetColorFromTriggeringCard
-        ; Mutate AdvanceTurn
+        [ PlayTriggeringCard
+        ; CheckWinner
+        ; SetColorFromTriggeringCard
+        ; AdvanceTurn
         ]
     }
   ;;
@@ -203,10 +203,10 @@ module Ruleset = struct
           ( Or (MatchesTopColor, MatchesTopValue)
           , And (IsPlayerTurn, Not StackIsOpen) )
     ; actions =
-        [ Mutate PlayTriggeringCard
-        ; Mutate CheckWinner
-        ; Mutate SetColorFromTriggeringCard
-        ; Mutate SetStackingValue
+        [ PlayTriggeringCard
+        ; CheckWinner
+        ; SetColorFromTriggeringCard
+        ; SetStackingValue
           (* no AdvanceTurn — opens a stack; player passes to end turn *)
         ]
     }
@@ -218,9 +218,9 @@ module Ruleset = struct
     ; priority = 120
     ; condition = And (ContinuesStack, IsPlayerTurn)
     ; actions =
-        [ Mutate PlayTriggeringCard
-        ; Mutate CheckWinner
-        ; Mutate SetColorFromTriggeringCard
+        [ PlayTriggeringCard
+        ; CheckWinner
+        ; SetColorFromTriggeringCard
           (* no AdvanceTurn — stack stays open *)
         ]
     }
@@ -231,7 +231,7 @@ module Ruleset = struct
     { id = 21
     ; priority = 120
     ; condition = And (IsPassAction, And (IsPlayerTurn, StackIsOpen))
-    ; actions = [ Mutate ClearStackingValue; Mutate AdvanceTurn ]
+    ; actions = [ ClearStackingValue; AdvanceTurn ]
     }
   ;;
 
@@ -245,7 +245,7 @@ module Ruleset = struct
           ( IsDrawAction
           , And (IsPlayerTurn, And (Not StackIsOpen, Not DrewPlayableCard))
           )
-    ; actions = [ Mutate DrawAndDecide ]
+    ; actions = [ DrawAndDecide ]
     }
   ;;
 
@@ -254,7 +254,7 @@ module Ruleset = struct
     { id = 9
     ; priority = 1
     ; condition = And (IsPassAction, And (IsPlayerTurn, DrewPlayableCard))
-    ; actions = [ Mutate AdvanceTurn ]
+    ; actions = [ AdvanceTurn ]
     }
   ;;
 
@@ -265,7 +265,7 @@ module Ruleset = struct
     { id = 7
     ; priority = 1
     ; condition = And (IsDrawAction, IsPlayerTurn)
-    ; actions = [ Mutate (ExecuteDraw 1) ]
+    ; actions = [ (ExecuteDraw 1) ]
     }
   ;;
 
@@ -275,7 +275,7 @@ module Ruleset = struct
     { id = 7
     ; priority = 1
     ; condition = And (IsDrawAction, And (IsPlayerTurn, Not StackIsOpen))
-    ; actions = [ Mutate (ExecuteDraw 1) ]
+    ; actions = [ (ExecuteDraw 1) ]
     }
   ;;
 
@@ -291,17 +291,17 @@ module Ruleset = struct
     [ { id = 30
       ; priority = 200
       ; condition = And (IsUnoCall, CallerHasUno)
-      ; actions = [ Mutate MarkUnoCalled ]
+      ; actions = [ MarkUnoCalled ]
       }
     ; { id = 31
       ; priority = 190
       ; condition = And (IsUnoCall, SomeoneElseHasUno)
-      ; actions = [ Mutate (PenalizeUnoTarget 2) ]
+      ; actions = [ (PenalizeUnoTarget 2) ]
       }
     ; { id = 32
       ; priority = 180
       ; condition = IsUnoCall
-      ; actions = [ Mutate (PenalizeUnoCaller 2) ]
+      ; actions = [ (PenalizeUnoCaller 2) ]
       }
     ]
   ;;
@@ -319,11 +319,11 @@ module Ruleset = struct
       ; condition =
           And (MatchesTopExactly, And (Not IsPlayerTurn, Not StackIsOpen))
       ; actions =
-          [ Mutate JumpToActor
-          ; Mutate PlayTriggeringCard
-          ; Mutate CheckWinner
-          ; Mutate SetColorFromTriggeringCard
-          ; Mutate AdvanceTurn
+          [ JumpToActor
+          ; PlayTriggeringCard
+          ; CheckWinner
+          ; SetColorFromTriggeringCard
+          ; AdvanceTurn
           ]
       }
     ]
@@ -380,13 +380,11 @@ module Ruleset = struct
 
   (* does any rule open a stack? tells the UI to mark stackable cards *)
   let uses_stacking (t : t) : bool =
-    let rec opens_stack (act : Rule.Action_AST.t) =
-      match act with
-      | Mutate SetStackingValue -> true
-      | Mutate _ | Chain_event _ -> false
-      | Sequence acts -> List.exists acts ~f:opens_stack
-    in
-    List.exists t ~f:(fun rule -> List.exists rule.actions ~f:opens_stack)
+    List.exists t ~f:(fun rule ->
+      List.exists rule.actions ~f:(fun eff ->
+        match eff with
+        | Game_state.Effect.SetStackingValue -> true
+        | _ -> false))
   ;;
 end
 
@@ -420,9 +418,6 @@ let event_of_client_action
   | Draw -> Ok (DrawRequested { player })
   | Pass -> Ok (Event.PassRequested { player })
   | Call_uno -> Ok (Event.UnoCalled { player })
-  | Join_lobby _ | Quit ->
-    Or_error.error_s
-      [%message "Non-gameplay action" (action : Action.Client_to_server.t)]
 ;;
 
 let rec eval_condition
@@ -503,7 +498,49 @@ let rec eval_condition
     (match evt with
      | CardPlayed { card; _ } -> Card.Color.equal (Card.get_color card) c
      | _ -> false)
+  | IsActionCard ->
+    (match evt with
+     | CardPlayed { card; _ } ->
+       (match Card.get_value card with
+        | Skip | Reverse | Plus | Wild | Wild4 -> true
+        | _ -> false)
+     | _ -> false)
+  | IsNumberCard ->
+    (match evt with
+     | CardPlayed { card; _ } ->
+       (match Card.get_value card with
+        | Skip | Reverse | Plus | Wild | Wild4 -> false
+        | _ -> true)
+     | _ -> false)
   | ActiveColorIs c -> Card.Color.equal state.current_color c
+  (* the ACTING player's hand as it stands when the rule is judged - for a
+     card play that is BEFORE the card leaves the hand, so "their last
+     card" is [hand size = 1] *)
+  | HandSizeGreaterThan n ->
+    (match evt with
+     | CardPlayed { player; _ }
+     | DrawRequested { player }
+     | PassRequested { player }
+     | UnoCalled { player } ->
+       Game_state.hand_size state (Player.get_id player) > n)
+  | HandSizeEquals n ->
+    (match evt with
+     | CardPlayed { player; _ }
+     | DrawRequested { player }
+     | PassRequested { player }
+     | UnoCalled { player } ->
+       Game_state.hand_size state (Player.get_id player) = n)
+  | TopCardIsNumber n ->
+    (match Card.Value.of_digit n with
+     | Some v -> Card.Value.equal (Card.get_value state.top_card) v
+     (* unreachable via the parser, which rejects numbers outside 0-9 *)
+     | None -> false)
+  | TopCardIsAction ->
+    (match Card.get_value state.top_card with
+     | Skip | Reverse | Plus | Wild | Wild4 -> true
+     | _ -> false)
+  | DirectionIsClockwise -> Direction.equal state.direction Clockwise
+  | DrawPileLessThan n -> List.length state.draw_pile < n
   | ContinuesStack ->
     (match evt with
      | CardPlayed { card; _ } ->
@@ -536,28 +573,7 @@ let rec eval_condition
   | Not c -> not (eval_condition state evt c)
 ;;
 
-let rec eval_action
-  (state : Game_state.t)
-  (act : Rule.Action_AST.t)
-  ~(evt : Event.t)
-  : (Game_state.t * Event.t list) Or_error.t
-  =
-  match act with
-  | Mutate eff ->
-    (* apply effect implemented soon *)
-    let%map next_state = Game_state.apply_effect state ~event:evt eff in
-    next_state, []
-  | Chain_event evt -> Ok (state, [ evt ])
-  | Sequence actions ->
-    List.fold_result
-      actions
-      ~init:(state, [])
-      ~f:(fun (curr_state, curr_evts) a ->
-        let%map next_state, new_evts = eval_action curr_state ~evt a in
-        next_state, curr_evts @ new_evts)
-;;
-
-let rec process_event
+let process_event
   (rules : Ruleset.t)
   (state : Game_state.t)
   (evt : Event.t)
@@ -587,14 +603,8 @@ let rec process_event
     (* short and clean: this text is shown to the player who acted *)
     Or_error.error_string "Illegal move: no rule allows that right now"
   | rule :: _ ->
-    List.fold_result rule.actions ~init:state ~f:(fun curr_state act ->
-      let%bind next_state, chained_events =
-        eval_action curr_state act ~evt
-      in
-      List.fold_result
-        chained_events
-        ~init:next_state
-        ~f:(process_event rules))
+    List.fold_result rule.actions ~init:state ~f:(fun curr_state eff ->
+      Game_state.apply_effect curr_state ~event:evt eff)
 ;;
 
 (* would any rule accept a Pass from the current player right now? Used by
@@ -663,7 +673,7 @@ let playable_and_swap_ids (rules : Ruleset.t) (state : Game_state.t) ~player_id
            | Error e ->
              if String.is_substring
                   (Error.to_string_hum e)
-                  ~substring:Game_state.swap_target_needed
+                  ~substring:Game_state.target_needed
              then Some (card_id, `Needs_target)
              else None)
        in

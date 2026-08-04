@@ -8,6 +8,15 @@ module Color = struct
     | Yellow
     | NoColor
   [@@deriving enumerate, sexp, compare, equal, bin_io]
+
+  (* the four playable colors by lowercase name; NoColor has no name *)
+  let of_string = function
+    | "red" -> Some Red
+    | "green" -> Some Green
+    | "blue" -> Some Blue
+    | "yellow" -> Some Yellow
+    | _ -> None
+  ;;
 end
 
 module Value = struct

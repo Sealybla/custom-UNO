@@ -26,6 +26,10 @@ module Room = struct
     ; mutable game_state : Game_state.t option
     ; mutable ruleset : Rule_engine.Ruleset.t
     ; mutable rules_text : string (* last submitted text; "" = never set *)
+    ; mutable hand_size : int (* cards dealt per player; `deal N cards` sets it *)
+    ; mutable turn_timer : int
+      (* seconds before the server plays for a stalled human; 0 = never.
+         `turn timer N seconds` / `turn timer off` set it per room *)
     ; request_writer : Queued_request.t Pipe.Writer.t
     ; mutable action_seq : int (* bumped per applied action; stales timers *)
     ; mutable autopilot : string option (* player whose turn timed out *)
@@ -45,6 +49,8 @@ end
 type t =
   { rooms : Room.t String.Table.t
   ; default_ruleset : Rule_engine.Ruleset.t
+  ; default_hand_size : int
+  ; default_turn_timer : int
   ; random : Random.State.t
   }
 
@@ -242,7 +248,7 @@ let bot_action (state : Game_state.t) player_name =
 ;;
 
 let bot_move_delay = Time_ns.Span.of_sec 5.0
-let turn_timeout = Time_ns.Span.of_sec 20.0
+let default_turn_timer_s = 20
 let countdown_seconds = 5
 let autopilot_delay = Time_ns.Span.of_sec 1.5
 
@@ -294,22 +300,30 @@ let schedule_turn_driver ?(after_rejection = false) (room : Room.t) state =
        else if not after_rejection
        then (
          room.autopilot <- None;
-         after_if_idle
-           room
-           Time_ns.Span.(turn_timeout - of_int_sec countdown_seconds)
-           ~f:(fun _ ->
-             broadcast
+         let timer_s = room.turn_timer in
+         if timer_s > 0
+         then (
+           (* short timers shrink the warning window so it never precedes
+              the turn itself *)
+           let warn_s = Int.min countdown_seconds (timer_s - 1) in
+           if warn_s > 0
+           then
+             after_if_idle
                room
-               (Action.Server_to_client.Turn_countdown
-                  { player_name = current; seconds = countdown_seconds }));
-         after_if_idle room turn_timeout ~f:(fun st ->
-           Core.print_s
-             [%message
-               "Turn timed out; playing for the player"
-                 (room.code : string)
-                 (current : string)];
-           room.autopilot <- Some current;
-           enqueue_auto_action room st current)))
+               (Time_ns.Span.of_int_sec (timer_s - warn_s))
+               ~f:(fun _ ->
+                 broadcast
+                   room
+                   (Action.Server_to_client.Turn_countdown
+                      { player_name = current; seconds = warn_s }));
+           after_if_idle room (Time_ns.Span.of_int_sec timer_s) ~f:(fun st ->
+             Core.print_s
+               [%message
+                 "Turn timed out; playing for the player"
+                   (room.code : string)
+                   (current : string)];
+             room.autopilot <- Some current;
+             enqueue_auto_action room st current))))
 ;;
 
 (* The seat whose turn it is either has real choices - broadcast the turn
@@ -414,12 +428,9 @@ let broadcast_uno_result
   =
   let penalized =
     List.filter_mapi after.players ~f:(fun idx p ->
-      let was =
-        match List.nth before.players idx with
-        | Some q -> List.length (Player.get_hand q)
-        | None -> 0
+      let grew =
+        Game_state.hand_size after idx - Game_state.hand_size before idx
       in
-      let grew = List.length (Player.get_hand p) - was in
       if grew > 0 then Some (Player.get_name p, grew) else None)
   in
   match penalized with
@@ -448,11 +459,6 @@ let broadcast_notifications
   ~actor_id
   ~played
   =
-  let hand_len (st : Game_state.t) idx =
-    match List.nth st.players idx with
-    | Some p -> List.length (Player.get_hand p)
-    | None -> 0
-  in
   (* whole hands changing owners (swap/rotate rules) are their own
      spectacle, and a received hand must not read as a forced draw below *)
   let moves = Game_state.hand_moves ~before ~after ~played in
@@ -470,7 +476,9 @@ let broadcast_notifications
   (* forced draws: a hand that grew without its owner acting, or the actor
      cashing out a pending +2/+4 penalty *)
   List.iteri after.players ~f:(fun idx p ->
-    let grew = hand_len after idx - hand_len before idx in
+    let grew =
+      Game_state.hand_size after idx - Game_state.hand_size before idx
+    in
     let forced =
       (not (Set.mem received_hand idx))
       &&
@@ -653,6 +661,8 @@ let create_room t =
     ; game_state = None
     ; ruleset = t.default_ruleset
     ; rules_text = ""
+    ; hand_size = t.default_hand_size
+    ; turn_timer = t.default_turn_timer
     ; request_writer
     ; action_seq = 0
     ; autopilot = None
@@ -667,13 +677,21 @@ let create_room t =
   room
 ;;
 
-let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
+let start
+  ?(ruleset = Rule_engine.Ruleset.default)
+  ?(hand_size = 7)
+  ?(turn_timer = default_turn_timer_s)
+  ~port
+  ()
+  =
   Core.print_endline
     (Core.sprintf "\n>>> Booting Uno Server on port %d..." port);
   Core.Out_channel.flush Core.stdout;
   let t =
     { rooms = String.Table.create ()
     ; default_ruleset = ruleset
+    ; default_hand_size = hand_size
+    ; default_turn_timer = turn_timer
     ; random = Random.State.make_self_init ()
     }
   in
@@ -826,11 +844,17 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                      (Or_error.error_string
                         "Cannot change rules while a game is in progress")
                  else (
-                   match Rule_parser.parse_ruleset rules_text with
+                   match Rule_parser.parse_ruleset_full rules_text with
                    | Error e -> return (Error e)
-                   | Ok rules ->
+                   | Ok { rules; hand_size; turn_timer } ->
                      room.ruleset <- rules;
                      room.rules_text <- rules_text;
+                     (* absent settings mean back to the defaults, so stale
+                        ones never outlive the text that set them *)
+                     room.hand_size
+                     <- Option.value hand_size ~default:t.default_hand_size;
+                     room.turn_timer
+                     <- Option.value turn_timer ~default:t.default_turn_timer;
                      let num_rules = List.length rules in
                      Core.print_s
                        [%message
@@ -876,8 +900,21 @@ let start ?(ruleset = Rule_engine.Ruleset.default) ~port () =
                     (Or_error.errorf
                        "Waiting for %s to ready up"
                        (String.concat ~sep:", " not_ready))
+                else if room.hand_size * List.length player_names + 1 > 108
+                then
+                  return
+                    (Or_error.errorf
+                       "Cannot deal %d cards to %d players - the deck only \
+                        has 108"
+                       room.hand_size
+                       (List.length player_names))
                 else (
-                  match Game_state.create ~player_names ~hand_size:7 () with
+                  match
+                    Game_state.create
+                      ~player_names
+                      ~hand_size:room.hand_size
+                      ()
+                  with
                   | Error e -> return (Error e)
                   | Ok initial_state ->
                     room.game_state <- Some initial_state;

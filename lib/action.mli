@@ -2,7 +2,6 @@ open! Core
 
 module Client_to_server : sig
   type t =
-    | Join_lobby of { player_name : String.t }
     | Play of
         { card_id : Int.t
         ; declared_color : Card.Color.t Option.t
@@ -12,7 +11,6 @@ module Client_to_server : sig
     | Draw
     | Pass
     | Call_uno
-    | Quit
   [@@deriving sexp, compare, equal, bin_io]
 end
 

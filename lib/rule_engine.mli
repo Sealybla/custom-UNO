@@ -21,30 +21,9 @@ module Ruleset : sig
 end
 
 
-val event_of_client_action
-  :  Game_state.t
-  -> player:Player.t
-  -> action:Action.Client_to_server.t
-  -> Event.t Or_error.t
-
-
-(* returns true if event holds given current rule_condition. false if doesn't
-   hold *)
+(* does this condition hold for this event? Exposed for tests; production
+   goes through apply_action *)
 val eval_condition : Game_state.t -> Event.t -> Rule.Condition.t -> bool
-
-(* changes game state and springs new events given a sequence of actions *)
-val eval_action
-  :  Game_state.t
-  -> Rule.Action_AST.t
-  -> evt:Event.t
-  -> (Game_state.t * Event.t List.t) Or_error.t
-
-(* given an event and a ruleset ,change the gamestate *)
-val process_event
-  :  Ruleset.t
-  -> Game_state.t
-  -> Event.t
-  -> Game_state.t Or_error.t
 
 (* true if some rule would accept a Pass from the current player right now
    (drives the UI's pass-button visibility) *)

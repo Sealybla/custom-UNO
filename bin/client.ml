@@ -68,12 +68,9 @@ let print_event (event : Action.Server_to_client.t) =
     print_s [%message "jumped in" (player_name : string)]
 ;;
 
-let color_of_string = function
-  | "red" -> Some Card.Color.Red
-  | "green" -> Some Card.Color.Green
-  | "blue" -> Some Card.Color.Blue
-  | "yellow" -> Some Card.Color.Yellow
-  | _ -> None
+let help =
+  "commands: ready | unready | start | draw | pass | uno | play <card_id> \
+   [red|green|blue|yellow] [swap target] | rules <file>"
 ;;
 
 let handle_line conn line =
@@ -143,10 +140,10 @@ let handle_line conn line =
        let declared_color, swap_with =
          match rest with
          | [ x ] ->
-           (match color_of_string x with
+           (match Card.Color.of_string x with
             | Some c -> Some c, None
             | None -> None, Some x)
-         | [ x; y ] -> color_of_string x, Some y
+         | [ x; y ] -> Card.Color.of_string x, Some y
          | _ -> None, None
        in
        let%map result =
@@ -160,8 +157,7 @@ let handle_line conn line =
         | Error e -> print_s [%message "error" (e : Error.t)]))
   | [ "" ] -> Deferred.unit
   | _ ->
-    print_endline
-      "commands: ready | unready | start | draw | pass | play <card_id> [red|green|blue|yellow] [swap target] | rules <file>";
+    print_endline help;
     Deferred.unit
 ;;
 
@@ -194,7 +190,7 @@ let run ~host ~port ~name ~room ~create_room =
     Rpc.Pipe_rpc.dispatch_exn Rpc_protocol.game_stream_rpc conn ()
   in
   don't_wait_for (Pipe.iter_without_pushback reader ~f:print_event);
-  print_endline "commands: ready | unready | start | draw | pass | play <card_id> [color] | rules <file>";
+  print_endline help;
   Pipe.iter (Reader.lines (Lazy.force Reader.stdin)) ~f:(handle_line conn)
 ;;
 

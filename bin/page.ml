@@ -129,6 +129,10 @@ let html =
   #check-status.ok { color:#8fe3a8; } #check-status.err { color:#ffb0b0; }
   #check-status.warn { color:#ffd97a; white-space:pre-line; }
   #b-turn-hint { color:#ffd97a; font-size:.78rem; margin:.15rem 0 .3rem; }
+  .set-lbl { font-size:.85rem; display:inline-flex; gap:.35rem; align-items:center; }
+  #table-settings input[type=number] { width:4.6rem; border-radius:8px;
+    padding:.3rem .45rem; font-size:.88rem; }
+  .cheat-note { opacity:.7; font-size:.78rem; margin:.1rem 0 .3rem; }
   #check-status button { margin-left:.5rem; padding:.05rem .5rem; font-size:.72rem; }
   #override-list { display:flex; flex-wrap:wrap; gap:.35rem; margin-top:.5rem; font-size:.83rem; }
   #override-list code { cursor:pointer; padding:.14rem .45rem; border-radius:6px;
@@ -145,7 +149,6 @@ let html =
   .b-row select, .b-row input[type=number], .b-row input[type=text],
   .b-row input:not([type]) { border-radius:8px; padding:.35rem .5rem; font-size:.88rem; }
   .b-row input[type=number] { width:4.2rem; }
-  .b-check { font-size:.85rem; display:inline-flex; gap:.3rem; align-items:center; }
   #b-name { flex:1; min-width:8rem; }
   .chips { display:flex; flex-wrap:wrap; gap:.4rem; margin:.2rem 0 .2rem 3.9rem; }
   .chips:empty { display:none; }
@@ -464,6 +467,13 @@ let html =
         <button class="preset toggle" id="toggle-jumpin" title="play out of turn on an exact match">Jump in</button>
         <button class="preset toggle" id="toggle-sevenzero" title="7s swap hands with the next player, 0s send every hand one seat along">7-0</button>
       </div>
+      <div class="preset-row" id="table-settings">
+        <span style="opacity:.8">Table:</span>
+        <label class="set-lbl" title="cards dealt to each player at the start (default 7)">deal
+          <input id="set-deal" type="number" min="1" max="30" value="7"> cards</label>
+        <label class="set-lbl" title="seconds before the server plays for a stalled player (default 20; 0 = no clock)">turn timer
+          <input id="set-timer" type="number" min="0" max="300" step="5" value="20"> s</label>
+      </div>
       <div id="modes-row" class="preset-row" hidden>
         <span style="opacity:.8">My modes:</span>
         <span id="mode-chips" style="display:contents"></span>
@@ -495,6 +505,7 @@ let html =
             <option>red</option><option>yellow</option>
             <option>green</option><option>blue</option>
           </select>
+          <input id="b-eff-msg" placeholder="message to show" maxlength="80" hidden>
           <button id="b-add-eff" class="small">+ add effect</button>
         </div>
         <div id="b-effs" class="chips"></div>
@@ -540,6 +551,12 @@ let html =
             <code title="no passing: draw one card at a time until you can play">use draw until playable</code>
             <code title="both variants combined">use stacking with draw until playable</code>
             <code title="ADD-ON: use it after a base preset — 7s swap hands with the next player, 0s rotate all hands">use seven zero</code>
+            <h4 style="margin-top:.6rem">Settings</h4>
+            <div class="cheat-note">not rules — no when/do, just a line of its own:<br>
+            <b>deal</b> &lt;1–30&gt; <b>cards</b> · <b>turn timer</b> &lt;5–300&gt; <b>seconds</b> · <b>turn timer off</b></div>
+            <code title="cards dealt to each player at the start (default 7, max 30; the deck must cover every player)">deal 9 cards</code>
+            <code title="seconds before the server plays for a stalled player (default 20, range 5-300)">turn timer 15 seconds</code>
+            <code title="no clock: turns wait forever">turn timer off</code>
             <h4 style="margin-top:.6rem">Conditions</h4>
             <code title="the played card's printed color equals the color to match">card matches color</code>
             <code title="the played card's value equals the top card's value">card matches value</code>
@@ -551,6 +568,15 @@ let html =
             <code title="the played card is a +4">card is plus four</code>
             <code title="the played card is that number (any of 0-9 works), whatever its color">card is 7</code>
             <code title="the played card's printed color (wilds have none, so they never match)">card is blue</code>
+            <code title="the played card is a skip, reverse, +2, +4 or wild">card is action</code>
+            <code title="the played card is any 0-9, whatever its color">card is number</code>
+            <code title="the acting player holds exactly this many cards (counted before the card leaves the hand)">hand size = 1</code>
+            <code title="the acting player holds more than this many cards">hand size > 6</code>
+            <code title="the pile SHOWS this number (whatever you're doing) — different from 'card is 7', which tests the card you're playing">top card is 7</code>
+            <code title="the pile shows a skip, reverse, +2, +4 or wild">top card is action</code>
+            <code title="play is moving clockwise — write 'direction is counter' for the other way">direction is clockwise</code>
+            <code title="the draw pile just ran out (it reshuffles automatically; this fires in the moment)">draw pile is empty</code>
+            <code title="the draw pile is running low — endgame rules">draw pile < 10</code>
             <code title="the table's color to match right now — works for any action, not just card plays">active color is red</code>
             <code title="the player clicked draw">player draws</code>
             <code title="the player clicked done">player passes</code>
@@ -581,10 +607,12 @@ let html =
             <code title="stay on turn and chain more cards of this value">open stack</code>
             <code title="end the chain (the done button does this)">close stack</code>
             <code title="the acting player takes the turn — pair with 'not your turn' for out-of-turn plays">jump in</code>
+            <code title="a player the actor picks draws that many cards (the UI asks who) — still delivers when it's the winning card">chosen player draws 4 cards</code>
             <code title="the acting player picks any other player and trades entire hands with them (the UI asks who)">swap hands with chosen player</code>
             <code title="the acting player trades entire hands with the next player (in play direction)">swap hands with next player</code>
             <code title="every hand moves one seat in the play direction">rotate hands</code>
             <code title="every player except the actor draws that many cards">everyone else draws 2 cards</code>
+            <code title="make the move ILLEGAL: the click is refused and this message is shown — blocking rules like 'no going out on an action card'">reject "not allowed"</code>
             <code title="the presser is safe: closes their own catch window">mark uno called</code>
             <code title="a false UNO call: the presser draws the penalty">penalize caller 2 cards</code>
             <code title="the caught player draws the penalty and their window closes">penalize uncalled player 2 cards</code>
@@ -639,7 +667,7 @@ let html =
 
 <div id="swap-modal" hidden>
   <div class="swap-box">
-    <h3>Swap hands with…</h3>
+    <h3>Aim it at…</h3>
     <div class="swap-list"></div>
   </div>
 </div>
@@ -688,13 +716,30 @@ function presetName(){
   if (!jumpInOn()) return base;
   return base === 'standard' ? 'jump in' : base + ' with jump in';
 }
+// the Table row's values as directive lines; defaults write nothing, so
+// untouched settings never clutter the text
+const DEFAULT_DEAL = 7, DEFAULT_TIMER = 20;
+function settingsLines(){
+  // snap to what the parser accepts (deal 1-30; timer 0=off or 5-300) and
+  // show the snapped value, so a typed 3 becomes a working 5 instead of a
+  // parse error in the status line
+  let d = parseInt($('set-deal').value, 10);
+  let t = parseInt($('set-timer').value, 10);
+  if (Number.isFinite(d)) $('set-deal').value = d = Math.min(30, Math.max(1, d));
+  if (Number.isFinite(t))
+    $('set-timer').value = t = t <= 0 ? 0 : Math.min(300, Math.max(5, t));
+  return (Number.isFinite(d) && d !== DEFAULT_DEAL ? 'deal ' + d + ' cards\n' : '') +
+    (Number.isFinite(t) && t !== DEFAULT_TIMER
+      ? (t === 0 ? 'turn timer off\n' : 'turn timer ' + t + ' seconds\n') : '');
+}
 function presetText(){
   const desc = PRESET_DESC[baseName()] + (jumpInOn() ? '\n# ' + JUMP_IN_DESC : '') +
     (sevenZeroOn() ? '\n# ' + SEVEN_ZERO_DESC : '');
   // seven-zero is an ADD-ON preset: a second `use` line appends its rules
   return '# ' + desc + '\n' +
     'use ' + presetName() + '\n' +
-    (sevenZeroOn() ? 'use seven zero\n' : '') + '\n' +
+    (sevenZeroOn() ? 'use seven zero\n' : '') +
+    settingsLines() + '\n' +
     '# Add house rules below - they combine with the preset above.\n' +
     '# Redefining a rule with the same name replaces the preset version.\n';
 }
@@ -710,12 +755,21 @@ const WHEN_OPTIONS = [
   ['card is wild', 'a wild is played'],
   ['card is N', 'a specific number (0-9) is played'],
   ['card is C', 'a card of a specific color is played'],
+  ['card is action', 'a skip / reverse / +2 / +4 / wild is played'],
+  ['card is number', 'any number card is played'],
   ['player draws', 'the player clicks draw'],
   ['player passes', 'the player clicks done'],
   ['continues stack', 'a card continues the stack'],
   ['stack is open', 'a stack is open'],
   ['drew playable card', 'the drawn card is playable'],
   ['pending draws > N', 'penalty draws are pending'],
+  ['hand size = N', 'the acting player holds exactly N cards'],
+  ['hand size > N', 'the acting player holds more than N cards'],
+  ['top card is N', 'the pile shows a specific number (0-9)'],
+  ['top card is action', 'the pile shows a skip/reverse/+2/+4/wild'],
+  ['direction is clockwise', 'play is moving clockwise'],
+  ['draw pile is empty', 'the draw pile just ran out'],
+  ['draw pile < N', 'the draw pile is running low'],
   ['card matches exactly', 'same color AND number as the top card'],
   ['player calls uno', 'the UNO button was pressed'],
   ['has uno', 'the presser is down to one card'],
@@ -741,10 +795,12 @@ const EFF_OPTIONS = [
   ['open stack', 'open a stack: stay on turn, chain that value'],
   ['close stack', 'close the stack (Done does this)'],
   ['jump in', 'take the turn, skipping everyone in between'],
+  ['chosen player draws N cards', 'a player you pick draws'],
   ['swap hands with chosen player', 'trade hands with a player you pick'],
   ['swap hands with next player', 'trade hands with the next player'],
   ['rotate hands', 'every hand moves one seat along'],
   ['everyone else draws N cards', 'all other players draw'],
+  ['reject "M"', 'block the move (your message is shown to the clicker)'],
   ['mark uno called', 'the presser is safe'],
   ['penalize caller N cards', 'fine the presser'],
   ['penalize uncalled player N cards', 'fine the player who got caught'],
@@ -1573,7 +1629,17 @@ async function checkRules(){
     const r = await api('/api/check-rules', {method:'POST', body:text});
     if (r.ok){
       const warns = r.warnings || [];
-      st.textContent = '✓ ' + r.num_rules + ' rules ready';
+      st.textContent = '✓ ' + r.num_rules + ' rules ready' +
+        (r.deals ? ' · deals ' + r.deals + ' cards' : '') +
+        (r.timer === null || r.timer === undefined ? '' :
+         r.timer === 0 ? ' · no turn timer' : ' · ' + r.timer + 's turns');
+      // keep the Table row honest whatever wrote the text (typing, modes,
+      // another player's update) - but never fight an input being edited
+      if (!$('set-deal').matches(':focus'))
+        $('set-deal').value = r.deals || DEFAULT_DEAL;
+      if (!$('set-timer').matches(':focus'))
+        $('set-timer').value =
+          (r.timer === null || r.timer === undefined) ? DEFAULT_TIMER : r.timer;
       st.className = warns.length ? 'warn' : 'ok';
       // the server names the snippet to insert (w.fix); w.kind implies where
       for (const w of warns){
@@ -1670,6 +1736,32 @@ $('toggle-drawuntil').onclick = () => flip('toggle-drawuntil');
 $('toggle-jumpin').onclick = () => flip('toggle-jumpin');
 $('toggle-sevenzero').onclick = () => flip('toggle-sevenzero');
 
+/* the Table row edits the directive lines surgically - unlike the preset
+   toggles it never replaces the rest of the text, so hand-written rules
+   survive. Changing a setting IS the decision, so it submits like a
+   toggle. */
+function applySettingsToText(){
+  const ta = $('rules-text');
+  if (ta.value.trim() === ''){
+    // empty editor: seed the full preset text (which includes settings)
+    ta.value = presetText();
+  } else {
+    const lines = ta.value.split('\n').filter(l =>
+      !/^\s*deal\s+\d+\s+cards?\s*$/i.test(l) &&
+      !/^\s*turn\s+timer\b/i.test(l));
+    let insertAt = 0;
+    lines.forEach((l, i) => { if (/^\s*use\s+/i.test(l)) insertAt = i + 1; });
+    const add = settingsLines();
+    if (add) lines.splice(insertAt, 0, ...add.trimEnd().split('\n'));
+    ta.value = lines.join('\n');
+  }
+  lastLoaded = ta.value;
+  checkRules();
+  applyRules();
+}
+$('set-deal').onchange = applySettingsToText;
+$('set-timer').onchange = applySettingsToText;
+
 document.querySelectorAll('.cheat code').forEach(c => c.onclick = () => {
   const ta = $('rules-text');
   ta.setRangeText(c.textContent, ta.selectionStart, ta.selectionEnd, 'end');
@@ -1741,6 +1833,7 @@ function syncBuilderInputs(){
   const eff = EFF_OPTIONS[$('b-eff').value][0];
   $('b-eff-n').hidden = !eff.includes('N');
   $('b-eff-color').hidden = !eff.includes('C');
+  $('b-eff-msg').hidden = !eff.includes('"M"');
 }
 $('b-when').onchange = syncBuilderInputs;
 $('b-eff').onchange = syncBuilderInputs;
@@ -1862,6 +1955,18 @@ const TURN_END = new Set(['advance turn', 'skip next player']);
 $('b-add-eff').onclick = () => {
   let t = EFF_OPTIONS[$('b-eff').value][0];
   t = t.replace('N', $('b-eff-n').value || '1').replace('C', $('b-eff-color').value);
+  if (t.includes('"M"')){
+    // the reject message comes from its own input; quotes would end the
+    // string early in the rule text, so they're dropped
+    const msg = ($('b-eff-msg').value || 'not allowed').replace(/"/g, '').trim();
+    t = t.replace('"M"', '"' + (msg || 'not allowed') + '"');
+    // a reject discards every other effect anyway - a blocking rule IS
+    // just the reject, so clear out anything already added
+    if (builderEffs.length){
+      builderEffs = [];
+      toast('A blocking rule rejects the whole move - removed the other effects');
+    }
+  }
   const last = builderEffs[builderEffs.length - 1];
   if (TURN_END.has(t) && TURN_END.has(last)) builderEffs[builderEffs.length - 1] = t;
   else if (TURN_END.has(last) && !TURN_END.has(t))

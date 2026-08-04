@@ -17,7 +17,7 @@ let handler bridge ~body _sock req =
    read or parsed is fatal — better to die at boot than run the wrong rules *)
 let load_ruleset rules_file =
   match rules_file with
-  | None -> return Rule_engine.Ruleset.default
+  | None -> return (Rule_engine.Ruleset.default, 7, 20)
   | Some path ->
     let%map res = Monitor.try_with (fun () -> Reader.file_contents path) in
     (match res with
@@ -28,24 +28,27 @@ let load_ruleset rules_file =
          (Exn.to_string (Monitor.extract_exn exn));
        Core.exit 1
      | Ok contents ->
-       (match Rule_parser.parse_ruleset contents with
+       (match Rule_parser.parse_ruleset_full contents with
         | Error e ->
           Core.eprintf
             ">>> Invalid rules in '%s': %s\n"
             path
             (Error.to_string_hum e);
           Core.exit 1
-        | Ok rules ->
+        | Ok { rules; hand_size; turn_timer } ->
+          let hand_size = Option.value hand_size ~default:7 in
+          let turn_timer = Option.value turn_timer ~default:20 in
           Core.printf
-            ">>> Loaded %d custom rules from '%s'\n"
+            ">>> Loaded %d custom rules from '%s' (dealing %d cards)\n"
             (List.length rules)
-            path;
-          rules))
+            path
+            hand_size;
+          rules, hand_size, turn_timer))
 
 let run_server port rules_file users_file =
-  let%bind ruleset = load_ruleset rules_file in
+  let%bind ruleset, hand_size, turn_timer = load_ruleset rules_file in
   (* registers an accept loop with Async's scheduler and returns a Deferred.t *)
-  let%bind _game = Server.start ~ruleset ~port () in
+  let%bind _game = Server.start ~ruleset ~hand_size ~turn_timer ~port () in
   (* the web ui talks to the game as an rpc client on localhost *)
   let%bind bridge = Web.create ~rpc_port:port ~users_file in
   (* another register on same loop *)

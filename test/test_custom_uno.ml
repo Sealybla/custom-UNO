@@ -42,27 +42,6 @@ let%expect_test "create deals correctly" =
     |}]
 ;;
 
-(* let%expect_test "wrong player's turn is rejected" = let t = make_state ()
-   in let result = Game_state.apply_action t ~player_id:1 ~action:Draw in
-   print_s [%message (Or_error.is_error result : bool)];
-   [%expect {| ("Or_error.is_error result" true) |}] ;;
-
-   let%expect_test "rejected action leaves state unchanged" = let t =
-   make_state () in (match Game_state.apply_action t ~player_id:1
-   ~action:Draw with | Ok _ -> print_endline "unexpectedly succeeded" | Error
-   _ -> ()); (* t is immutable, so this is trivially true — but it documents
-   the property *) let t2 = make_state () in print_s
-   [%message (Game_state.equal t t2 : bool)];
-   [%expect {| ("Game_state.equal t t2" true) |}] ;;
-
-   let%expect_test "draw advances turn and grows hand" = let t = make_state
-   () in let t' = Game_state.apply_action t ~player_id:0 ~action:Draw |>
-   Or_error.ok_exn in let before = List.length (Player.get_hand (List.nth_exn
-   t.players 0)) in let after = List.length (Player.get_hand (List.nth_exn
-   t'.players 0)) in print_s
-   [%message (before : int) (after : int) (t'.turn : int)];
-   [%expect {| ((before 7) (after 8) (t'.turn 1)) |}] ;; *)
-
 let%expect_test "same seed gives same deal" =
   let t = make_state () in
   let t2 = make_state () in
@@ -1570,8 +1549,8 @@ let%expect_test "parser defaults priority and assigns ids in order" =
   [%expect
     {|
     (rules
-     (((id 1) (priority 50) (condition Always) (actions ((Mutate AdvanceTurn))))
-      ((id 2) (priority 50) (condition Always) (actions ((Mutate AdvanceTurn))))))
+     (((id 1) (priority 50) (condition Always) (actions (AdvanceTurn)))
+      ((id 2) (priority 50) (condition Always) (actions (AdvanceTurn)))))
     |}]
 ;;
 
@@ -2129,7 +2108,7 @@ use seven zero|}
   print_s [%message "after the 0" (hands t : int list list) (t.turn : int)];
   [%expect
     {|
-    (e "Choose a player to swap hands with")
+    (e "Choose another player to aim this card at")
     ("after the 7" ("hands t" ((805) (804 803) (802))) (t.turn 1))
     ("after the 0" ("hands t" ((805) (802) (804 803))) (t.turn 1))
     |}]
@@ -2365,4 +2344,258 @@ use seven zero|}
   in
   print_s [%message (playable : int list) (needs_target : int list)];
   [%expect {| ((playable (871 870)) (needs_target (870))) |}]
+;;
+
+(* the DSL's first setting (deal N cards) and its first blocking effect
+   (reject "...") - together they cover "more than 7 cards" and "no going
+   out on an action card" style table rules *)
+let%expect_test "deal directive and reject effect parse; bad deals rejected" =
+  (match
+     Rule_parser.parse_ruleset_full
+       {|use standard
+deal 9 cards
+rule "no action finish" priority 200:
+  when card is action and hand size = 1
+  do reject "you cannot go out on an action card"|}
+   with
+   | Error e -> print_s [%message (e : Error.t)]
+   | Ok { rules; hand_size } ->
+     print_s [%message (List.length rules : int) (hand_size : int option)]);
+  (* a later deal line wins; absent means None (server default) *)
+  (match
+     Rule_parser.parse_ruleset_full {|deal 5 cards
+deal 12 cards
+rule "x": when always do advance turn|}
+   with
+   | Error e -> print_s [%message (e : Error.t)]
+   | Ok { rules = _; hand_size } -> print_s [%message (hand_size : int option)]);
+  (match
+     Rule_parser.parse_ruleset_full {|rule "x": when always do advance turn|}
+   with
+   | Error e -> print_s [%message (e : Error.t)]
+   | Ok { rules = _; hand_size } -> print_s [%message (hand_size : int option)]);
+  (match
+     Rule_parser.parse_ruleset_full {|deal 99 cards
+rule "x": when always do advance turn|}
+   with
+   | Ok _ -> print_endline "unexpectedly parsed"
+   | Error e -> print_s [%message (e : Error.t)]);
+  [%expect
+    {|
+    (("List.length rules" 12) (hand_size (9)))
+    (hand_size (12))
+    (hand_size ())
+    (e "line 1: 'deal 99 cards' - deal between 1 and 30")
+    |}]
+;;
+
+(* reject makes the move ILLEGAL: the rejection carries the author's
+   message, the card doesn't count as playable, and the same card is fine
+   again once it isn't the last one *)
+let%expect_test "reject blocks going out on an action card" =
+  let rules =
+    Rule_parser.parse_ruleset
+      {|use standard
+rule "no action finish" priority 200:
+  when card is action and hand size = 1
+  do reject "you cannot go out on an action card"|}
+    |> Or_error.ok_exn
+  in
+  let skip = { Card.color = Red; value = Skip; id = 880 } in
+  let spare = { Card.color = Blue; value = Two; id = 881 } in
+  let b1 = { Card.color = Green; value = Three; id = 882 } in
+  let top = { Card.color = Red; value = Five; id = 883 } in
+  let state cards =
+    Game_state.for_testing
+      ~player_hands:[ "a", cards; "b", [ b1 ]; "c", [] ]
+      ~top_card:top
+      ~draw_pile:[]
+      ~pending_draws:0
+      ~turn:0
+  in
+  (* last card: blocked, and not even marked playable *)
+  let t = state [ skip ] in
+  (match
+     Rule_engine.apply_action rules t ~player_id:0
+       ~action:(Play { card_id = 880; declared_color = None; swap_with = None })
+   with
+   | Ok _ -> print_endline "unexpectedly legal"
+   | Error e -> print_s [%message (e : Error.t)]);
+  print_s
+    [%message
+      (Rule_engine.playable_card_ids rules t ~player_id:0 : int list)];
+  (* with another card in hand the same skip plays normally *)
+  let t =
+    Rule_engine.apply_action rules (state [ skip; spare ]) ~player_id:0
+      ~action:(Play { card_id = 880; declared_color = None; swap_with = None })
+    |> Or_error.ok_exn
+  in
+  print_s [%message "skip played" (t.turn : int)];
+  [%expect
+    {|
+    (e "you cannot go out on an action card")
+    ("Rule_engine.playable_card_ids rules t ~player_id:0" ())
+    ("skip played" (t.turn 2))
+    |}]
+;;
+
+(* reject-rules are exempt from the missing-play and missing-turn nags:
+   not playing is the point, and table constraints apply to jump-ins too *)
+let%expect_test "lint leaves blocking rules alone" =
+  (match
+     Rule_parser.parse_ruleset_checked
+       {|use standard
+rule "no action finish" priority 200:
+  when card is action and hand size = 1
+  do reject "no action finish"|}
+   with
+   | Error e -> print_s [%message (e : Error.t)]
+   | Ok (_, warnings) -> print_s [%message (warnings : Rule_parser.Lint.t list)]);
+  [%expect {| (warnings ()) |}]
+;;
+
+(* the second setting: turn timer N seconds (or off), same replace-and-reset
+   semantics as deal *)
+let%expect_test "turn timer directive parses with bounds" =
+  let check text =
+    match Rule_parser.parse_ruleset_full text with
+    | Error e -> print_s [%message (e : Error.t)]
+    | Ok { turn_timer; _ } -> print_s [%message (turn_timer : int option)]
+  in
+  check {|turn timer 15 seconds
+rule "x": when always do advance turn|};
+  check {|turn timer off
+rule "x": when always do advance turn|};
+  check {|rule "x": when always do advance turn|};
+  check {|turn timer 3 seconds
+rule "x": when always do advance turn|};
+  [%expect
+    {|
+    (turn_timer (15))
+    (turn_timer (0))
+    (turn_timer ())
+    (e "line 1: 'turn timer 3 seconds' - between 5 and 300, or off")
+    |}]
+;;
+
+(* the targeted attack: the actor aims the draw at any player, and - unlike
+   swaps - a winning final card still delivers, matching official +2/+4 *)
+let%expect_test "chosen player draws hits the aimed player" =
+  let rules =
+    Rule_parser.parse_ruleset
+      {|use standard
+rule "play plus four" priority 110:
+  when card is plus four and your turn
+  do play the card, set color to declared, chosen player draws 4 cards, advance turn|}
+    |> Or_error.ok_exn
+  in
+  let plus4 = { Card.color = NoColor; value = Wild4; id = 890 } in
+  let a2 = { Card.color = Blue; value = Two; id = 891 } in
+  let top = { Card.color = Red; value = Five; id = 892 } in
+  let pile =
+    List.init 4 ~f:(fun i ->
+      { Card.color = Card.Color.Green; value = Card.Value.One; id = 893 + i })
+  in
+  let state cards =
+    Game_state.for_testing
+      ~player_hands:[ "a", cards; "b", []; "c", [] ]
+      ~top_card:top
+      ~draw_pile:pile
+      ~pending_draws:0
+      ~turn:0
+  in
+  (* no target: rejected with the picker marker *)
+  (match
+     Rule_engine.apply_action rules (state [ plus4; a2 ]) ~player_id:0
+       ~action:
+         (Play { card_id = 890; declared_color = Some Blue; swap_with = None })
+   with
+   | Ok _ -> print_endline "unexpectedly legal"
+   | Error e -> print_s [%message (e : Error.t)]);
+  (* aimed past the next player at c *)
+  let t =
+    Rule_engine.apply_action rules (state [ plus4; a2 ]) ~player_id:0
+      ~action:
+        (Play { card_id = 890; declared_color = Some Blue; swap_with = Some "c" })
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message
+      "aimed at c"
+        (List.map t.players ~f:(fun p -> List.length (Player.get_hand p)) : int list)
+        (t.turn : int)];
+  (* the winning +4 still delivers its cards *)
+  let t =
+    Rule_engine.apply_action rules (state [ plus4 ]) ~player_id:0
+      ~action:
+        (Play { card_id = 890; declared_color = Some Blue; swap_with = Some "c" })
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message
+      "won with it"
+        (t.winner : int option)
+        (List.map t.players ~f:(fun p -> List.length (Player.get_hand p)) : int list)];
+  [%expect
+    {|
+    (e "Choose another player to aim this card at")
+    ("aimed at c"
+     ("List.map t.players ~f:(fun p -> List.length (Player.get_hand p))" (1 0 4))
+     (t.turn 1))
+    ("won with it" (t.winner (0))
+     ("List.map t.players ~f:(fun p -> List.length (Player.get_hand p))" (0 0 4)))
+    |}]
+;;
+
+(* table-state conditions read the pile, direction and draw pile - usable
+   on any action, not just card plays *)
+let%expect_test "table-state conditions parse and fire" =
+  (match
+     Rule_parser.parse_ruleset
+       {|rule "t": when top card is 7 and direction is counter and draw pile < 5 and top card is action and your turn do advance turn|}
+   with
+   | Ok [ rule ] -> print_s [%message (rule.Rule.condition : Rule.Condition.t)]
+   | Ok _ -> print_endline "unexpected rule count"
+   | Error e -> print_s [%message (e : Error.t)]);
+  (* a draw tax that only exists while the pile is low *)
+  let rules =
+    Rule_parser.parse_ruleset
+      {|use standard
+rule "low pile tax" priority 60:
+  when player draws and draw pile < 3 and your turn
+  do draw 2 cards, advance turn|}
+    |> Or_error.ok_exn
+  in
+  let top = { Card.color = Red; value = Five; id = 897 } in
+  let pile =
+    [ { Card.color = Card.Color.Green; value = Card.Value.One; id = 898 }
+    ; { Card.color = Card.Color.Green; value = Card.Value.Two; id = 899 }
+    ]
+  in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", []; "b", [] ]
+      ~top_card:top
+      ~draw_pile:pile
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0 ~action:Draw
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message
+      "taxed draw"
+        (List.length (Player.get_hand (List.nth_exn t.players 0)) : int)
+        (t.turn : int)];
+  [%expect
+    {|
+    (rule.Rule.condition
+     (And (TopCardIsNumber 7)
+      (And (Not DirectionIsClockwise)
+       (And (DrawPileLessThan 5) (And TopCardIsAction IsPlayerTurn)))))
+    ("taxed draw" ("List.length (Player.get_hand (List.nth_exn t.players 0))" 2)
+     (t.turn 1))
+    |}]
 ;;
