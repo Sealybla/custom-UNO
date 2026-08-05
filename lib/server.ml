@@ -233,17 +233,9 @@ let bot_action (state : Game_state.t) player_name =
               List.find hand ~f:(fun c ->
                 match c.Card.value with
                 | Wild4 -> true
-                | Plus ->
-                  Game_rules.is_valid_play
-                    ~top_card:state.Game_state.top_card
-                    ~played_card:c
-                    ~current_color:state.Game_state.current_color
+                | Plus -> Game_state.is_valid_play state ~played_card:c
                 | _ -> false)
-            else
-              Game_rules.choose_card
-                ~hand
-                ~top_card:state.Game_state.top_card
-                ~current_color:state.Game_state.current_color
+            else Game_state.first_playable_card state ~hand
           in
           (match candidate with
            | None -> fallback

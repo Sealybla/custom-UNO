@@ -201,12 +201,7 @@ let%expect_test "full game plays to completion" =
         in
         let hand = resolve_hand state player in
         let action =
-          match
-            Game_rules.choose_card
-              ~hand
-              ~top_card:state.Game_state.top_card
-              ~current_color:state.Game_state.current_color
-          with
+          match Game_state.first_playable_card state ~hand with
           | Some card ->
             let declared_color =
               match card.Card.value with

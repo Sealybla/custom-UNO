@@ -433,9 +433,7 @@ let rec eval_condition
      | CardPlayed { card; _ } ->
        (* an undeclared colour accepts anything, so a game that opens on a
           flipped wild lets the first player lead with any card *)
-       Game_rules.matches_color
-         ~played_card:card
-         ~current_color:state.current_color
+       Game_state.matches_color state ~played_card:card
      | _ -> false)
   | MatchesTopValue ->
     (match evt with
