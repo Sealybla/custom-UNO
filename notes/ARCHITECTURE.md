@@ -39,7 +39,9 @@ lib/                 the whole game; no I/O except server.ml
   event.ml           what a player did, in engine terms
   action.ml          the wire protocol: Client_to_server / Server_to_client
   game_state.ml      the whole game as one immutable record + Effect
-  game_rules.ml      raw UNO legality helpers (used by bots and draw effects)
+                     (official-UNO legality lives here too: is_valid_play,
+                     matches_color, first_playable_card — used by bots and
+                     draw effects. Formerly a separate game_rules.ml.)
   rule.ml            Condition / Rule — the rule AST
   rule_engine.ml     evaluation, the built-in rulesets, apply_action
   rule_parser.ml     text -> rules + settings, `use <preset>`, the linter
@@ -148,6 +150,7 @@ with `And / Or / Not`. The leaves fall into four groups:
 | the played card | `MatchesTopColor`, `MatchesTopValue`, `MatchesTopExactly`, `IsWildCard`, `IsSkip`, `IsReverse`, `IsPlusTwo`, `IsPlusFour`, `IsNumber n`, `IsCardColor c`, `IsActionCard`, `IsNumberCard` |
 | the table | `ActiveColorIs c`, `TopCardIsNumber n`, `TopCardIsAction`, `DirectionIsClockwise`, `DrawPileLessThan n`, `PendingDrawsGreaterThan n`, `StackIsOpen`, `ContinuesStack` |
 | the actor | `IsPlayerTurn`, `HandSizeGreaterThan n`, `HandSizeEquals n`, `CallerHasUno`, `SomeoneElseHasUno` |
+| other players | `AnyOpponentHandEquals n`, `AnyOpponentHandGreaterThan n` — some player *other than the actor*. `SomeoneElseHasUno` is the `= 1` case the built-in UNO rules use |
 | the action kind | `IsDrawAction`, `IsPassAction`, `IsUnoCall`, `DrewPlayableCard`, `Always` |
 
 **`Game_state.Effect.t`** — a state transition: `PlayTriggeringCard`,
@@ -245,6 +248,13 @@ Beyond plain parsing:
 **Override by name.** A later rule with the same name as an earlier one
 *replaces it in place* rather than duplicating. This is what makes
 `use standard` + one custom rule work as "the standard game, but…".
+
+**Subtraction by name.** `remove rule "play plus four"` drops a rule from
+everything defined *above* it, so it belongs after the `use` line it edits.
+Removing a name nothing defined is an error that lists what exists. Note what
+removal means given §5: the cards that rule powered become **unplayable**, not
+free — no rule accepts them, so nothing does. Removal is positional like
+redefinition, so a later rule of the same name re-adds it.
 
 **Settings, not rules.** Some directives configure the game the rules run in
 rather than reacting to an event, so they are lines of their own with no
@@ -361,6 +371,28 @@ so a room full of bots turns people away exactly like a room full of players —
 and the refusal message says to remove a bot, because "room is full" is
 baffling when you can see empty chairs.
 
+### Mid-game reconnect
+
+Joining a room with a game in progress is refused — **except** back into your
+own abandoned seat. `join_lobby_rpc` matches the requested name
+case-insensitively against the seated players, then checks the seat is actually
+abandoned:
+
+```ocaml
+match Hashtbl.find room.clients canonical with
+| None -> true                                  (* client gone entirely *)
+| Some c -> c.is_bot || Pipe.is_closed c.writer (* on autopilot, or dead pipe *)
+```
+
+If the seat is still live you get *"X is still connected in this room"* rather
+than a silent takeover — otherwise anyone could evict a player by typing their
+name. Reconnecting broadcasts `Player_rejoined`; dropping broadcasts
+`Player_dropped`, so the table can show who is on autopilot.
+
+This is why the room-full check carries `not (Hashtbl.mem room.clients name)`:
+retaking a seat you already occupy adds nobody, so a full room must not block
+it.
+
 ### Notification diffing
 
 The server compares state before/after each action to synthesize UI events it
@@ -380,6 +412,9 @@ would otherwise have no way to know about:
 ---
 
 ## 8. The two clients
+
+> Function-by-function walkthrough of `web.ml` and `client.ml`, and the case
+> for keeping the terminal client at all: **`CLIENTS.md`**.
 
 ### Browser (`bin/page.ml` + `bin/web.ml`)
 
@@ -511,7 +546,7 @@ let matches_color ~played_card ~current_color =
   | color -> Card.Color.equal played_card.color color
 ```
 
-Used by `Game_rules.is_valid_play` and the engine's `MatchesTopColor`. The
+Used by `Game_state.is_valid_play` and the engine's `MatchesTopColor`. The
 browser no longer has its own copy — see §8.
 
 ### 11.6 Finish modes (`play until …`)
