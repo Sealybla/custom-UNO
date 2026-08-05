@@ -79,7 +79,7 @@ remove rule "play plus four"   # +4s are dead cards now
 | `active color is red` (etc.) | `ActiveColorIs Red` |
 | `pending draws > N` | `PendingDrawsGreaterThan N` |
 | `hand size > N` / `hand size = N` | `HandSizeGreaterThan N` / `HandSizeEquals N` — the acting player's hand, counted before a played card leaves it |
-| `any opponent has N cards` / `any opponent has more than N cards` | `AnyOpponentHandEquals N` / `AnyOpponentHandGreaterThan N` — some player *other than the actor*; leader-watch and defense rules (`someone else has uno` is the `= 1` special case the built-in UNO rules use) |
+| `any opponent has N cards` / `any opponent has more than N cards` | `AnyOpponentHandEquals N` / `AnyOpponentHandGreaterThan N` — some player *other than the actor*; leader-watch and defense rules. Not to be confused with `someone has uno`, which is window-based (true only while another player is actually catchable), not a hand-size test |
 | `top card is N` (0–9) / `top card is action` | `TopCardIsNumber N` / `TopCardIsAction` — what's *showing on the pile*, testable on any action (unlike `card is …`, which tests the played card) |
 | `direction is clockwise` / `direction is counter` | `DirectionIsClockwise` (counter parses as its negation) |
 | `draw pile is empty` / `draw pile < N` | `DrawPileLessThan 1` / `DrawPileLessThan N` — endgame triggers; the pile still reshuffles automatically |
@@ -474,8 +474,12 @@ actually play a card:
 ```
 rule "draw until playable" priority 1:
   when player draws and your turn
-  do draw 1 cards
+  do draw until playable
 ```
+
+(`draw until playable` rather than `draw 1 cards`: on a dry deck the
+former passes the turn, while a plain draw would be an accepted no-op
+that leaves the seat with no way out.)
 
 Stacking variant replaces "play matching card" with:
 
@@ -508,7 +512,7 @@ so nobody draws mid-stack:
 ```
 rule "draw until playable" priority 1:
   when player draws and your turn and not stack is open
-  do draw 1 cards
+  do draw until playable
 ```
 
 Every hand-coded rule is expressible, so the grammar covers the existing

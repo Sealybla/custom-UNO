@@ -260,12 +260,15 @@ module Ruleset = struct
 
   (* each draw click takes one card and never ends the turn; drawn playable
      cards may be kept and drawing continued — with no pass rule in the
-     variant, only actually playing a card ends the turn *)
+     variant, only actually playing a card ends the turn. DrawUntilPlayable
+     rather than ExecuteDraw 1: on a dry deck the former passes the turn,
+     while the latter would be an accepted no-op that leaves the seat with
+     no way out (and the turn driver looping on it forever) *)
   let draw_until_rule : Rule.t =
     { id = 7
     ; priority = 1
     ; condition = And (IsDrawAction, IsPlayerTurn)
-    ; actions = [ (ExecuteDraw 1) ]
+    ; actions = [ DrawUntilPlayable ]
     }
   ;;
 
@@ -275,7 +278,7 @@ module Ruleset = struct
     { id = 7
     ; priority = 1
     ; condition = And (IsDrawAction, And (IsPlayerTurn, Not StackIsOpen))
-    ; actions = [ (ExecuteDraw 1) ]
+    ; actions = [ DrawUntilPlayable ]
     }
   ;;
 
@@ -678,6 +681,14 @@ and apply_action
     | Some p -> Ok p
     | None ->
       Or_error.error_s [%message "Player ID not found" (player_id : int)]
+  in
+  let%bind () =
+    (* a finished player is a spectator: no plays, draws, passes or UNO
+       presses. Gating here also keeps the playability simulations honest,
+       so a finished seat never lights up in the UI *)
+    if Game_state.is_finished state player_id
+    then Or_error.error_string "You have already finished this game"
+    else Ok ()
   in
   let%bind evt = event_of_client_action state ~player ~action in
   let%map next_state = process_event rules state evt in

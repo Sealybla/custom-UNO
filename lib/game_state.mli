@@ -98,6 +98,10 @@ val hand_size : t -> int -> int
 (* has this player already emptied their hand and left the rotation? *)
 val is_finished : t -> int -> bool
 
+(** the next seat in play direction that has not finished, or [from] itself
+    when everybody else is out *)
+val next_live_seat : t -> from:int -> int
+
 (* a gameplay move consumes a turn; an UNO press does not *)
 val is_gameplay_event : Event.t -> bool
 

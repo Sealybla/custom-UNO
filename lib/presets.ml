@@ -94,12 +94,14 @@ rule "pass after draw" priority 1:
 ;;
 
 (* draw-until: drawing never ends the turn and there is no pass rule, so
-   only playing a card does *)
+   only playing a card does - except on a dry deck, where the "draw until
+   playable" effect turns the click into a pass ("draw 1 cards" would be
+   an accepted no-op there, leaving the seat with no way out) *)
 let draw_until =
   {|
 rule "draw until playable" priority 1:
   when player draws and your turn
-  do draw 1 cards
+  do draw until playable
 |}
 ;;
 
@@ -109,7 +111,7 @@ let draw_until_stack =
   {|
 rule "draw until playable" priority 1:
   when player draws and your turn and not stack is open
-  do draw 1 cards
+  do draw until playable
 |}
 ;;
 

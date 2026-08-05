@@ -370,24 +370,31 @@ let create ?random_state ~player_names ~hand_size () : t Or_error.t =
   update_top_card t card
 ;;
 
-(* passing the turn also forgets the drawn-card decision *)
 let is_finished t player_id = List.mem t.finished player_id ~equal:Int.equal
 
-let advance_turn t =
+(* the next seat in play direction that has not finished, or [from] itself
+   when everybody else is out. Finished players keep their seat but are
+   invisible to everything that walks the table - the turn, +2/+4 targets,
+   swap neighbors - or penalties would land in dead hands while the live
+   victim walks free. [tried] bounds the walk: if every seat is finished
+   there is no live seat to land on and we would otherwise loop forever. *)
+let next_live_seat t ~from =
   let num_players = List.length t.players in
   let dir = match t.direction with Clockwise -> 1 | Counter -> -1 in
   (* add num_players again to account for neg mod *)
   let step idx = (idx + dir + num_players) % num_players in
-  (* players who have already gone out keep their seat but never get another
-     turn. [tried] bounds the walk: if everybody is finished there is no live
-     seat to land on and we would otherwise loop forever. *)
-  let rec next_live idx tried =
+  let rec go idx tried =
     if tried >= num_players || not (is_finished t idx)
     then idx
-    else next_live (step idx) (tried + 1)
+    else go (step idx) (tried + 1)
   in
+  go (step from) 1
+;;
+
+(* passing the turn also forgets the drawn-card decision *)
+let advance_turn t =
   { t with
-    turn = next_live (step t.turn) 1
+    turn = next_live_seat t ~from:t.turn
   ; drew_playable = false
   ; turns_advanced = t.turns_advanced + 1
   }
@@ -435,12 +442,9 @@ let apply_effect ?card_playable t ~(event : Event.t) (eff : Effect.t)
     let%bind player = player_of_event event in
     draw_n t (Player.get_id player) n
   | DrawForNextPlayer count ->
-    (* the target is the NEXT player in turn order (respecting direction),
-       not the actor - and whose turn it is does not change *)
-    let dir = if Direction.equal t.direction Clockwise then 1 else -1 in
-    let num_players = List.length t.players in
-    let player_id = (t.turn + dir + num_players) % num_players in
-    draw_n t player_id count
+    (* the target is the next LIVE player in turn order (respecting
+       direction), not the actor - and whose turn it is does not change *)
+    draw_n t (next_live_seat t ~from:t.turn) count
   | DrawUntilPlayable ->
     (* one card per draw click, the turn staying put either way; a playable
        draw sets drew_playable for rules that condition on it. A dry deck
@@ -515,49 +519,81 @@ let apply_effect ?card_playable t ~(event : Event.t) (eff : Effect.t)
   | SwapHandsWithNext ->
     let%map player = player_of_event event in
     let actor = Player.get_id player in
-    let n = List.length t.players in
-    let dir = if Direction.equal t.direction Clockwise then 1 else -1 in
-    let target = (actor + dir + n) % n in
-    if Option.is_some t.winner || target = actor
-    then t (* going out on the card wins outright - no swap after a win *)
+    let target = next_live_seat t ~from:actor in
+    (* [is_finished actor], not [t.winner]: in a multi-winner game a mid-game
+       finish leaves winner unset, but the finisher must still walk away
+       without trading their empty hand for a live one *)
+    if is_finished t actor || target = actor
+    then t (* going out on the card finishes outright - no swap after that *)
     else swap_hands t ~a:actor ~b:target
   | SwapHandsWithChosen ->
     let%bind player = player_of_event event in
-    if Option.is_some t.winner
-    then Ok t (* checked before demanding a target: a winning play needs none *)
+    if is_finished t (Player.get_id player)
+    then
+      (* checked before demanding a target: a finishing play needs none *)
+      Ok t
     else (
       match event with
       | Event.CardPlayed { swap_with = Some target; _ } ->
-        Ok (swap_hands t ~a:(Player.get_id player) ~b:(Player.get_id target))
+        if is_finished t (Player.get_id target)
+        then
+          Or_error.error_string
+            "That player has already finished - pick someone still playing"
+        else
+          Ok (swap_hands t ~a:(Player.get_id player) ~b:(Player.get_id target))
       | Event.CardPlayed { swap_with = None; _ } ->
         Or_error.error_string target_needed
       | _ ->
         Or_error.error_string
           "'swap hands with chosen player' only makes sense on a card play")
   | RotateHands ->
-    if Option.is_some t.winner
-    then Ok t (* going out on the card wins outright - hands stay put *)
+    let%map player = player_of_event event in
+    if is_finished t (Player.get_id player)
+    then t (* going out on the card finishes outright - hands stay put *)
     else (
-      let n = List.length t.players in
-      let dir = if Direction.equal t.direction Clockwise then 1 else -1 in
-      let hands = List.map t.players ~f:Player.get_hand in
-      let players =
-        (* your hand goes to the seat ahead of you, so the hand you receive
-           comes from the seat behind you (in play direction) *)
-        List.mapi t.players ~f:(fun i p ->
-          Player.with_hand p (List.nth_exn hands ((i - dir + n) % n)))
+      (* rotation runs over LIVE seats only: finished seats keep their
+         (empty) hands, or a live hand would rotate into a dead seat and
+         an empty one back into play *)
+      let live =
+        List.filter_map t.players ~f:(fun p ->
+          let id = Player.get_id p in
+          if is_finished t id then None else Some id)
       in
-      Ok { t with players })
+      let k = List.length live in
+      if k <= 1
+      then t
+      else (
+        let dir = if Direction.equal t.direction Clockwise then 1 else -1 in
+        let hands = List.map t.players ~f:Player.get_hand in
+        let players =
+          (* your hand goes to the live seat ahead of you, so the hand you
+             receive comes from the live seat behind you (in direction) *)
+          List.mapi t.players ~f:(fun i p ->
+            match List.findi live ~f:(fun _ id -> Int.equal id i) with
+            | None -> p
+            | Some (li, _) ->
+              let from_seat = List.nth_exn live ((li - dir + k) % k) in
+              Player.with_hand p (List.nth_exn hands from_seat))
+        in
+        { t with players }))
   | AllOthersDraw count ->
     let%bind player = player_of_event event in
     let actor = Player.get_id player in
+    (* finished seats are out of the game; feeding them cards would drain
+       the deck into hands that can never play again *)
     List.fold_result t.players ~init:t ~f:(fun acc p ->
       let id = Player.get_id p in
-      if id = actor then Ok acc else draw_n acc id count)
+      if id = actor || is_finished acc id
+      then Ok acc
+      else draw_n acc id count)
   | ChosenPlayerDraws n ->
     (match event with
      | Event.CardPlayed { swap_with = Some target; _ } ->
-       draw_n t (Player.get_id target) n
+       if is_finished t (Player.get_id target)
+       then
+         Or_error.error_string
+           "That player has already finished - pick someone still playing"
+       else draw_n t (Player.get_id target) n
      | Event.CardPlayed { swap_with = None; _ } ->
        Or_error.error_string target_needed
      | _ ->
@@ -575,16 +611,23 @@ let apply_effect ?card_playable t ~(event : Event.t) (eff : Effect.t)
   | AdvanceTurn -> Ok (advance_turn t)
   | CheckWinner finish ->
     let%map player = player_of_event event in
-    let id = Player.get_id player in
-    let emptied_hand =
-      match List.find t.players ~f:(fun p -> Int.equal (Player.get_id p) id) with
+    let actor = Player.get_id player in
+    let emptied id =
+      match
+        List.find t.players ~f:(fun p -> Int.equal (Player.get_id p) id)
+      with
       | Some p -> List.is_empty (Player.get_hand p)
       | None -> false
     in
-    (* order matters: [finished] is the podium, first place first *)
+    (* order matters: [finished] is the podium, first place first. Only the
+       actor is examined: the hand-moving effects guarantee no OTHER live
+       player can be emptied (a finished actor never swaps or rotates, and
+       trades between live players exchange non-empty hands), and tests
+       legitimately build mid-game states with empty fixture hands that a
+       whole-table sweep would wrongly send to the podium *)
     let finished =
-      if emptied_hand && not (is_finished t id)
-      then t.finished @ [ id ]
+      if emptied actor && not (is_finished t actor)
+      then t.finished @ [ actor ]
       else t.finished
     in
     let needed =

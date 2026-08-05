@@ -3131,3 +3131,157 @@ let%expect_test "a huge number is a parse error, not an exception" =
    | Error e -> print_s [%message (e : Error.t)]);
   [%expect {| (e "line 1: number '99999999999999999999' is too large") |}]
 ;;
+
+(* ---------- regressions: finished seats are invisible to the table ---------- *)
+
+(* the +2 penalty walks to the next LIVE player, exactly like the skip that
+   follows it - it used to land in the finished seat's dead hand while the
+   live victim was skipped without drawing *)
+let%expect_test "a +2 lands on the next live player, not a finished seat" =
+  let rules =
+    Rule_parser.parse_ruleset "play until 3 players finish\nuse standard"
+    |> Or_error.ok_exn
+  in
+  let top = { Card.color = Red; value = Five; id = 720 } in
+  let c n v = { Card.color = Card.Color.Red; value = v; id = n } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:
+        [ "a", [ c 721 One ]
+        ; "b", [ c 722 Two; c 732 Six ]
+        ; "c", [ c 723 Three; c 733 Seven ]
+        ; "d", [ c 724 Plus; c 734 Eight ]
+        ]
+      ~top_card:top
+      ~draw_pile:(Game_state.create_card_deck ())
+      ~pending_draws:0
+      ~turn:0
+  in
+  (* a goes out; the seat between d and b is now dead *)
+  let t = play rules t ~player_id:0 ~card_id:721 in
+  let t = play rules t ~player_id:1 ~card_id:722 in
+  let t = play rules t ~player_id:2 ~card_id:723 in
+  (* d's +2 must penalize b - the next live player - and skip them *)
+  let t = play rules t ~player_id:3 ~card_id:724 in
+  print_s
+    [%message
+      (hand_of t 0 : int)
+        (hand_of t 1 : int)
+        (t.turn : int)
+        (t.finished : int list)];
+  [%expect
+    {| (("hand_of t 0" 0) ("hand_of t 1" 3) (t.turn 2) (t.finished (0))) |}]
+;;
+
+(* mid-game finishers used to swap their empty hand for a live one (the old
+   guard checked [winner], which multi-winner finishes leave unset) *)
+let%expect_test "going out on a 7 mid-game does not swap the empty hand" =
+  let rules =
+    Rule_parser.parse_ruleset
+      "play until 2 players finish\nuse standard\nuse seven zero"
+    |> Or_error.ok_exn
+  in
+  let top = { Card.color = Red; value = Five; id = 740 } in
+  let c n v = { Card.color = Card.Color.Red; value = v; id = n } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:
+        [ "a", [ c 741 Seven ]
+        ; "b", [ c 742 Two; c 752 Six ]
+        ; "c", [ c 743 Three; c 753 Four ]
+        ]
+      ~top_card:top
+      ~draw_pile:(Game_state.create_card_deck ())
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action
+      rules
+      t
+      ~player_id:0
+      ~action:
+        (Play { card_id = 741; declared_color = None; swap_with = Some "b" })
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message
+      (hand_of t 0 : int)
+        (hand_of t 1 : int)
+        (t.finished : int list)
+        (t.winner : int option)];
+  (* and a finished player is a spectator from then on *)
+  (match Rule_engine.apply_action rules t ~player_id:0 ~action:Draw with
+   | Ok _ -> print_endline "unexpectedly accepted"
+   | Error e -> print_s [%message (e : Error.t)]);
+  [%expect
+    {|
+    (("hand_of t 0" 0) ("hand_of t 1" 2) (t.finished (0)) (t.winner ()))
+    (e "You have already finished this game")
+    |}]
+;;
+
+(* rotation moves hands between LIVE seats only: the finished seat's empty
+   hand used to rotate back into play while a live hand died with it *)
+let%expect_test "a 0 rotates hands among live seats only" =
+  let rules =
+    Rule_parser.parse_ruleset
+      "play until 3 players finish\nuse standard\nuse seven zero"
+    |> Or_error.ok_exn
+  in
+  let top = { Card.color = Red; value = Five; id = 760 } in
+  let c n v = { Card.color = Card.Color.Red; value = v; id = n } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:
+        [ "a", [ c 761 One ]
+        ; "b", [ c 762 Zero; c 772 Six ]
+        ; "c", [ c 763 Three; c 773 Seven; c 783 Nine ]
+        ; "d", [ c 764 Four ]
+        ]
+      ~top_card:top
+      ~draw_pile:(Game_state.create_card_deck ())
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t = play rules t ~player_id:0 ~card_id:761 in
+  (* b's 0: b receives d's hand, c receives b's, d receives c's; a's dead
+     seat keeps its empty hand and the turn steps to c *)
+  let t = play rules t ~player_id:1 ~card_id:762 in
+  print_s
+    [%message
+      (hand_of t 0 : int)
+        (hand_of t 1 : int)
+        (hand_of t 2 : int)
+        (hand_of t 3 : int)
+        (t.turn : int)];
+  [%expect
+    {|
+    (("hand_of t 0" 0) ("hand_of t 1" 1) ("hand_of t 2" 1) ("hand_of t 3" 3)
+     (t.turn 2))
+    |}]
+;;
+
+(* the shipped draw-until rule now uses the draw-until-playable effect, so
+   a dry deck turns the click into a pass instead of an accepted no-op the
+   turn driver would loop on forever *)
+let%expect_test "draw-until on a dry deck passes the turn instead of looping" =
+  let rules = Rule_engine.Ruleset.draw_until_variant in
+  let top = { Card.color = Red; value = Five; id = 790 } in
+  let blue = { Card.color = Blue; value = Two; id = 791 } in
+  let green = { Card.color = Green; value = Four; id = 792 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ blue ]; "b", [ green ] ]
+      ~top_card:top
+      ~draw_pile:[]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0 ~action:Draw
+    |> Or_error.ok_exn
+  in
+  print_s [%message (hand_of t 0 : int) (t.turn : int)];
+  [%expect {| (("hand_of t 0" 1) (t.turn 1)) |}]
+;;

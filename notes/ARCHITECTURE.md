@@ -21,7 +21,7 @@ dune exec custom-uno -- -port 8080
 #   -rules FILE loads a ruleset at boot; unparseable = fatal, by design
 
 ./scripts/share.sh 8091          # public https link via a Cloudflare quick tunnel
-dune exec uno-client             # terminal client (start/draw/pass/uno/play/rules)
+dune exec uno-client             # terminal client (ready/start/draw/pass/uno/play/rules)
 ```
 
 `dune utop lib` is the fastest way to poke at the engine directly — most of
@@ -52,11 +52,11 @@ lib/                 the whole game; no I/O except server.ml
 
 bin/
   main.ml            boots the RPC server + the HTTP server on port+1
-  page.ml            THE ENTIRE WEB UI as one OCaml string literal (~2300 lines)
+  page.ml            THE ENTIRE WEB UI as one OCaml string literal (~2800 lines)
   web.ml             HTTP/JSON bridge: browser <-> RPC, and event -> JSON
   client.ml          terminal client
 
-test/test_custom_uno.ml    ~2700 lines of expect tests
+test/test_custom_uno.ml    ~3100 lines of expect tests
 docs/rule-language.md      user-facing rule language reference
 examples/*.rules           standalone rule files (untested — see §12)
 scripts/share.sh           Cloudflare quick tunnel
@@ -150,7 +150,7 @@ with `And / Or / Not`. The leaves fall into four groups:
 | the played card | `MatchesTopColor`, `MatchesTopValue`, `MatchesTopExactly`, `IsWildCard`, `IsSkip`, `IsReverse`, `IsPlusTwo`, `IsPlusFour`, `IsNumber n`, `IsCardColor c`, `IsActionCard`, `IsNumberCard` |
 | the table | `ActiveColorIs c`, `TopCardIsNumber n`, `TopCardIsAction`, `DirectionIsClockwise`, `DrawPileLessThan n`, `PendingDrawsGreaterThan n`, `StackIsOpen`, `ContinuesStack` |
 | the actor | `IsPlayerTurn`, `HandSizeGreaterThan n`, `HandSizeEquals n`, `CallerHasUno`, `SomeoneElseHasUno` |
-| other players | `AnyOpponentHandEquals n`, `AnyOpponentHandGreaterThan n` — some player *other than the actor*. `SomeoneElseHasUno` is the `= 1` case the built-in UNO rules use |
+| other players | `AnyOpponentHandEquals n`, `AnyOpponentHandGreaterThan n` — some player *other than the actor*. `SomeoneElseHasUno` is different: it is window-based (true only while another player's open catch window — `uno_vulnerable` — belongs to someone other than the presser), not a hand-size test |
 | the action kind | `IsDrawAction`, `IsPassAction`, `IsUnoCall`, `DrewPlayableCard`, `Always` |
 
 **`Game_state.Effect.t`** — a state transition: `PlayTriggeringCard`,
@@ -205,10 +205,12 @@ thing to understand about the codebase, and the source of most subtle bugs:
 | 1 | draw, pass-after-draw |
 
 The gaps are deliberate. Seven-zero sits at 60: above the generic play rule
-(10) so 7s and 0s get their swap behavior, below the specials (100+) and the
-stack-continue rule (120) so it only ever changes *plain* number plays. Jump-in
-sits at 130, above the stack rules, because it has to be decided before
-anything that assumes it is already your turn.
+(10) so 7s and 0s get their swap behavior, below the specials (100+) so
+action cards keep theirs. Priority alone does not keep it out of open
+stacks, though — a mid-stack 7 of a *different* value matches nothing at
+120 — so both seven-zero rules also carry an explicit `not stack is open`.
+Jump-in sits at 130, above the stack rules, because it has to be decided
+before anything that assumes it is already your turn.
 
 ### `apply_action` — the one entry point
 
@@ -339,7 +341,12 @@ autopilot; a server-generated one must not.
 | bot move | seat is a bot | 5s |
 | turn countdown broadcast | human, 5s before timeout | 15s |
 | autopilot takeover | human turn times out | 20s |
-| autopilot subsequent moves | player still absent | 1.5s |
+| autopilot further moves, same turn | the timed-out turn continues (stack, drawn card) | 1.5s |
+
+Autopilot covers only the remainder of the timed-out turn: it is cleared as
+soon as the turn belongs to anyone else, so the player's next turn gets the
+full timer again. Sustained absence is the disconnect path's job (bot
+takeover), not autopilot's.
 | bot UNO call | bot's hand hits 1 | 2s |
 | auto-pass | pass is the *only* legal move | immediate |
 
@@ -363,7 +370,7 @@ bots so the rematch still has opponents.
 |---|---|
 | capacity | `max_participants = 10`, counting humans and bots alike |
 | ready gate | bots count as ready, so they never block Start |
-| room reclamation | `human_count room = 0` frees the room; bots alone don't keep it alive |
+| room reclamation | `human_count room = 0` frees the room after a 30s grace window (a page refresh empties a lobby for only a moment); bots alone don't keep it alive |
 | a bot's event pipe | `Pipe.drain` on the reader — nothing consumes it, and unread events would accumulate forever |
 
 The capacity rule is one constant on purpose. Humans and bots share the table,
@@ -389,9 +396,9 @@ than a silent takeover — otherwise anyone could evict a player by typing their
 name. Reconnecting broadcasts `Player_rejoined`; dropping broadcasts
 `Player_dropped`, so the table can show who is on autopilot.
 
-This is why the room-full check carries `not (Hashtbl.mem room.clients name)`:
-retaking a seat you already occupy adds nobody, so a full room must not block
-it.
+This is why the room-full check carries an `Option.is_none existing` guard
+(where `existing` is a *caseless* scan of the seated names): retaking a seat
+you already occupy adds nobody, so a full room must not block it.
 
 ### Notification diffing
 
@@ -448,9 +455,9 @@ that duplicate is guaranteed to drift, so the client no longer has an opinion.
 
 ### Terminal (`bin/client.ml`)
 
-Speaks Async RPC directly. Commands: `start`, `draw`, `pass`, `uno`,
-`play <id> [color]`, `rules <file>`. Useful for driving a second player
-without a browser.
+Speaks Async RPC directly. Commands: `ready`, `unready`, `start`, `draw`,
+`pass`, `uno`, `play <id> [color] [swap target]`, `rules <file>`. Useful for
+driving a second player without a browser.
 
 ---
 
@@ -487,7 +494,7 @@ unchanged.
 |---|---|---|---|
 | `default` | victim draws immediately, is skipped | draw 1; playable keeps turn (play or Done) | no |
 | `stacking_variant` | adds to `pending_draws`; victim can stack or cash out | same | yes |
-| `draw_until_variant` | immediate | one card per click, turn never ends; only playing ends it | no |
+| `draw_until_variant` | immediate | one card per click, turn stays; only playing ends it (a dry deck turns the click into a pass) | no |
 | `stacking_draw_until_variant` | deferred | one per click, blocked mid-stack | yes |
 
 All four include `uno_rules`, and each has a `…_jump_in_variant` twin that
@@ -509,9 +516,12 @@ sits at priority 105 — *above* the specials — so a wild or skip can't dodge 
 pending penalty.
 
 ### 11.3 The UNO button
-Three rules at priorities 200/190/180: claim your own UNO > catch someone
-else's > a press with nothing behind it (which fines you). The last matches
-*any* press, so a press never falls through to a turn rule.
+Three rules at priorities 200/190/180: while somebody's catch window is
+open, any press is a catch (the claim rule carries `not someone has uno`,
+so even a presser who is themselves down to one card makes the catch);
+otherwise a one-card press claims your own UNO, and a press with nothing
+behind it fines you. The last rule matches *any* press, so a press never
+falls through to a turn rule.
 
 `Game_state.update_uno_window` decides who is catchable, in one assignment:
 
@@ -576,17 +586,27 @@ stored beside the rules.
 
 Two consequences ripple outward:
 
-- **`advance_turn` must skip finished players**, and does so with a bounded
-  loop (`tried >= num_players` bails out). An unbounded "keep stepping until
-  someone is live" spins forever the instant everyone is out — which is
-  reachable in the final action of a `Last_standing` game.
+- **Everything that walks the table must skip finished players**, not just
+  the turn: `Game_state.next_live_seat` (bounded — `tried >= num_players`
+  bails out, since everyone can be out after a `Last_standing` finale) is
+  shared by `advance_turn`, the +2/+4 target and the swap-with-next
+  neighbor; rotations run over live seats only; `all others draw` skips
+  finished hands; chosen-target effects reject finished targets; and
+  `apply_action` rejects any action from a finished player outright, which
+  also keeps the playability simulation (and so the UI highlights) blank
+  for them. Bots pick swap targets from live opponents only.
 - The server emits `Player_finished {name; place}` as each player goes out,
-  and `Game_over` carries the full `standings`, not just a winner.
+  `Game_over` carries the full `standings`, not just a winner, and both the
+  reconnect replay and the `get_state` snapshot re-send the podium so a
+  rejoiner greys out finished seats correctly.
 
 ### 11.7 Jump-in
 
-One rule at priority 130: `card matches exactly and not your turn and not
-stack is open`. Its effect list starts with `JumpToActor`, which moves `turn`
+One rule at priority 130: `card matches exactly and not card is action and
+not your turn and not stack is open`. Number cards only, because the rule's
+effect list is the generic play sequence — a jumped Skip/+2 would land as a
+blank (write a custom rule spelling out the effects to allow action jumps).
+Its effect list starts with `JumpToActor`, which moves `turn`
 to whoever played *before* anything else runs — so the following
 `PlayTriggeringCard` and `AdvanceTurn` operate from the jumper's seat, and
 everyone between them and the previous player simply loses their go.
@@ -599,7 +619,9 @@ it with no way to close.
 
 ### 11.8 Seven-zero
 
-Two rules at priority 60 (§5). The 7 uses `SwapHandsWithChosen`, which rejects
+Two rules at priority 60 (§5), both guarded by `not stack is open` so a
+mid-stack 7/0 cannot swap and strand the stack. The 7 uses
+`SwapHandsWithChosen`, which rejects
 with `Game_state.target_needed` when no target was declared; the playability
 simulation catches that specific error to mark the card `Needs_target` rather
 than illegal, which is how the UI knows to ask before sending the play.
@@ -613,7 +635,7 @@ order would hand your winning hand away.
 
 ## 12. Testing
 
-`test/test_custom_uno.ml`, ~2700 lines of `ppx_expect` tests. Run
+`test/test_custom_uno.ml`, ~3100 lines of `ppx_expect` tests. Run
 `dune runtest`; `dune promote` accepts diffs.
 
 Coverage: deck/deal invariants, each special card, stacking turns, pending

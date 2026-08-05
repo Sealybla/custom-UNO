@@ -166,6 +166,14 @@ let turn_changed_event (room : Room.t) (state : Game_state.t) =
     }
 ;;
 
+(* the podium so far, replayable for clients that (re)connect mid-game -
+   without it a rejoiner renders finished players as still active *)
+let finished_events (game : Game_state.t) =
+  List.filter_mapi game.finished ~f:(fun i id ->
+    Option.map (name_of_player_id game id) ~f:(fun player_name ->
+      Action.Server_to_client.Player_finished { player_name; place = i + 1 }))
+;;
+
 let game_started_event (room : Room.t) (state : Game_state.t) player =
   Action.Server_to_client.Game_started
     { your_hand = hand_of_player state player
@@ -205,8 +213,11 @@ let bot_action (state : Game_state.t) player_name =
      swap ignore it, and a chosen-swap rule gets the strategic pick - the
      smallest hand that isn't the bot's own *)
   let swap_with =
+    (* live opponents only: a finished seat's empty hand would always win
+       the smallest-hand contest, wasting every swap and targeted draw *)
     List.filter state.Game_state.players ~f:(fun p ->
-      not (String.Caseless.equal (Player.get_name p) player_name))
+      (not (String.Caseless.equal (Player.get_name p) player_name))
+      && not (Game_state.is_finished state (Player.get_id p)))
     |> List.min_elt ~compare:(fun a b ->
          Int.compare
            (List.length (Player.get_hand a))
@@ -331,8 +342,12 @@ let schedule_turn_driver ?(after_rejection = false) (room : Room.t) state =
          | _ -> ())
      | Some _ ->
        if Option.exists room.autopilot ~f:(String.equal current)
-       then after_if_idle room autopilot_delay ~f:(fun st ->
-         enqueue_auto_action room st current)
+       then
+         after_if_idle room autopilot_delay ~f:(fun st ->
+           (* the player may have retaken their seat (any action of their
+              own clears autopilot) while this timer ran *)
+           if Option.exists room.autopilot ~f:(String.equal current)
+           then enqueue_auto_action room st current)
        else if not after_rejection
        then (
          let timer_s = room.turn_timer in
@@ -538,14 +553,12 @@ let broadcast_notifications
   let advances = after.turns_advanced - before.turns_advanced in
   if advances >= 2
   then (
-    let num_players = List.length after.players in
-    let dir = if Direction.equal after.direction Clockwise then 1 else -1 in
-    List.iter
-      (List.init (advances - 1) ~f:(fun k -> k + 1))
-      ~f:(fun k ->
-        let idx =
-          (actor_id + (dir * k) + (num_players * advances)) % num_players
-        in
+    (* walk LIVE seats: each advance hops over finished players, so raw
+       seat arithmetic would name the wrong (possibly finished) player *)
+    let rec notify idx remaining =
+      if remaining > 0
+      then (
+        let idx = Game_state.next_live_seat after ~from:idx in
         if not (Int.equal idx actor_id)
         then (
           match name_of_player_id after idx with
@@ -553,7 +566,10 @@ let broadcast_notifications
             broadcast
               room
               (Action.Server_to_client.Player_skipped { player_name })
-          | None -> ())));
+          | None -> ());
+        notify idx (remaining - 1))
+    in
+    notify actor_id (advances - 1));
   (* a direction flip is its own spectacle with 3+ players; with 2 the skip
      notification already tells the story *)
   if (not (Direction.equal before.direction after.direction))
@@ -578,9 +594,16 @@ let add_bot (room : Room.t) : unit Or_error.t =
       max_participants
   else (
     let name =
+      (* caseless: human admission enforces caseless uniqueness, so a bot
+         named "Bot 1" next to a human seated as "bot 1" would recreate
+         exactly the ambiguity that check exists to prevent *)
+      let taken candidate =
+        Hashtbl.existsi room.clients ~f:(fun ~key ~data:_ ->
+          String.Caseless.equal key candidate)
+      in
       let rec pick n =
         let candidate = sprintf "Bot %d" n in
-        if Hashtbl.mem room.clients candidate then pick (n + 1) else candidate
+        if taken candidate then pick (n + 1) else candidate
       in
       pick 1
     in
@@ -600,9 +623,16 @@ let remove_bot (room : Room.t) : unit Or_error.t =
   if Option.is_some room.game_state
   then Or_error.error_string "Cannot remove bots once the game has started"
   else (
+    (* highest bot NUMBER, not lexicographically last: string order puts
+       "Bot 10" before "Bot 2" *)
+    let bot_number name =
+      String.chop_prefix name ~prefix:"Bot "
+      |> Option.bind ~f:Int.of_string_opt
+      |> Option.value ~default:0
+    in
     match
-      List.sort (Hash_set.to_list room.bots) ~compare:String.compare
-      |> List.last
+      List.max_elt (Hash_set.to_list room.bots) ~compare:(fun a b ->
+        Int.compare (bot_number a) (bot_number b))
     with
     | None -> Or_error.error_string "There are no bots to remove"
     | Some name ->
@@ -801,8 +831,12 @@ let start_engine_loop t (room : Room.t) request_reader =
                     (match action with
                      | Action.Client_to_server.Call_uno ->
                        (* the turn is unchanged and its drivers are still
-                          armed; re-driving would restart the clock *)
-                       ()
+                          armed; re-driving would restart the clock. The
+                          turn snapshot is still re-broadcast, because
+                          Turn_changed.uno_race is what stops the UNO
+                          buttons flashing - without it a spent window
+                          leaves every button armed, baiting a false call *)
+                       broadcast room (turn_changed_event room next_state)
                      | _ -> drive_or_auto_pass room next_state))))))
 ;;
 
@@ -911,6 +945,12 @@ let start
                       | Some player ->
                         let canonical = Player.get_name player in
                         let abandoned =
+                          (* a deliberately-added lobby bot's seat was
+                             never anyone's to reclaim - only seats whose
+                             player dropped (takeover bots, dead pipes)
+                             may be taken back *)
+                          (not (Hash_set.mem room.bots canonical))
+                          &&
                           match Hashtbl.find room.clients canonical with
                           | None -> true
                           | Some c -> c.is_bot || Pipe.is_closed c.writer
@@ -980,6 +1020,15 @@ let start
             (fun state () ->
                match in_room state with
                | Error e -> return (Error e)
+               | Ok (_, room) when not (Hashtbl.mem t.rooms room.code) ->
+                 (* the empty-room grace close can land between a joiner's
+                    join RPC and this registration; a seat in a dead room
+                    would look alive while every action dropped into a
+                    closed request pipe *)
+                 return
+                   (Error
+                      (Error.of_string
+                         "No room with that code (it may have closed)"))
                | Ok (name, room) ->
                  let reader, writer = Pipe.create () in
                  let connection =
@@ -1062,13 +1111,14 @@ let start
                           room.action_seq <- room.action_seq + 1;
                           schedule_turn_driver room game));
                        List.iter
-                         [ game_started_event room game player
-                         ; Action.Server_to_client.Direction_changed
-                             { direction = game.Game_state.direction }
-                         ; hand_updated_event room game player
-                         ; hand_counts_event game
-                         ; turn_changed_event room game
-                         ]
+                         ([ game_started_event room game player
+                          ; Action.Server_to_client.Direction_changed
+                              { direction = game.Game_state.direction }
+                          ; hand_updated_event room game player
+                          ; hand_counts_event game
+                          ; turn_changed_event room game
+                          ]
+                            @ finished_events game)
                          ~f:(Pipe.write_without_pushback writer);
                        return (Ok reader)))))
         ; Rpc.Rpc.implement Rpc_protocol.get_state_rpc (fun state () ->
@@ -1104,7 +1154,7 @@ let start
                     in
                     return
                       (Ok
-                         [ Action.Server_to_client.Game_started
+                         ([ Action.Server_to_client.Game_started
                              { your_hand = hand_of_player game player
                              ; top_card = game.Game_state.top_card
                              ; current_color = game.Game_state.current_color
@@ -1129,9 +1179,10 @@ let start
                               ; playable_ids
                               ; swap_target_ids
                               })
-                         ; hand_counts_event game
-                         ; turn_changed_event room game
-                         ]))))
+                          ; hand_counts_event game
+                          ; turn_changed_event room game
+                          ]
+                          @ finished_events game)))))
         ; Rpc.Rpc.implement Rpc_protocol.submit_rules_rpc
             (fun state rules_text ->
                match in_room state with
@@ -1298,6 +1349,9 @@ let start
                    room.game_state <- None;
                    Hashtbl.clear room.clients;
                    Hash_set.clear room.ready;
+                   (* ghost names left here would make the next remove_bot
+                      click a silent no-op *)
+                   Hash_set.clear room.bots;
                    Core.print_s
                      [%message
                        "All players left. Game abandoned."
