@@ -76,6 +76,7 @@ let%expect_test "engine processes a draw" =
       ~draw_pile:[ unplayable ]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t' =
     Rule_engine.apply_action
@@ -102,6 +103,7 @@ let%expect_test "playable draw offers play-or-pass" =
       ~draw_pile:[ playable ]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action
@@ -154,6 +156,7 @@ let%expect_test "cannot pass without drawing a playable card first" =
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let result =
     Rule_engine.apply_action
@@ -245,6 +248,7 @@ let%expect_test "plus2 stacks then cashes out" =
       ~draw_pile:(Game_state.create_card_deck ())
       ~pending_draws:2
       ~turn:1
+      ()
   in
   (* player 1 stacks their Plus2 — pending should go 2 -> 4, turn 1 -> 2 *)
   let t =
@@ -292,6 +296,7 @@ let%expect_test "plus4 stacks then cashes out" =
       ~draw_pile:(Game_state.create_card_deck ())
       ~pending_draws:2
       ~turn:1
+      ()
   in
   (* player 1 stacks a Plus4 onto a pending 2 — pending 2 -> 6 *)
   let t =
@@ -345,6 +350,7 @@ let%expect_test "draw until playable: one card per click, play is the only exit"
       ~draw_pile:[ d1; d2; d3 ]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let rules = Rule_engine.Ruleset.draw_until_variant in
   let draw t =
@@ -405,6 +411,7 @@ let%expect_test "only-pass detection" =
         ~draw_pile:(Game_state.create_card_deck ())
         ~pending_draws:0
         ~turn:0
+        ()
     in
     Rule_engine.apply_action rules t ~player_id:0
       ~action:(Play { card_id = 701; declared_color = None; swap_with = None })
@@ -428,6 +435,7 @@ let%expect_test "only-pass detection" =
       ~draw_pile:[ { Card.color = Red; value = Nine; id = 711 } ]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action Rule_engine.Ruleset.default t ~player_id:0
@@ -462,6 +470,7 @@ let%expect_test "stacking same number plays multiple in one turn" =
       ~draw_pile:(Game_state.create_card_deck ())
       ~pending_draws:0
       ~turn:0
+      ()
   in
   (* play first 7 — opens stack, turn stays 0 *)
   let t =
@@ -532,6 +541,7 @@ let%expect_test "open stack locks the turn to same-value cards" =
       ~draw_pile:(Game_state.create_card_deck ())
       ~pending_draws:0
       ~turn:0
+      ()
   in
   (* open the stack with the red 7 *)
   let t =
@@ -597,6 +607,7 @@ let%expect_test "non-matching zero is rejected when no stack is open" =
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let result =
     Rule_engine.apply_action
@@ -621,6 +632,7 @@ let%expect_test "MatchesTopColor is false for wilds but wilds still play" =
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let evt =
     Event.CardPlayed
@@ -661,6 +673,7 @@ let%expect_test "skip/reverse must match color or value" =
         ~draw_pile:(Game_state.create_card_deck ())
         ~pending_draws:0
         ~turn:0
+        ()
     in
     Rule_engine.apply_action
       Rule_engine.Ruleset.default
@@ -697,6 +710,7 @@ let%expect_test "non-matching special cards are rejected" =
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let try_play id =
     Rule_engine.apply_action
@@ -732,6 +746,7 @@ let%expect_test "reverse skips the opponent in a two-player game" =
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action
@@ -749,6 +764,7 @@ let%expect_test "reverse skips the opponent in a two-player game" =
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action
@@ -777,6 +793,7 @@ let%expect_test "matching special cards still play" =
       ~draw_pile:(Game_state.create_card_deck ())
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action
@@ -808,6 +825,7 @@ let%expect_test "wild cannot dodge pending draws" =
       ~draw_pile:(Game_state.create_card_deck ())
       ~pending_draws:2
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action
@@ -852,6 +870,7 @@ let%expect_test "any card opens the game on a flipped wild" =
         ~draw_pile:(Game_state.create_card_deck ())
         ~pending_draws:0
         ~turn:0
+        ()
     in
     let declared_color =
       match card.value with Wild | Wild4 -> Some Card.Color.Red | _ -> None
@@ -876,6 +895,7 @@ let%expect_test "any card opens the game on a flipped wild" =
       ~draw_pile:(Game_state.create_card_deck ())
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let rejected =
     Or_error.is_error
@@ -915,6 +935,7 @@ let finish_setup text =
       ~draw_pile:(Game_state.create_card_deck ())
       ~pending_draws:0
       ~turn:0
+      ()
   in
   rules, t
 ;;
@@ -1042,7 +1063,8 @@ let jump_setup ~turn =
       ~top_card:top
       ~draw_pile:(Game_state.create_card_deck ())
       ~pending_draws:0
-      ~turn )
+      ~turn
+      () )
 ;;
 
 let jump_rules = Rule_engine.Ruleset.jump_in_variant
@@ -1120,6 +1142,7 @@ let%expect_test "a wild never counts as an exact match" =
       ~draw_pile:(Game_state.create_card_deck ())
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let rejected =
     Or_error.is_error
@@ -1169,6 +1192,7 @@ let uno_setup () =
     ~draw_pile:(Game_state.create_card_deck ())
     ~pending_draws:0
     ~turn:0
+    ()
 ;;
 
 let rules = Rule_engine.Ruleset.default
@@ -1330,6 +1354,7 @@ let%expect_test "playing your last card wins instead of exposing you" =
       ~draw_pile:(Game_state.create_card_deck ())
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action
@@ -1472,6 +1497,7 @@ let%expect_test "combined stacking and draw-until variant plays a turn" =
       ~draw_pile:[ filler ]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   (* drawing with the stack closed takes one card and keeps the turn *)
   let t = Rule_engine.apply_action rules t ~player_id:0 ~action:Draw |> Or_error.ok_exn in
@@ -1534,6 +1560,7 @@ rule "play matching card" priority 10:
       ~draw_pile:[ burn ]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action rules t ~player_id:0
@@ -1571,6 +1598,7 @@ rule "reverse is just a card" priority 115:
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action rules t ~player_id:0
@@ -1602,6 +1630,7 @@ rule "play wild" priority 100:
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action rules t ~player_id:0
@@ -1627,6 +1656,7 @@ let%expect_test "parsed stacking ruleset plays a real stacking turn" =
       ~draw_pile:(Game_state.create_card_deck ())
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action
@@ -1706,7 +1736,7 @@ let%expect_test "lint flags card-play rules missing play-the-card or advance-tur
   let check text =
     match Rule_parser.parse_ruleset_checked text with
     | Error e -> print_s [%message (e : Error.t)]
-    | Ok (_, warnings) -> print_s [%message (warnings : Rule_parser.Lint.t list)]
+    | Ok (_, warnings, _) -> print_s [%message (warnings : Rule_parser.Lint.t list)]
   in
   check
     {|use standard
@@ -1724,12 +1754,17 @@ rule "play reverse" priority 100:
      (((rule_name "red reverse") (kind Missing_play)
        (message
         "rule \"red reverse\" fires when a card is played but has no 'play the card' effect - the card will stay in the hand")
-       (fix ("play the card")))))
+       (fix ("play the card")) (related ()))
+      ((rule_name "play reverse") (kind Unreachable_rule)
+       (message
+        "rule \"play reverse\" can never fire - \"red reverse\" outranks it and already covers every situation it asks for")
+       (fix ("prefer \"play reverse\" over \"red reverse\""))
+       (related ("red reverse")))))
     (warnings
      (((rule_name "play reverse") (kind Missing_advance)
        (message
         "rule \"play reverse\" plays the card but has no 'advance turn' effect - the turn will never end")
-       (fix ("advance turn")))))
+       (fix ("advance turn")) (related ()))))
     |}]
 ;;
 
@@ -1740,7 +1775,8 @@ let%expect_test "presets and mid-stack rules produce no lint warnings" =
     ~f:(fun preset ->
       match Rule_parser.parse_ruleset_checked ("use " ^ preset) with
       | Error e -> print_s [%message preset (e : Error.t)]
-      | Ok (_, warnings) -> print_s [%message preset (warnings : Rule_parser.Lint.t list)]);
+      | Ok (_, warnings, _) ->
+        print_s [%message preset (warnings : Rule_parser.Lint.t list)]);
   [%expect
     {|
     (standard (warnings ()))
@@ -1782,6 +1818,7 @@ let%expect_test "equal-priority ties go to the rule defined first" =
         ~draw_pile:[]
         ~pending_draws:0
         ~turn:0
+        ()
     in
     let t =
       Rule_engine.apply_action rules t ~player_id:0
@@ -1823,7 +1860,7 @@ let%expect_test "lint flags dead rules with identical conditions" =
   let check text =
     match Rule_parser.parse_ruleset_checked text with
     | Error e -> print_s [%message (e : Error.t)]
-    | Ok (_, warnings) ->
+    | Ok (_, warnings, _) ->
       print_s
         [%message (List.map warnings ~f:(fun w -> w.Rule_parser.Lint.message) : string list)]
   in
@@ -1838,9 +1875,295 @@ rule "strong" priority 90: when player passes and your turn do advance turn|};
   [%expect
     {|
     ("List.map warnings ~f:(fun w -> w.Rule_parser.Lint.message)"
-     ("rule \"b\" can never fire - rule \"a\" has the same condition and always wins (higher priority first; a tie goes to the rule defined first)"))
+     ("rule \"b\" can never fire - \"a\" outranks it and already covers every situation it asks for"))
     ("List.map warnings ~f:(fun w -> w.Rule_parser.Lint.message)"
-     ("rule \"weak\" can never fire - rule \"strong\" has the same condition and always wins (higher priority first; a tie goes to the rule defined first)"))
+     ("rule \"weak\" can never fire - \"strong\" outranks it and already covers every situation it asks for"))
+    |}]
+;;
+
+(* ---------- conflict analysis ---------- *)
+
+let condition_of text =
+  match
+    Rule_parser.parse_ruleset
+      ("rule \"probe\":\n  when " ^ text ^ "\n  do play the card, advance turn")
+  with
+  | Ok [ r ] -> r.Rule.condition
+  | Ok _ | Error _ -> failwithf "could not parse condition: %s" text ()
+;;
+
+(* The atoms are NOT independent booleans, and this is the difference
+   between a real analysis and a plain SAT solver: a card cannot be both a 3
+   and a 5, a play is not a draw, and a skip is not a number card. Getting
+   any of these wrong would invent conflicts that cannot happen. *)
+let%expect_test "atoms that cannot hold together are seen as disjoint" =
+  let rel a b =
+    print_s
+      [%message
+        a b ~_:(Rule_analysis.relation (condition_of a) (condition_of b)
+                : Rule_analysis.Relation.t)]
+  in
+  rel "card is 3" "card is 5";
+  rel "card is skip" "card is number";
+  rel "card is red" "card is blue";
+  rel "player calls uno" "card matches color";
+  rel "player draws" "player passes";
+  [%expect {|
+    ("card is 3" "card is 5" Disjoint)
+    ("card is skip" "card is number" Disjoint)
+    ("card is red" "card is blue" Disjoint)
+    ("player calls uno" "card matches color" Disjoint)
+    ("player draws" "player passes" Disjoint)
+    |}]
+;;
+
+let%expect_test "relation sees past the shape of the condition" =
+  let rel a b =
+    print_s
+      [%message
+        a b ~_:(Rule_analysis.relation (condition_of a) (condition_of b)
+                : Rule_analysis.Relation.t)]
+  in
+  (* the old structural check missed both of these *)
+  rel "card is red" "card is red and always";
+  rel "card is red and your turn" "your turn and card is red";
+  (* one situation set inside another *)
+  rel "card is skip and your turn" "your turn";
+  rel "card is skip" "card is action";
+  rel "hand size = 1" "hand size > 0";
+  (* meeting without either containing the other *)
+  rel "card is red" "card is skip";
+  [%expect {|
+    ("card is red" "card is red and always" Equivalent)
+    ("card is red and your turn" "your turn and card is red" Equivalent)
+    ("card is skip and your turn" "your turn" Right_subsumes)
+    ("card is skip" "card is action" Right_subsumes)
+    ("hand size = 1" "hand size > 0" Right_subsumes)
+    ("card is red" "card is skip" Overlap)
+    |}]
+;;
+
+let%expect_test "a condition nothing can satisfy" =
+  let sat text = print_s [%message text ~_:(Rule_analysis.satisfiable (condition_of text) : bool)] in
+  sat "card is red and card is blue";
+  sat "card is number and card is action";
+  (* green is outside the analysis's default card set, so this is the case
+     that would produce a false "impossible" if the domain were not widened
+     with every colour the conditions name *)
+  sat "card is green";
+  sat "always";
+  [%expect {|
+    ("card is red and card is blue" false)
+    ("card is number and card is action" false)
+    ("card is green" true)
+    (always true)
+    |}]
+;;
+
+let messages text =
+  match Rule_parser.parse_ruleset_checked text with
+  | Error e -> print_s [%message "rejected" ~_:(Error.to_string_hum e : string)]
+  | Ok (_, warnings, _) ->
+    List.iter warnings ~f:(fun (w : Rule_parser.Lint.t) ->
+      print_s [%message "" ~_:(w.kind : Rule_parser.Lint.Kind.t) ~_:(w.message : string)])
+;;
+
+let%expect_test "conflicts the author should hear about" =
+  (* impossible on its own terms *)
+  messages
+    {|use standard
+rule "never" priority 70: when card is red and card is blue and your turn
+  do play the card, set color from card, advance turn|};
+  (* the narrower rule ranked BELOW the broader one it sits inside: the
+     inverted form of how every preset is built, and always a mistake *)
+  messages
+    {|use standard
+rule "quiet skip" priority 5:
+  when card is skip and (card matches color or card matches value) and your turn
+  do play the card, set color from card, advance turn|};
+  (* equal priority, genuinely partial overlap - a red skip satisfies both,
+     and which one wins is decided by typing order alone *)
+  messages
+    {|use standard
+rule "reds are special" priority 55: when card is red and your turn
+  do play the card, set color from card, advance turn
+rule "skips are special" priority 55: when card is skip and your turn
+  do play the card, set color from card, advance turn|};
+  [%expect {|
+    (Impossible_condition
+     "rule \"never\" can never fire - no situation can satisfy its condition (are two parts of it contradicting each other?)")
+    (Unreachable_rule
+     "rule \"quiet skip\" can never fire - \"play skip\" outranks it and already covers every situation it asks for")
+    (Ambiguous_overlap
+     "rules \"reds are special\" and \"skips are special\" both match some of the same moves and share priority 55, so which one wins is decided by which was typed first - say which you mean")
+    |}]
+;;
+
+let%expect_test "a rule no single other rule covers, but several do together" =
+  (* neither half covers "card is action", but the two of them do *)
+  messages
+    {|rule "wilds first" priority 90: when card is wild and your turn
+  do play the card, set color to declared, advance turn
+rule "the rest" priority 90:
+  when (card is skip or card is reverse or card is plus two) and your turn
+  do play the card, set color from card, advance turn
+rule "any action" priority 10: when card is action and your turn
+  do play the card, set color from card, advance turn|};
+  [%expect {|
+    (Unreachable_rule
+     "rule \"any action\" can never fire - the rules above it (\"wilds first\", \"the rest\") already cover every situation it asks for between them")
+    |}]
+;;
+
+let%expect_test "prefer settles an ambiguity, and the warning goes away" =
+  let text =
+    {|use standard
+rule "reds are special" priority 55: when card is red and your turn
+  do play the card, set color from card, advance turn
+rule "skips are special" priority 55: when card is skip and your turn
+  do play the card, set color from card, advance turn|}
+  in
+  print_endline "before:";
+  messages text;
+  print_endline "after:";
+  messages (text ^ "\nprefer \"skips are special\" over \"reds are special\"");
+  [%expect {|
+    before:
+    (Ambiguous_overlap
+     "rules \"reds are special\" and \"skips are special\" both match some of the same moves and share priority 55, so which one wins is decided by which was typed first - say which you mean")
+    after:
+    |}]
+;;
+
+let%expect_test "prefer actually changes who wins the move" =
+  (* a red skip matches both rules; without a preference the one defined
+     first takes it, so the preference has to flip the outcome *)
+  let ruleset winner =
+    let base =
+      {|rule "reds are special" priority 55: when card is red and your turn
+  do play the card, set color to blue, advance turn
+rule "skips are special" priority 55: when card is skip and your turn
+  do play the card, set color to green, advance turn|}
+    in
+    let text =
+      match winner with
+      | None -> base
+      | Some w -> base ^ sprintf "\nprefer \"%s\" over \"%s\"" w
+                          (if String.equal w "reds are special"
+                           then "skips are special"
+                           else "reds are special")
+    in
+    Rule_parser.parse_ruleset text |> Or_error.ok_exn
+  in
+  let red_skip = { Card.color = Red; value = Skip; id = 900 } in
+  let colour_after rules =
+    let state =
+      Game_state.for_testing
+        ~player_hands:
+          [ "a", [ red_skip ]
+          ; "b", [ { Card.color = Blue; value = Nine; id = 902 } ]
+          ]
+        ~top_card:{ Card.color = Red; value = Three; id = 901 }
+        ~draw_pile:(Game_state.create_card_deck ())
+        ~pending_draws:0
+        ~turn:0
+        ()
+    in
+    match
+      Rule_engine.apply_action rules state ~player_id:0
+        ~action:(Play { card_id = 900; declared_color = None; swap_with = None })
+    with
+    | Ok s -> s.Game_state.current_color
+    | Error e -> failwith (Error.to_string_hum e)
+  in
+  print_s
+    [%message
+      "the colour each rule sets tells us which one fired"
+        ~no_preference:(colour_after (ruleset None) : Card.Color.t)
+        ~prefer_skips:(colour_after (ruleset (Some "skips are special")) : Card.Color.t)
+        ~prefer_reds:(colour_after (ruleset (Some "reds are special")) : Card.Color.t)];
+  [%expect {|
+    ("the colour each rule sets tells us which one fired" (no_preference Blue)
+     (prefer_skips Green) (prefer_reds Blue))
+    |}]
+;;
+
+let%expect_test "prefer rejects nonsense" =
+  messages {|use standard
+prefer "nonsense" over "play matching card"|};
+  messages {|use standard
+prefer "play wild" over "play wild"|};
+  messages
+    {|use standard
+prefer "play wild" over "play skip"
+prefer "play skip" over "play wild"|};
+  [%expect {|
+    (rejected
+     "line 2: prefer names a rule that does not exist: \"nonsense\" (defined: play wild, play skip, play reverse, play plus two, play plus four, play matching card, draw a card, pass after draw, call uno, catch uno, false uno call)")
+    (rejected "line 2: \"play wild\" cannot be preferred over itself")
+    (rejected
+     "prefer lines contradict each other: \"play wild\" over \"play skip\" over \"play wild\"")
+    |}]
+;;
+
+(* The presets are full of narrower-rule-above-broader-rule pairs - that IS
+   specialisation - so they must produce structure and no warnings. This is
+   the test that keeps the checks from crying wolf on the default game. *)
+let%expect_test "presets report structure, not warnings" =
+  List.iter (List.map Presets.all ~f:fst) ~f:(fun preset ->
+    match Rule_parser.parse_ruleset_checked ("use " ^ preset) with
+    | Error e -> print_s [%message preset (e : Error.t)]
+    | Ok (_, warnings, specialisations) ->
+      print_s
+        [%message
+          preset
+            ~warnings:(List.length warnings : int)
+            ~specialises:
+              (List.map specialisations ~f:(fun (s : Rule_parser.Specialisation.t) ->
+                 s.specific ^ " -> " ^ s.general)
+               : string list)]);
+  [%expect {|
+    (standard (warnings 0)
+     (specialises
+      ("play skip -> play matching card" "play reverse -> play matching card"
+       "play plus two -> play matching card" "play plus four -> play wild"
+       "call uno -> false uno call" "catch uno -> false uno call")))
+    (stacking (warnings 0)
+     (specialises
+      ("play skip -> open stack" "play reverse -> open stack"
+       "play plus two -> open stack" "play plus four -> play wild"
+       "call uno -> false uno call" "catch uno -> false uno call")))
+    ("draw until playable" (warnings 0)
+     (specialises
+      ("play skip -> play matching card" "play reverse -> play matching card"
+       "play plus two -> play matching card" "play plus four -> play wild"
+       "call uno -> false uno call" "catch uno -> false uno call")))
+    ("stacking with draw until playable" (warnings 0)
+     (specialises
+      ("play skip -> open stack" "play reverse -> open stack"
+       "play plus two -> open stack" "play plus four -> play wild"
+       "call uno -> false uno call" "catch uno -> false uno call")))
+    ("jump in" (warnings 0)
+     (specialises
+      ("play skip -> play matching card" "play reverse -> play matching card"
+       "play plus two -> play matching card" "play plus four -> play wild"
+       "call uno -> false uno call" "catch uno -> false uno call")))
+    ("stacking with jump in" (warnings 0)
+     (specialises
+      ("play skip -> open stack" "play reverse -> open stack"
+       "play plus two -> open stack" "play plus four -> play wild"
+       "call uno -> false uno call" "catch uno -> false uno call")))
+    ("draw until playable with jump in" (warnings 0)
+     (specialises
+      ("play skip -> play matching card" "play reverse -> play matching card"
+       "play plus two -> play matching card" "play plus four -> play wild"
+       "call uno -> false uno call" "catch uno -> false uno call")))
+    ("stacking with draw until playable with jump in" (warnings 0)
+     (specialises
+      ("play skip -> open stack" "play reverse -> open stack"
+       "play plus two -> open stack" "play plus four -> play wild"
+       "call uno -> false uno call" "catch uno -> false uno call")))
+    ("seven zero" (warnings 0) (specialises ()))
     |}]
 ;;
 
@@ -1923,6 +2246,7 @@ rule "sevens are hot" priority 115:
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   (* a mismatched non-seven is still illegal *)
   (match
@@ -1994,6 +2318,7 @@ rule "blue anywhere" priority 60:
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   (* the equally mismatched green card is still illegal *)
   (match
@@ -2036,6 +2361,7 @@ rule "red draw tax" priority 60:
       ~draw_pile:[ c1; c2 ]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action rules t ~player_id:0 ~action:Draw
@@ -2085,7 +2411,7 @@ let%expect_test "lint flags plays that never set the color" =
   let check text =
     match Rule_parser.parse_ruleset_checked text with
     | Error e -> print_s [%message (e : Error.t)]
-    | Ok (_, warnings) -> print_s [%message (warnings : Rule_parser.Lint.t list)]
+    | Ok (_, warnings, _) -> print_s [%message (warnings : Rule_parser.Lint.t list)]
   in
   (* a card-value condition can change the color, so this goes stale *)
   check
@@ -2112,13 +2438,13 @@ rule "play wild" priority 100:
      (((rule_name "quiet zeros") (kind Missing_set_color)
        (message
         "rule \"quiet zeros\" plays the card but never sets the color - the color to match stays what it was, not the played card's color")
-       (fix ("set color from card")))))
+       (fix ("set color from card")) (related ()))))
     (warnings ())
     (warnings
      (((rule_name "play wild") (kind Missing_set_color)
        (message
         "rule \"play wild\" plays the card but never sets the color - add 'set color to declared' so the color the player picks takes effect")
-       (fix ("set color to declared")))))
+       (fix ("set color to declared")) (related ()))))
     |}]
 ;;
 
@@ -2134,7 +2460,7 @@ rule "free zeros" priority 60:
   do play the card, set color from card, advance turn|}
    with
    | Error e -> print_s [%message (e : Error.t)]
-   | Ok (_, warnings) -> print_s [%message (warnings : Rule_parser.Lint.t list)]);
+   | Ok (_, warnings, _) -> print_s [%message (warnings : Rule_parser.Lint.t list)]);
   (* the guard must hold on EVERY path: or-ing it away doesn't count *)
   (match
      Rule_parser.parse_ruleset_checked
@@ -2144,7 +2470,7 @@ rule "sneaky" priority 60:
   do advance turn|}
    with
    | Error e -> print_s [%message (e : Error.t)]
-   | Ok (_, warnings) ->
+   | Ok (_, warnings, _) ->
      print_s
        [%message
          (List.map warnings ~f:(fun w -> w.Rule_parser.Lint.rule_name, w.kind)
@@ -2155,9 +2481,10 @@ rule "sneaky" priority 60:
      (((rule_name "free zeros") (kind Missing_turn)
        (message
         "rule \"free zeros\" has no 'your turn' condition - it fires for ANY player's action, even out of turn (write 'not your turn' explicitly if jump-in is what you mean)")
-       (fix ("your turn")))))
+       (fix ("your turn")) (related ()))))
     ("List.map warnings ~f:(fun w -> (w.Rule_parser.Lint.rule_name, w.kind))"
-     ((sneaky Missing_turn)))
+     ((sneaky Missing_turn) ("play matching card" Unreachable_rule)
+      ("draw a card" Unreachable_rule) ("pass after draw" Unreachable_rule)))
     |}]
 ;;
 
@@ -2172,14 +2499,14 @@ rule "lucky sevens" priority 115:
   do set color to red|}
    with
    | Error e -> print_s [%message (e : Error.t)]
-   | Ok (_, warnings) -> print_s [%message (warnings : Rule_parser.Lint.t list)]);
+   | Ok (_, warnings, _) -> print_s [%message (warnings : Rule_parser.Lint.t list)]);
   [%expect
     {|
     (warnings
      (((rule_name "lucky sevens") (kind Missing_play)
        (message
         "rule \"lucky sevens\" fires when a card is played but has no 'play the card' effect - the card will stay in the hand")
-       (fix ("play the card")))))
+       (fix ("play the card")) (related ()))))
     |}]
 ;;
 
@@ -2206,6 +2533,7 @@ use seven zero|}
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   (* a 7 without a named target is rejected - the UI uses this to ask *)
   (match
@@ -2257,6 +2585,7 @@ use seven zero|}
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   (* a reverses: direction flips and the turn goes a -> c *)
   let t =
@@ -2297,6 +2626,7 @@ use seven zero|}
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action rules t ~player_id:0
@@ -2330,6 +2660,7 @@ use seven zero|}
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action rules t ~player_id:0
@@ -2369,6 +2700,7 @@ rule "party nines" priority 60:
       ~draw_pile:pile
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action rules t ~player_id:0
@@ -2409,6 +2741,7 @@ use seven zero|}
       ~draw_pile:[ fresh ]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let moves before ~after ~played =
     Game_state.hand_moves ~before ~after ~played
@@ -2460,6 +2793,7 @@ use seven zero|}
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let playable, needs_target =
     Rule_engine.playable_and_swap_ids rules t ~player_id:0
@@ -2534,6 +2868,7 @@ rule "no action finish" priority 200:
       ~draw_pile:[]
       ~pending_draws:0
       ~turn:0
+      ()
   in
   (* last card: blocked, and not even marked playable *)
   let t = state [ skip ] in
@@ -2572,7 +2907,7 @@ rule "no action finish" priority 200:
   do reject "no action finish"|}
    with
    | Error e -> print_s [%message (e : Error.t)]
-   | Ok (_, warnings) -> print_s [%message (warnings : Rule_parser.Lint.t list)]);
+   | Ok (_, warnings, _) -> print_s [%message (warnings : Rule_parser.Lint.t list)]);
   [%expect {| (warnings ()) |}]
 ;;
 
@@ -2625,6 +2960,7 @@ rule "play plus four" priority 110:
       ~draw_pile:pile
       ~pending_draws:0
       ~turn:0
+      ()
   in
   (* no target: rejected with the picker marker *)
   (match
@@ -2701,6 +3037,7 @@ rule "low pile tax" priority 60:
       ~draw_pile:pile
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let t =
     Rule_engine.apply_action rules t ~player_id:0 ~action:Draw
@@ -2752,6 +3089,7 @@ rule "panic draw" priority 60:
       ~draw_pile:pile
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let fire =
     Rule_engine.apply_action rules fire ~player_id:0 ~action:Draw
@@ -2776,6 +3114,7 @@ rule "panic draw" priority 60:
       ~draw_pile:pile
       ~pending_draws:0
       ~turn:0
+      ()
   in
   let calm =
     Rule_engine.apply_action rules calm ~player_id:0 ~action:Draw

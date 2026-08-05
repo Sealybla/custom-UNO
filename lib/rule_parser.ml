@@ -407,6 +407,89 @@ let max_deal = 30
 let min_timer = 5
 let max_timer = 300
 
+(* `prefer A over B` is compiled into priorities rather than carried into the
+   engine as a separate relation. Two reasons: the engine keeps its single
+   "highest priority wins" rule with nothing new to get wrong, and the
+   decision stays visible afterwards as a number anyone can read. The bump is
+   always to strictly greater, so the outcome never falls through to the
+   id tie-break. *)
+let apply_preferences
+  (named : (string * Rule.t) list)
+  (prefs : (string * string * int) list)
+  : (string * Rule.t) list Or_error.t
+  =
+  if List.is_empty prefs
+  then Ok named
+  else (
+    let canon n = String.lowercase (String.strip n) in
+    let known n = List.exists named ~f:(fun (m, _) -> String.Caseless.equal m n) in
+    let%bind () =
+      List.fold_result prefs ~init:() ~f:(fun () (winner, loser, line) ->
+        match List.filter [ winner; loser ] ~f:(fun n -> not (known n)) with
+        | [] ->
+          if String.Caseless.equal winner loser
+          then
+            Or_error.errorf
+              "line %d: \"%s\" cannot be preferred over itself"
+              line
+              winner
+          else Ok ()
+        | missing ->
+          Or_error.errorf
+            "line %d: prefer names a rule that does not exist: %s (defined: %s)"
+            line
+            (String.concat ~sep:", " (List.map missing ~f:(sprintf "\"%s\"")))
+            (String.concat ~sep:", " (List.map named ~f:fst)))
+    in
+    let edges = List.map prefs ~f:(fun (w, l, _) -> canon w, canon l) in
+    let succs n =
+      List.filter_map edges ~f:(fun (a, b) ->
+        if String.equal a n then Some b else None)
+    in
+    (* "A over B" and "B over A" cannot both hold; walking the graph finds
+       the loop so the message can name it rather than just refusing *)
+    let cycle =
+      let visiting = String.Hash_set.create () in
+      let finished = String.Hash_set.create () in
+      let rec walk n path =
+        if Hash_set.mem visiting n
+        then Some (List.rev (n :: path))
+        else if Hash_set.mem finished n
+        then None
+        else (
+          Hash_set.add visiting n;
+          let found = List.find_map (succs n) ~f:(fun m -> walk m (n :: path)) in
+          Hash_set.remove visiting n;
+          Hash_set.add finished n;
+          found)
+      in
+      List.find_map edges ~f:(fun (a, _) -> walk a [])
+    in
+    match cycle with
+    | Some path ->
+      Or_error.errorf
+        "prefer lines contradict each other: %s"
+        (String.concat ~sep:" over " (List.map path ~f:(sprintf "\"%s\"")))
+    | None ->
+      let priorities = String.Table.create () in
+      List.iter named ~f:(fun (n, r) ->
+        Hashtbl.set priorities ~key:(canon n) ~data:r.Rule.priority);
+      (* raise winners until every demand holds; on a cycle-free graph one
+         pass per rule is always enough *)
+      for _ = 1 to List.length named + 1 do
+        List.iter edges ~f:(fun (w, l) ->
+          match Hashtbl.find priorities w, Hashtbl.find priorities l with
+          | Some pw, Some pl when pw <= pl ->
+            Hashtbl.set priorities ~key:w ~data:(pl + 1)
+          | _ -> ())
+      done;
+      Ok
+        (List.map named ~f:(fun (n, r) ->
+           match Hashtbl.find priorities (canon n) with
+           | Some p -> n, { r with Rule.priority = p }
+           | None -> n, r)))
+;;
+
 let parse_ruleset_named src
   : ((string * Rule.t) list * int option * int option) Or_error.t
   =
@@ -418,6 +501,8 @@ let parse_ruleset_named src
      earlier one *)
   let hand_size = ref None in
   let turn_timer = ref None in
+  (* (winner, loser, line), newest first *)
+  let preferences = ref [] in
   let rec go toks acc ~allow_use =
     match toks with
     | [] -> Ok (List.rev acc)
@@ -482,6 +567,19 @@ let parse_ruleset_named src
         "line %d: remove rule needs the quoted rule name, like: remove rule \
          \"play plus four\""
         line
+    (* An explicit answer to "which of these two wins?", recorded in the
+       ruleset instead of left to a priority number nobody remembers
+       choosing. Collected here and compiled into priorities once every
+       rule is known, since it may name a rule defined further down. *)
+    | (Token.Word "prefer", line) :: (Token.Str winner, _)
+      :: (Token.Word "over", _) :: (Token.Str loser, _) :: rest ->
+      preferences := (winner, loser, line) :: !preferences;
+      go rest acc ~allow_use
+    | (Token.Word "prefer", line) :: _ ->
+      Or_error.errorf
+        "line %d: prefer needs two quoted rule names, like: prefer \"jump \
+         in\" over \"play matching card\""
+        line
     | (Token.Word "use", line) :: rest when allow_use ->
       (* the preset name is every word to the end of the line *)
       let name_words, rest =
@@ -508,8 +606,9 @@ let parse_ruleset_named src
          go rest (List.rev included @ acc) ~allow_use)
     | _ ->
       Or_error.errorf
-        "expected 'rule', 'use <preset>', 'remove rule \"name\"', 'deal N \
-         cards' or 'turn timer ...' to start a line (%s)"
+        "expected 'rule', 'use <preset>', 'remove rule \"name\"', 'prefer \
+         \"a\" over \"b\"', 'deal N cards' or 'turn timer ...' to start a \
+         line (%s)"
         (where toks)
   in
   let%bind named = go toks [] ~allow_use:true in
@@ -526,11 +625,14 @@ let parse_ruleset_named src
   match merged with
   | [] -> Or_error.error_string "no rules found"
   | _ ->
-    Ok
-      ( List.mapi merged ~f:(fun i (name, rule) ->
-          name, { rule with Rule.id = i + 1 })
-      , !hand_size
-      , !turn_timer )
+    (* preferences resolve against the FINAL set of rules, so they may name
+       one defined after the prefer line, or one a later redefinition
+       replaced *)
+    let%map merged = apply_preferences merged (List.rev !preferences) in
+    ( List.mapi merged ~f:(fun i (name, rule) ->
+        name, { rule with Rule.id = i + 1 })
+    , !hand_size
+    , !turn_timer )
 ;;
 
 let parse_ruleset_full src : Parsed.t Or_error.t =
@@ -611,7 +713,11 @@ module Lint = struct
       | Missing_advance
       | Missing_set_color (* plays the card but leaves the active color stale *)
       | Missing_turn (* no [your turn] guard: fires for any player, out of turn *)
-      | Dead_rule (* an identical condition always wins over this rule *)
+      | Impossible_condition (* no situation can ever satisfy it *)
+      | Unreachable_rule (* every situation it wants is taken by rules above *)
+      | Ambiguous_overlap
+      (* two rules of EQUAL priority overlap, so which one wins is decided
+         by which was typed first - an accident, not a decision *)
     [@@deriving sexp, compare, equal]
   end
 
@@ -622,6 +728,25 @@ module Lint = struct
     ; fix : string option
       (* the snippet a one-click fix inserts (where to insert it is implied
          by [kind]); None means no automatic fix is offered *)
+    ; related : string option
+      (* the OTHER rule in a two-rule conflict. Carried separately from the
+         message so the editor can offer the choice both ways round rather
+         than only the fix we happened to suggest. *)
+    }
+  [@@deriving sexp, compare, equal]
+end
+
+(* A rule that deliberately carves a special case out of a more general one:
+   `play skip` sits inside `play matching card`, `call uno` inside `false uno
+   call`. This is how specialisation is expressed, not a mistake - every
+   preset does it, six times over in `standard` alone - so it is reported
+   separately from the warnings, for the editor to show as structure. What
+   WOULD be a mistake is the same pair with the priorities the other way
+   round, and that shows up as [Unreachable_rule]. *)
+module Specialisation = struct
+  type t =
+    { specific : string
+    ; general : string
     }
   [@@deriving sexp, compare, equal]
 end
@@ -670,6 +795,7 @@ let lint (named : (string * Rule.t) list) : Lint.t list =
                     'play the card' effect - the card will stay in the hand"
                    name
              ; fix = Some "play the card"
+             ; related = None
              }
          else None)
       ; (if plays && (not ends_turn) && not (requires is_mid_stack_atom)
@@ -683,6 +809,7 @@ let lint (named : (string * Rule.t) list) : Lint.t list =
                     effect - the turn will never end"
                    name
              ; fix = Some "advance turn"
+             ; related = None
              }
          else None)
         (* a played card should normally become the color to match; with no
@@ -712,6 +839,7 @@ let lint (named : (string * Rule.t) list) : Lint.t list =
                    (if wild_play
                     then "set color to declared"
                     else "set color from card")
+             ; related = None
              }
          else None)
         (* turn order is enforced ONLY by this condition, so leaving it out
@@ -739,6 +867,7 @@ let lint (named : (string * Rule.t) list) : Lint.t list =
                     turn' explicitly if jump-in is what you mean)"
                    name
              ; fix = Some "your turn"
+             ; related = None
              }
          else None)
       ])
@@ -748,34 +877,175 @@ let lint (named : (string * Rule.t) list) : Lint.t list =
    it (higher priority anywhere, or equal priority defined earlier) can
    never fire. Overlapping-but-different conditions are a semantic question
    the linter stays out of; identical ones are a plain mistake. *)
-let dead_rule_warnings (named : (string * Rule.t) list) : Lint.t list =
-  List.filter_mapi named ~f:(fun i (name, rule) ->
-    let killer =
-      List.find_mapi named ~f:(fun j (other_name, other) ->
-        if j <> i
-           && Rule.Condition.equal other.condition rule.condition
-           && (other.priority > rule.priority
-               || (other.priority = rule.priority && j < i))
-        then Some other_name
-        else None)
-    in
-    Option.map killer ~f:(fun killer ->
-      { Lint.rule_name = name
-      ; kind = Dead_rule
-      ; message =
-          sprintf
-            "rule \"%s\" can never fire - rule \"%s\" has the same \
-             condition and always wins (higher priority first; a tie goes \
-             to the rule defined first)"
-            name
-            killer
-      ; fix = None (* which of the twins to change is a judgement call *)
-      }))
+(* Contradictions between rules, decided by [Rule_analysis] rather than by
+   comparing condition trees. The difference matters: "card is red" and
+   "card is red and always" are the same rule, and only a semantic check
+   sees it.
+
+   Three things get reported, and one deliberately does not. A rule whose
+   condition no situation satisfies is impossible; a rule every one of whose
+   situations is already claimed by rules that outrank it is unreachable;
+   two rules of EQUAL priority that overlap are ambiguous, because which one
+   wins is decided by which was typed first. Plain specialisation - a
+   narrower rule ABOVE a broader one - is not a warning at all, it is how
+   the presets are built, so it comes back as [Specialisation.t] instead. *)
+let conflict_warnings (named : (string * Rule.t) list)
+  : Lint.t list * Specialisation.t list
+  =
+  let arr = Array.of_list named in
+  let n = Array.length arr in
+  let name_of i = fst arr.(i) in
+  let rule_of i : Rule.t = snd arr.(i) in
+  let batch =
+    Rule_analysis.Batch.create
+      (List.map named ~f:(fun (_, (r : Rule.t)) -> r.condition))
+  in
+  (* the engine's own order: priority first, then the rule defined first *)
+  let outranks i j =
+    let a = rule_of i
+    and b = rule_of j in
+    a.priority > b.priority || (a.priority = b.priority && i < j)
+  in
+  let impossible = Array.init n ~f:(fun i -> not (Rule_analysis.Batch.satisfiable batch i)) in
+  let unreachable =
+    Array.init n ~f:(fun i ->
+      (not impossible.(i))
+      && Rule_analysis.Batch.covered_by
+           batch
+           i
+           ~by:(List.filter (List.init n ~f:Fn.id) ~f:(fun j -> j <> i && outranks j i)))
+  in
+  let warnings = ref [] in
+  let specialisations = ref [] in
+  let add w = warnings := w :: !warnings in
+  for i = 0 to n - 1 do
+    if impossible.(i)
+    then
+      add
+        { Lint.rule_name = name_of i
+        ; kind = Impossible_condition
+        ; message =
+            sprintf
+              "rule \"%s\" can never fire - no situation can satisfy its \
+               condition (are two parts of it contradicting each other?)"
+              (name_of i)
+        ; fix = None
+        ; related = None
+        }
+    else if unreachable.(i)
+    then (
+      (* name the single rule responsible when there is one, so the fix can
+         be a one-click `prefer`; several rules covering it jointly is real
+         but there is nothing single to prefer over *)
+      let sole_cover =
+        List.filter (List.init n ~f:Fn.id) ~f:(fun j ->
+          j <> i
+          && outranks j i
+          && (match Rule_analysis.Batch.relation batch i j with
+              | Right_subsumes | Equivalent -> true
+              | _ -> false))
+      in
+      match sole_cover with
+      | culprit :: _ ->
+        add
+          { Lint.rule_name = name_of i
+          ; kind = Unreachable_rule
+          ; message =
+              sprintf
+                "rule \"%s\" can never fire - \"%s\" outranks it and already \
+                 covers every situation it asks for"
+                (name_of i)
+                (name_of culprit)
+          ; fix =
+              Some
+                (sprintf "prefer \"%s\" over \"%s\"" (name_of i) (name_of culprit))
+          ; related = Some (name_of culprit)
+          }
+      | [] ->
+        let covering =
+          List.filter (List.init n ~f:Fn.id) ~f:(fun j -> j <> i && outranks j i)
+          |> List.filter ~f:(fun j ->
+            match Rule_analysis.Batch.relation batch i j with
+            | Disjoint -> false
+            | _ -> true)
+          |> List.map ~f:name_of
+        in
+        add
+          { Lint.rule_name = name_of i
+          ; kind = Unreachable_rule
+          ; message =
+              sprintf
+                "rule \"%s\" can never fire - the rules above it (%s) already \
+                 cover every situation it asks for between them"
+                (name_of i)
+                (String.concat ~sep:", " (List.map covering ~f:(sprintf "\"%s\"")))
+          ; fix = None
+          ; related = None
+          })
+  done;
+  (* pairs: each asked once, which also halves the analysis work *)
+  for i = 0 to n - 1 do
+    for j = i + 1 to n - 1 do
+      if not (impossible.(i) || impossible.(j))
+      then (
+        let a = rule_of i
+        and b = rule_of j in
+        match Rule_analysis.Batch.relation batch i j with
+        | Disjoint | Unknown -> ()
+        | rel ->
+          if a.priority = b.priority && not (unreachable.(i) || unreachable.(j))
+          then
+            add
+              { Lint.rule_name = name_of i
+              ; kind = Ambiguous_overlap
+              ; message =
+                  sprintf
+                    "rules \"%s\" and \"%s\" both match some of the same \
+                     moves and share priority %d, so which one wins is \
+                     decided by which was typed first - say which you mean"
+                    (name_of i)
+                    (name_of j)
+                    a.priority
+              ; fix =
+                  Some
+                    (sprintf "prefer \"%s\" over \"%s\"" (name_of i) (name_of j))
+              ; related = Some (name_of j)
+              }
+          else (
+            (* narrower rule on top of a broader one: intended structure *)
+            match rel with
+            | Right_subsumes when outranks i j -> specialisations := (i, j) :: !specialisations
+            | Left_subsumes when outranks j i -> specialisations := (j, i) :: !specialisations
+            | _ -> ()))
+    done
+  done;
+  (* Subsumption is transitive, so a rule can sit inside three or four
+     broader rules at once and listing them all buries the point. The one
+     worth naming is the rule that would win if this one were deleted -
+     the highest-priority rule it sits inside. Pairs involving a rule that
+     never fires are dropped: describing structure around a dead rule is
+     worse than saying nothing. *)
+  let nearest =
+    List.filter !specialisations ~f:(fun (specific, general) ->
+      not (unreachable.(general) || impossible.(general) || unreachable.(specific)))
+    |> List.sort ~compare:(fun (s1, g1) (s2, g2) ->
+      match Int.compare s1 s2 with
+      | 0 -> Int.compare (rule_of g2).priority (rule_of g1).priority
+      | c -> c)
+    |> List.remove_consecutive_duplicates ~equal:(fun (s1, _) (s2, _) -> s1 = s2)
+    |> List.map ~f:(fun (specific, general) ->
+      { Specialisation.specific = name_of specific; general = name_of general })
+  in
+  List.rev !warnings, nearest
 ;;
 
 (* parse plus the lint warnings, for editor feedback *)
-let parse_ruleset_checked src : (Parsed.t * Lint.t list) Or_error.t =
+let parse_ruleset_checked src
+  : (Parsed.t * Lint.t list * Specialisation.t list) Or_error.t
+  =
   let%map named, hand_size, turn_timer = parse_ruleset_named src in
+  let conflicts, specialisations = conflict_warnings named in
   ( { Parsed.rules = List.map named ~f:snd; hand_size; turn_timer }
-  , lint named @ dead_rule_warnings named )
+  , lint named @ conflicts
+  , specialisations )
 ;;

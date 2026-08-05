@@ -129,6 +129,10 @@ let html =
     font-family:ui-monospace,monospace; white-space:pre-wrap; }
   #check-status.ok { color:#8fe3a8; } #check-status.err { color:#ffb0b0; }
   #check-status.warn { color:#ffd97a; white-space:pre-line; }
+  /* structure, not a problem: quieter than the warnings above it */
+  #check-status .specialises { margin-top:.35rem; color:#9aa7b8; font-size:.8rem; }
+  #check-status .specialises summary { cursor:pointer; }
+  #check-status .specialises div { margin:.15rem 0 0 .9rem; }
   #b-turn-hint { color:#ffd97a; font-size:.78rem; margin:.15rem 0 .3rem; }
   .set-lbl { font-size:.85rem; display:inline-flex; gap:.35rem; align-items:center; }
   #table-settings input[type=number] { width:4.6rem; border-radius:8px;
@@ -1805,7 +1809,19 @@ async function checkRules(){
       for (const w of warns){
         const line = document.createElement('div');
         line.textContent = '⚠ ' + w.message;
-        if (w.fix){
+        // A clash between two named rules is a decision, not a typo: offer
+        // it both ways round rather than only the direction we guessed.
+        // Either button writes a `prefer` line, so the choice survives in
+        // the ruleset instead of living in whoever clicked it.
+        if (w.related){
+          for (const [winner, loser] of [[w.rule, w.related], [w.related, w.rule]]){
+            const b = document.createElement('button');
+            b.className = 'small';
+            b.textContent = '‘' + winner + '’ wins';
+            b.onclick = () => applyPrefer(winner, loser);
+            line.append(b);
+          }
+        } else if (w.fix){
           const b = document.createElement('button');
           b.className = 'small';
           b.textContent = 'add ‘' + w.fix + '’';
@@ -1814,12 +1830,51 @@ async function checkRules(){
         }
         st.append(line);
       }
+      // Not warnings: the narrower-rule-above-broader-rule pairs that are
+      // how specialisation is written. Folded away so the structure is
+      // there to look at without nagging about it.
+      const specs = r.specialises || [];
+      if (specs.length){
+        const d = document.createElement('details');
+        d.className = 'specialises';
+        const sum = document.createElement('summary');
+        sum.textContent = specs.length === 1
+          ? '1 rule narrows another'
+          : specs.length + ' rules narrow others';
+        d.append(sum);
+        for (const s of specs){
+          const row = document.createElement('div');
+          row.textContent = '‘' + s.specific + '’ handles a special case of ‘' +
+            s.general + '’';
+          d.append(row);
+        }
+        st.append(d);
+      }
     }
     else { st.textContent = '✗ ' + r.error; st.className = 'err'; }
   } catch (e){ st.textContent = ''; }
 }
 function scheduleCheck(){ clearTimeout(checkT); checkT = setTimeout(checkRules, 600); }
 $('rules-text').addEventListener('input', () => { markRulesDirty(); scheduleCheck(); });
+
+/* Records "this rule beats that one" as a top-level `prefer` line, which the
+   parser compiles into priorities. Any existing preference between the same
+   two rules is dropped first, in EITHER direction: clicking the other button
+   must replace the decision, and two opposite prefer lines are a cycle the
+   parser rejects outright. */
+function applyPrefer(winner, loser){
+  const ta = $('rules-text');
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const either = '"(?:' + esc(winner) + '|' + esc(loser) + ')"';
+  const pair = new RegExp('^\\s*prefer\\s+' + either + '\\s+over\\s+' + either + '\\s*$', 'i');
+  const kept = ta.value.split('\n').filter(l => !pair.test(l));
+  while (kept.length && !kept[kept.length - 1].trim()) kept.pop();
+  kept.push('prefer "' + winner + '" over "' + loser + '"');
+  ta.value = kept.join('\n') + '\n';
+  lastLoaded = ta.value;
+  markRulesDirty();
+  checkRules();
+}
 
 /* one-click warning fix: splice w.fix into the named rule, where depending
    on the kind - 'play the card' first in the "do" line (like every

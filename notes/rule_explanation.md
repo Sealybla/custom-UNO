@@ -16,10 +16,15 @@ Source: `Rule_engine.process_event` in `lib/rule_engine.ml`.
 > candidate. They are ranked by **priority descending, then by id ascending**,
 > and **the single top-ranked candidate runs. Nothing else runs at all.**
 
-There is no contradiction *resolution*, because there is never a second rule to
-contradict with. Losing rules are not merged, not warned about, not partially
+There is no contradiction *resolution* at playtime, because there is never a
+second rule to contradict with. Losing rules are not merged and not partially
 applied — they are simply not executed. "Contradiction" between two rules is
 always settled by suppression.
+
+What the engine will not do, the *checker* does: clashes are found while the
+ruleset is being written (§9) and answered with an explicit `prefer` line
+(§10), so the outcome reflects a decision rather than a priority number
+nobody remembers choosing.
 
 ---
 
@@ -129,14 +134,14 @@ file does not push it to the back of the queue.
 For the **built-in rulesets**, ids are hand-written literals (`id = 1`,
 `id = 30`, `id = 40`). I checked all four base variants: no ruleset contains a
 duplicate id, so no tie is ever unresolved. But that is a hand-maintained
-invariant with nothing enforcing it — see trap 3 in §9.
+invariant with nothing enforcing it — see trap 3 in §11.
 
 ---
 
 ## 5. So what happens when two rules contradict?
 
-It depends on *how* they collide. There are four distinct cases, and only one
-of them is diagnosed for you.
+It depends on *how* they collide. There are four distinct cases; three are
+diagnosed for you at authoring time, and the fourth is the one to watch.
 
 ### Case A — different priorities: the higher one wins, silently
 
@@ -158,7 +163,7 @@ that don't conflict.**
 This is the single most common source of confusion: adding a rule does not *add*
 behaviour, it *replaces* whatever it outranks for the cases both match.
 
-### Case B — same priority, identical conditions: first defined wins, and the linter catches it
+### Case B — same priority, equivalent conditions: first defined wins, and it is reported
 
 ```
 rule "a" priority 50: when card is red do play the card, advance turn
@@ -166,45 +171,31 @@ rule "b" priority 50: when card is red do reject "no red cards"
 ```
 
 Same priority, so the lower id wins — `"a"`, defined first. `"b"` can **never**
-fire under any circumstances.
+fire, and the editor says so:
 
-This is the one contradiction the project detects, at authoring time, in
-`dead_rule_warnings`:
+> rule "b" can never fire — "a" outranks it and already covers every situation
+> it asks for
 
-```ocaml
-if j <> i
-   && Rule.Condition.equal other.condition rule.condition
-   && (other.priority > rule.priority
-       || (other.priority = rule.priority && j < i))
-then Some other_name
-```
+The check is **semantic**, not structural (§9). `card is red` and
+`card is red and always` are the same rule and are caught as such, which the
+old `Rule.Condition.equal` comparison could not do.
 
-You get a `Dead_rule` warning in the editor:
-
-> rule "b" can never fire — rule "a" has the same condition and always wins
-> (higher priority first; a tie goes to the rule defined first)
-
-Note the strictness: it requires `Condition.equal` — **structurally identical**
-conditions. `card is red` and `card is red and always` are logically equivalent
-but not equal, so the second slips through undetected. The check is deliberately
-conservative; it only reports what it is certain about, and offers no automatic
-fix because which twin to change is a judgement call.
-
-### Case C — same priority, *overlapping* conditions: first defined wins, and nothing warns you
+### Case C — same priority, *overlapping* conditions: reported as an ambiguity
 
 ```
-rule "block action cards" priority 50: when card is action do reject "..."
-rule "skips are special"  priority 50: when card is skip   do play the card, advance turn
+rule "reds are special"  priority 55: when card is red and your turn  do ...
+rule "skips are special" priority 55: when card is skip and your turn do ...
 ```
 
-These conditions are neither identical nor disjoint — a skip satisfies both. For
-skips, the first-defined rule wins; for other action cards, only the first
-applies; for number cards, neither.
+Neither identical nor disjoint — a red skip satisfies both, a blue skip only the
+second, a red 3 only the first. The winner is decided by typing order, which is
+an accident rather than a decision, so:
 
-**This is the dangerous case.** It is a genuine contradiction, it is decided by
-declaration order, and no lint fires because the conditions aren't equal. If you
-mean one to take precedence, say so with priorities instead of relying on
-position.
+> rules "reds are special" and "skips are special" both match some of the same
+> moves and share priority 55, so which one wins is decided by which was typed
+> first — say which you mean
+
+You answer with a `prefer` line (§10), and the warning goes away.
 
 ### Case D — the winner can't actually perform its effects: the whole action fails
 
@@ -305,7 +296,58 @@ biting.
 
 ---
 
-## 9. Traps
+## 9. How the clashes are detected
+
+The checks above are not string or tree comparisons. `Rule_analysis` decides
+whether two conditions are disjoint, equivalent, or one inside the other by
+building a finite set of concrete worlds — real `Game_state.t` plus `Event.t`
+pairs — and comparing which worlds each condition holds in.
+
+Two properties make it trustworthy:
+
+**It uses the engine's own evaluator.** Each world is judged by
+`Rule_engine.eval_condition`, the same function that runs at playtime. A
+second, parallel evaluator would drift from the engine and start describing
+a game nobody is playing. It also means a new condition atom is understood
+the moment the engine understands it.
+
+**The worlds are real situations, not truth assignments.** A boolean SAT
+solver treats `card is 3` and `card is 5` as independent variables and will
+happily "satisfy" both at once, inventing conflicts that cannot occur. Here
+every world is an actual card on an actual table, so mutually exclusive atoms
+are mutually exclusive for free — a card is not both a 3 and a 5, a play is
+not a draw, a skip is not a number card.
+
+Only the state dimensions the conditions actually read are varied, numeric
+thresholds are tested on both sides, and the card set is widened with every
+colour and number the conditions name — so `card is green` is never judged
+impossible merely because green was missing from the default deck. Past a
+size budget the answer is `Unknown` and **nothing is reported**: staying
+quiet is right, a false accusation is not.
+
+## 10. Answering a clash: `prefer`
+
+Priority is a number; `prefer` is a decision:
+
+```
+prefer "sevens swap hands" over "play matching card"
+```
+
+Whenever both rules match, the named winner takes the move. The parser
+compiles this into priorities — raising the winner to strictly above the
+loser — so the engine keeps its single "highest priority wins" rule and needs
+no changes at all. Contradictory preferences (`a` over `b` over `a`) are
+rejected with the loop named.
+
+The point is not that it is more expressive than editing a number, because it
+is not. The point is that it records *that a choice was made*, survives
+someone renumbering priorities later, and travels with the ruleset when it is
+shared. In the editor it is two buttons on the warning; clicking the other one
+replaces the line rather than adding a contradicting one.
+
+---
+
+## 11. Traps
 
 1. **A rule replaces, it does not add.** If your new rule outranks an existing
    one for some inputs, the old rule's effects are gone for those inputs —
@@ -321,9 +363,10 @@ biting.
    can't hit this — the parser numbers them — so it is a hazard only when
    hand-editing `Rule_engine.Ruleset`.
 
-4. **The dead-rule lint only catches structurally identical conditions.**
-   Overlapping-but-different conditions at equal priority (Case C) are silently
-   resolved by declaration order.
+4. **Conflict detection is silent past its size budget.** A ruleset whose
+   conditions read most of the state at once exceeds the world budget, and
+   `Rule_analysis` returns `Unknown` — which is reported as *no* warning. An
+   absent warning is not a promise that there is no conflict.
 
 5. **No fallback to the runner-up.** If the winner's effects fail, the action
    fails. The second-place rule is never consulted.
@@ -334,19 +377,23 @@ biting.
 
 ---
 
-## 10. Practical guidance
+## 12. Practical guidance
 
-- **Decide precedence with priority, never with position.** Position only
-  matters for exact ties, which means it usually matters by accident.
+- **Decide precedence with `prefer`, not with position.** Position only matters
+  for exact ties, which means it usually matters by accident.
 - **Leave gaps.** The built-ins use 1 / 10 / 60 / 100 / 105 / 110 / 120 / 130 /
   180–200 precisely so a new rule can be slotted between two existing ones
   without renumbering.
 - **Make conditions narrow.** A rule that wins more actions than you intended is
   the failure mode, and it presents as "the button does nothing" rather than as
   an error.
-- **Watch the editor warnings.** `Dead_rule` means a rule is unreachable;
-  `Missing_play` / `Missing_advance` mean a rule wins the click and then strands
-  the game.
+- **Watch the editor warnings.** `Unreachable_rule` and `Impossible_condition`
+  mean a rule never fires at all; `Ambiguous_overlap` means two rules are
+  fighting over the same move; `Missing_play` / `Missing_advance` mean a rule
+  wins the click and then strands the game.
+- **Ignore the "narrows" list.** It is structure, not a problem — `standard`
+  has six. It is there to answer "what would happen if I deleted this rule",
+  since the rule it names is the one that would take over.
 
 ### Reference: built-in priorities
 

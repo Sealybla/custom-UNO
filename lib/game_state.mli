@@ -75,12 +75,22 @@ type t =
   }
 [@@deriving sexp, compare, equal, bin_io]
 
+(* Builds a state directly, skipping the deal. The optional arguments cover
+   the fields a rule condition can read but a plain deal never varies; they
+   default to what a freshly dealt game would hold. Rule_analysis drives
+   them to enumerate states when deciding whether two conditions overlap. *)
 val for_testing
-  :  player_hands:(string * Card.t List.t) List.t
+  :  ?current_color:Card.Color.t (* default: the top card's own color *)
+  -> ?stacking_value:Card.Value.t (* default: no open stack *)
+  -> ?direction:Direction.t (* default: clockwise *)
+  -> ?drew_playable:bool (* default: false *)
+  -> ?uno_vulnerable:int (* default: nobody is catchable *)
+  -> player_hands:(string * Card.t List.t) List.t
   -> top_card:Card.t
   -> draw_pile:Card.t List.t
   -> pending_draws:int
   -> turn:int
+  -> unit
   -> t
 
 val create_card_deck : unit -> Card.t List.t

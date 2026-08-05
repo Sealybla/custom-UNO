@@ -430,10 +430,10 @@ let handle t ~body req =
     (* parse-only dry run for live editor feedback; no session needed *)
     let%bind text = Cohttp_async.Body.to_string body in
     (match Rule_parser.parse_ruleset_checked text with
-     | Ok (parsed, warnings) ->
+     | Ok (parsed, warnings, specialisations) ->
        let warning_json (w : Rule_parser.Lint.t) =
          sprintf
-           {|{"rule":%s,"kind":%s,"message":%s,"fix":%s}|}
+           {|{"rule":%s,"kind":%s,"message":%s,"fix":%s,"related":%s}|}
            (jstr w.rule_name)
            (jstr
               (match w.kind with
@@ -441,15 +441,28 @@ let handle t ~body req =
                | Missing_advance -> "missing_advance"
                | Missing_set_color -> "missing_set_color"
                | Missing_turn -> "missing_turn"
-               | Dead_rule -> "dead_rule"))
+               | Impossible_condition -> "impossible_condition"
+               | Unreachable_rule -> "unreachable_rule"
+               | Ambiguous_overlap -> "ambiguous_overlap"))
            (jstr w.message)
            (match w.fix with
             | Some f -> jstr f
             | None -> "null")
+           (match w.related with
+            | Some r -> jstr r
+            | None -> "null")
+       in
+       (* not warnings: the deliberate "this rule is a special case of that
+          one" structure, for the editor to show without nagging *)
+       let specialisation_json (s : Rule_parser.Specialisation.t) =
+         sprintf
+           {|{"specific":%s,"general":%s}|}
+           (jstr s.specific)
+           (jstr s.general)
        in
        respond_json
          (sprintf
-            {|{"ok":true,"num_rules":%d,"deals":%s,"timer":%s,"warnings":%s}|}
+            {|{"ok":true,"num_rules":%d,"deals":%s,"timer":%s,"warnings":%s,"specialises":%s}|}
             (List.length parsed.rules)
             (match parsed.hand_size with
              | Some n -> Int.to_string n
@@ -457,7 +470,8 @@ let handle t ~body req =
             (match parsed.turn_timer with
              | Some n -> Int.to_string n
              | None -> "null")
-            (jlist (List.map warnings ~f:warning_json)))
+            (jlist (List.map warnings ~f:warning_json))
+            (jlist (List.map specialisations ~f:specialisation_json)))
      | Error err -> respond_json (error_body err))
   | "/api/preset-rules" ->
     (* the expanded rule text behind a preset, so the editor can offer its

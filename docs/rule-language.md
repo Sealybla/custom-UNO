@@ -58,6 +58,40 @@ use standard
 remove rule "play plus four"   # +4s are dead cards now
 ```
 
+## Choosing between rules that clash
+
+Only one rule fires per move — the highest priority, and among equals the
+one written first. When two rules want the same move, that second half is
+an accident of typing order rather than a decision, so the editor says so
+and you answer with a `prefer` line:
+
+```
+prefer "sevens swap hands" over "play matching card"
+```
+
+It means exactly what it says: whenever both rules match, the named winner
+takes the move. Unlike a hand-picked priority number, it records *that a
+choice was made* and survives someone later renumbering things. Position
+does not matter — a `prefer` line may name a rule defined further down.
+
+Naming a rule that does not exist is an error listing the ones that do, and
+so is a set of preferences that contradicts itself (`prefer "a" over "b"`
+together with `prefer "b" over "a"`).
+
+The editor flags three things worth answering:
+
+- **can never fire** — every move this rule wants is already taken by a rule
+  above it. Usually a narrow rule left *below* the broad rule it was meant
+  to override; `prefer` fixes it.
+- **impossible condition** — no situation could ever satisfy it, like
+  `card is red and card is blue`.
+- **two rules could both take this move** — same priority, overlapping
+  conditions. Pick a winner.
+
+A narrow rule sitting *above* a broad one is the opposite of a problem —
+it is how `play skip` refines `play matching card` — so it is listed as
+structure rather than flagged.
+
 ## Conditions
 
 | Text | `Rule.Condition.t` |

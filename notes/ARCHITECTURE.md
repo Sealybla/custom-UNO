@@ -45,6 +45,7 @@ lib/                 the whole game; no I/O except server.ml
   rule.ml            Condition / Rule — the rule AST
   rule_engine.ml     evaluation, the built-in rulesets, apply_action
   rule_parser.ml     text -> rules + settings, `use <preset>`, the linter
+  rule_analysis.ml   do two conditions overlap? is one inside the other?
   presets.ml         canonical rule TEXT for every built-in ruleset
   accounts.ml        optional login + per-user saved rule "modes" (sexp file)
   rpc_protocol.ml    Async RPC definitions
@@ -274,8 +275,10 @@ token loop, since they are only ever hand-written. Tokens carry their line
 number, so stripping `play until` early doesn't corrupt later error messages.
 
 **Lint** (`parse_ruleset_checked`) returns warnings alongside the rules:
-`Missing_play`, `Missing_advance`, `Missing_set_color`, `Missing_turn`, and
-`Dead_rule` flag the footguns that follow from "only one rule fires". Warnings
+`Missing_play`, `Missing_advance`, `Missing_set_color` and `Missing_turn` flag
+the footguns that follow from "only one rule fires", while
+`Impossible_condition`, `Unreachable_rule` and `Ambiguous_overlap` report
+genuine clashes between rules, decided by `Rule_analysis` (§6.1). Warnings
 never reject a ruleset; each carries an optional `fix` snippet so the editor
 can offer one-click repair.
 
@@ -301,6 +304,43 @@ each parses to *exactly* its hand-coded `Rule_engine.Ruleset` twin.
 **This dual representation is a deliberate redundancy, and it is load-bearing.**
 Hand-coded rulesets are what the engine ships with; preset text is what users
 see and edit. The round-trip tests are what stop them drifting.
+
+### 6.1 Conflict detection (`rule_analysis.ml`)
+
+Because exactly one rule fires, two rules wanting the same move is a real
+contradiction — and the loser is silently dropped. `Rule_analysis` decides how
+two conditions relate: `Disjoint`, `Equivalent`, one subsuming the other, or
+`Overlap`.
+
+**It evaluates over concrete worlds, using the engine's own evaluator.** Each
+world is a real `Game_state.t` + `Event.t`, judged by
+`Rule_engine.eval_condition`. Two things follow. A second evaluator would
+drift from the engine and start describing a game nobody plays; this one
+cannot. And atoms are mutually exclusive *for free* — a card is not both a 3
+and a 5, a play is not a draw — where a boolean SAT solver would treat them as
+independent variables and invent impossible conflicts.
+
+Only the dimensions the conditions actually read are varied (`MatchesTopColor`
+reads the played card and the active colour; `HandSizeEquals n` reads the hand
+size), numeric thresholds are tested at `n` and `n+1`, and the card set is
+widened with every colour and number the conditions name — otherwise
+`card is green` would be judged impossible for want of a green card. Past a
+size budget the answer is `Unknown` and **nothing is reported**.
+
+`Batch` builds one shared world set for a whole ruleset, since the editor asks
+on every keystroke. Measured: ~30-60 ms for a preset, ~240 ms for a 27-rule
+ruleset, behind a 600 ms debounce.
+
+The calibration that keeps this useful rather than noisy: a **narrow rule above
+a broad one is not a warning** — that is what `play skip` is to
+`play matching card`, six times over in `standard` alone. It comes back as
+`Specialisation.t` for the editor to show as structure. The same pair ranked
+the other way round is `Unreachable_rule`, and equal priorities with any
+overlap is `Ambiguous_overlap`.
+
+Both are answered with `prefer "a" over "b"`, which the parser compiles into
+priorities (raising the winner strictly above the loser) — so the engine keeps
+its single "highest priority wins" rule and needed no change at all.
 
 ---
 

@@ -148,7 +148,19 @@ let first_playable_card t ~hand =
   List.find hand ~f:(fun card -> is_valid_play t ~played_card:card)
 ;;
 
-let for_testing ~player_hands ~top_card ~draw_pile ~pending_draws ~turn =
+let for_testing
+  ?current_color
+  ?stacking_value
+  ?direction
+  ?drew_playable
+  ?uno_vulnerable
+  ~player_hands
+  ~top_card
+  ~draw_pile
+  ~pending_draws
+  ~turn
+  ()
+  =
   (* player_hands : (string * Card.t list) list *)
   let all_cards =
     (top_card :: draw_pile) @ List.concat_map player_hands ~f:snd
@@ -162,14 +174,15 @@ let for_testing ~player_hands ~top_card ~draw_pile ~pending_draws ~turn =
   ; draw_pile
   ; played_pile = []
   ; top_card
-  ; current_color = Card.get_color top_card
-  ; stacking_value = None
-  ; direction = Direction.Clockwise
+  ; current_color =
+      Option.value current_color ~default:(Card.get_color top_card)
+  ; stacking_value
+  ; direction = Option.value direction ~default:Direction.Clockwise
   ; pending_draws
-  ; drew_playable = false
+  ; drew_playable = Option.value drew_playable ~default:false
   ; turns_advanced = 0
   ; turn
-  ; uno_vulnerable = None
+  ; uno_vulnerable
   ; finished = []
   ; card_registry = Card_registry.of_cards all_cards
   ; winner = None
