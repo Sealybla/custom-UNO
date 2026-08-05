@@ -204,15 +204,23 @@ let shuffle ?random_state cards =
   Array.to_list arr
 ;;
 
-(* grabs a card from draw pile *)
-let draw_card t : (Card.t * t) Or_error.t =
+(* grabs a card from the draw pile, reshuffling the played pile into it
+   when it runs out; None when both piles are empty *)
+let draw_card_opt t : (Card.t * t) option =
   match t.draw_pile with
-  | card :: rest -> Ok (card, { t with draw_pile = rest })
+  | card :: rest -> Some (card, { t with draw_pile = rest })
   | [] ->
     (match shuffle t.played_pile with
-     | [] -> Or_error.error_string "No cards left to reshuffle with..."
+     | [] -> None
      | card :: rest ->
-       Ok (card, { t with draw_pile = rest; played_pile = [] }))
+       Some (card, { t with draw_pile = rest; played_pile = [] }))
+;;
+
+(* strict variant for the opening flip, where running out is a real error *)
+let draw_card t : (Card.t * t) Or_error.t =
+  match draw_card_opt t with
+  | Some result -> Ok result
+  | None -> Or_error.error_string "No cards left to reshuffle with..."
 ;;
 
 (* updates player when they make changes to their hand *)
@@ -226,17 +234,20 @@ let update_player t player =
   }
 ;;
 
-(* draws top card in draw pile, reshuffles card if no cards left in draw pile
-   return error if no player exists or no playable cards *)
-let draw_card_player t player_id : t Or_error.t =
-  let%bind player =
+(* one card into [player_id]'s hand; false when both piles are dry. That is
+   not an error: at the tail of a long game a draw can simply yield nothing
+   and play continues, the same as running the physical deck out *)
+let try_draw_card_player t player_id : (t * bool) Or_error.t =
+  let%map player =
     match List.nth t.players player_id with
     | Some p -> Ok p
     | None ->
       Or_error.error_s [%message "Player ID not found" (player_id : int)]
   in
-  let%map card, t = draw_card t in
-  update_player t (Player.add_card player (Card.get_id card))
+  match draw_card_opt t with
+  | None -> t, false
+  | Some (card, t) ->
+    update_player t (Player.add_card player (Card.get_id card)), true
 ;;
 
 (* updates the the card ontop of played pile *)
@@ -274,10 +285,17 @@ let hand_size t player_id =
   | None -> 0
 ;;
 
-(* [n] cards off the top of the pile into one player's hand *)
+(* up to [n] cards off the top of the pile into one player's hand, stopping
+   quietly when both piles run dry - a penalty is worth whatever is left *)
 let draw_n t player_id n =
-  List.fold_result (List.init n ~f:Fn.id) ~init:t ~f:(fun s _ ->
-    draw_card_player s player_id)
+  let rec go t remaining =
+    if remaining <= 0
+    then Ok t
+    else (
+      let%bind t, drew = try_draw_card_player t player_id in
+      if drew then go t (remaining - 1) else Ok t)
+  in
+  go t n
 ;;
 
 let target_needed = "Choose another player to aim this card at"
@@ -306,10 +324,23 @@ let swap_hands t ~a ~b =
    player per name (id = position in the list), deals [hand_size] cards to
    each player in order, then flips the top card. The placeholder top_card
    with id = -1 is a stand-in for the empty record field and is always
-   overwritten by the final update_top_card. Errors if the deck runs out
-   mid-deal. *)
+   overwritten by the final update_top_card. Checked up front rather than
+   erroring mid-deal, because draw_n draws best-effort and would otherwise
+   silently deal short, unequal hands. *)
 let create ?random_state ~player_names ~hand_size () : t Or_error.t =
   let deck = create_card_deck () in
+  let%bind () =
+    let needed = (hand_size * List.length player_names) + 1 in
+    if needed > List.length deck
+    then
+      Or_error.error_s
+        [%message
+          "Not enough cards in the deck to deal that hand size"
+            (hand_size : int)
+            ~players:(List.length player_names : int)
+            ~deck:(List.length deck : int)]
+    else Ok ()
+  in
   let players =
     List.mapi player_names ~f:(fun id name -> Player.create id name)
   in
@@ -363,7 +394,18 @@ let advance_turn t =
 ;;
 
 (* apply an effect to game state t *)
-let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
+(* [card_playable] is how the draw effects judge the card they just drew.
+   Rule_engine passes a full ruleset simulation so "playable" agrees with
+   the UI highlights under custom rules; the default is official-rules
+   matching, for callers with no ruleset in hand (tests). *)
+let apply_effect ?card_playable t ~(event : Event.t) (eff : Effect.t)
+  : t Or_error.t
+  =
+  let card_playable =
+    match card_playable with
+    | Some f -> f
+    | None -> fun t ~player_id:_ ~played_card -> is_valid_play t ~played_card
+  in
   match eff with
   | PlayTriggeringCard ->
     let%bind player = player_of_event event in
@@ -401,36 +443,39 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
     draw_n t player_id count
   | DrawUntilPlayable ->
     (* one card per draw click, the turn staying put either way; a playable
-       draw sets drew_playable for rules that condition on it *)
+       draw sets drew_playable for rules that condition on it. A dry deck
+       turns the click into a pass - the variant has no pass rule, so the
+       seat would otherwise be left with no legal move *)
     let%bind player = player_of_event event in
     let player_id = Player.get_id player in
-    let%bind t = draw_card_player t player_id in
-    (match Player.get_hand (List.nth_exn t.players player_id) with
-     | [] -> Ok t
-     | newest_id :: _ ->
-       let%map card = Card_registry.find t.card_registry newest_id in
-       if is_valid_play t ~played_card:card
-       then { t with drew_playable = true }
-       else t)
+    let%bind t, drew = try_draw_card_player t player_id in
+    if not drew
+    then Ok (advance_turn t)
+    else (
+      match Player.get_hand (List.nth_exn t.players player_id) with
+      | [] -> Ok t
+      | newest_id :: _ ->
+        let%map card = Card_registry.find t.card_registry newest_id in
+        if card_playable t ~player_id ~played_card:card
+        then { t with drew_playable = true }
+        else t)
   | DrawAndDecide ->
     (* draw one card; if it is playable the turn stays open so the player
-       can choose to play it or pass, otherwise the turn passes *)
+       can choose to play it or pass, otherwise the turn passes. A dry deck
+       draws nothing and the turn passes *)
     let%bind player = player_of_event event in
     let player_id = Player.get_id player in
-    let%bind t = draw_card_player t player_id in
-    let%bind drawn_player =
-      match List.nth t.players player_id with
-      | Some p -> Ok p
-      | None ->
-        Or_error.error_s [%message "Player ID not found" (player_id : int)]
-    in
-    (match Player.get_hand drawn_player with
-     | [] -> Ok (advance_turn t)
-     | newest_id :: _ ->
-       let%map card = Card_registry.find t.card_registry newest_id in
-       if is_valid_play t ~played_card:card
-       then { t with drew_playable = true }
-       else advance_turn t)
+    let%bind t, drew = try_draw_card_player t player_id in
+    if not drew
+    then Ok (advance_turn t)
+    else (
+      match Player.get_hand (List.nth_exn t.players player_id) with
+      | [] -> Ok (advance_turn t)
+      | newest_id :: _ ->
+        let%map card = Card_registry.find t.card_registry newest_id in
+        if card_playable t ~player_id ~played_card:card
+        then { t with drew_playable = true }
+        else advance_turn t)
   | ReverseDirection ->
     let next_dir =
       match t.direction with

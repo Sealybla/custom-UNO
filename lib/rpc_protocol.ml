@@ -32,13 +32,15 @@ module Join_query = struct
   [@@deriving sexp, bin_io]
 end
 
-(* handles a player joining a room's lobby by code *)
+(* handles a player joining a room's lobby by code; returns the canonical
+   seat name, which a mid-game rejoin may resolve with a different
+   capitalisation than the one typed *)
 let join_lobby_rpc =
   Rpc.Rpc.create
   ~name:"join-lobby"
-  ~version:2
+  ~version:3
   ~bin_query:Join_query.bin_t
-  ~bin_response:[%bin_type_class: unit Or_error.t]
+  ~bin_response:[%bin_type_class: string Or_error.t]
   ~include_in_error_count:Only_on_exn
 ;;
 

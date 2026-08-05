@@ -280,7 +280,10 @@ module Ruleset = struct
   ;;
 
   (* The UNO button, in three rules ordered by priority: claiming your own
-     UNO beats catching someone else's, which beats a bare press.
+     UNO beats a bare press, and catching someone else always wins while a
+     window is open - the "not someone has uno" guard is what lets a player
+     who is themselves down to one card still make the catch (only one
+     window can be open at a time, so the guard never blocks a self-claim).
 
      These sit above every other priority in the game on purpose. A few
      conditions (PendingDrawsGreaterThan, IsPlayerTurn) never look at the
@@ -290,7 +293,7 @@ module Ruleset = struct
   let uno_rules : t =
     [ { id = 30
       ; priority = 200
-      ; condition = And (IsUnoCall, CallerHasUno)
+      ; condition = And (IsUnoCall, And (CallerHasUno, Not SomeoneElseHasUno))
       ; actions = [ MarkUnoCalled ]
       }
     ; { id = 31
@@ -312,12 +315,21 @@ module Ruleset = struct
      to whoever played, and the AdvanceTurn after it carries on from there,
      so everyone in between loses their go.
 
+     Number cards only: this rule's actions are the generic play sequence,
+     so a jumped skip/reverse/+2 would land as a blank - and in the stacking
+     variants a jumped +2 twin would leave the original pending penalty to
+     fall on whoever holds the turn after the jump. A custom rule that
+     spells out the card's effects can still allow action-card jumps.
+
      Blocked mid-stack: barging into someone's open stack would strand it. *)
   let jump_in_rules : t =
     [ { id = 40
       ; priority = 130
       ; condition =
-          And (MatchesTopExactly, And (Not IsPlayerTurn, Not StackIsOpen))
+          And
+            ( MatchesTopExactly
+            , And (Not IsActionCard, And (Not IsPlayerTurn, Not StackIsOpen))
+            )
       ; actions =
           [ JumpToActor
           ; PlayTriggeringCard
@@ -592,7 +604,7 @@ let rec eval_condition
   | Not c -> not (eval_condition state evt c)
 ;;
 
-let process_event
+let rec process_event
   (rules : Ruleset.t)
   (state : Game_state.t)
   (evt : Event.t)
@@ -623,24 +635,38 @@ let process_event
     Or_error.error_string "Illegal move: no rule allows that right now"
   | rule :: _ ->
     List.fold_result rule.actions ~init:state ~f:(fun curr_state eff ->
-      Game_state.apply_effect curr_state ~event:evt eff)
-;;
+      Game_state.apply_effect
+        ~card_playable:(ruleset_accepts_play rules)
+        curr_state
+        ~event:evt
+        eff)
 
-(* would any rule accept a Pass from the current player right now? Used by
-   the UI to decide whether the pass button is worth showing. *)
-let pass_available (rules : Ruleset.t) (state : Game_state.t) : bool =
-  match state.winner with
-  | Some _ -> false
-  | None ->
-    (match List.nth state.players state.turn with
-     | None -> false
-     | Some player ->
-       let evt = Event.PassRequested { player } in
-       List.exists rules ~f:(fun (rule : Rule.t) ->
-         eval_condition state evt rule.condition))
-;;
+(* would this ruleset accept playing [played_card] right now? The draw
+   effects ask this about the card they just drew, so "playable" there
+   means exactly what it means for the UI highlights: whatever the rules
+   in force would actually allow, not official-rules matching. Mirrors
+   playable_and_swap_ids: any real colour stands in for a wild's
+   declaration, and failing only for want of a target still counts. *)
+and ruleset_accepts_play rules state ~player_id ~(played_card : Card.t) =
+  match
+    apply_action
+      rules
+      state
+      ~player_id
+      ~action:
+        (Action.Client_to_server.Play
+           { card_id = Card.get_id played_card
+           ; declared_color = Some Red
+           ; swap_with = None
+           })
+  with
+  | Ok _ -> true
+  | Error e ->
+    String.is_substring
+      (Error.to_string_hum e)
+      ~substring:Game_state.target_needed
 
-let apply_action
+and apply_action
   (rules : Ruleset.t)
   (state : Game_state.t)
   ~player_id
@@ -658,6 +684,16 @@ let apply_action
   (* window bookkeeping sits outside the ruleset on purpose - see
      Game_state.update_uno_window *)
   Game_state.update_uno_window next_state ~actor_id:player_id ~event:evt
+;;
+
+(* would the ruleset actually accept a Pass from the current player right
+   now? Simulated like every other availability check. The old shortcut -
+   "does any rule's condition match" - contradicted execution, which runs
+   only the highest-priority match: a reject-on-pass rule above a
+   permissive one made the UI offer a pass that could never land. *)
+let pass_available (rules : Ruleset.t) (state : Game_state.t) : bool =
+  apply_action rules state ~player_id:state.turn ~action:Pass
+  |> Or_error.is_ok
 ;;
 
 (* Which of this player's cards the ruleset would accept right now, found by

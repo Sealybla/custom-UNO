@@ -2073,7 +2073,7 @@ let%expect_test "color conditions parse; bad colors are rejected" =
      (And (IsCardColor Yellow) (And (ActiveColorIs Green) IsPlayerTurn)))
     (e
      ("in rule \"bad\""
-      "line 1: unknown color 'purple' (expected red, green, blue, yellow, or declared)"))
+      "line 1: unknown color 'purple' (expected red, green, blue, or yellow)"))
     |}]
 ;;
 
@@ -2838,4 +2838,296 @@ remove rule play plus four|};
     (e
      "line 2: remove rule needs the quoted rule name, like: remove rule \"play plus four\"")
     |}]
+;;
+
+(* ---------- regressions for the review fixes ---------- *)
+
+(* the self-claim rule stands aside while someone else's window is open,
+   so being down to one card yourself no longer swallows your catch *)
+let%expect_test "a one-card holder can still catch someone else's UNO" =
+  let playable = { Card.color = Red; value = Seven; id = 950 } in
+  let spare = { Card.color = Blue; value = Two; id = 951 } in
+  let top = { Card.color = Red; value = Three; id = 952 } in
+  let filler n = { Card.color = Green; value = Four; id = 953 + n } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:
+        [ "a", [ playable; spare ]
+        ; "b", [ filler 0 ] (* the catcher is on uno themselves *)
+        ; "c", [ filler 1; filler 2 ]
+        ]
+      ~top_card:top
+      ~draw_pile:(Game_state.create_card_deck ())
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action
+      rules
+      t
+      ~player_id:0
+      ~action:(Play { card_id = 950; declared_color = None; swap_with = None })
+    |> Or_error.ok_exn
+  in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:1 ~action:Call_uno
+    |> Or_error.ok_exn
+  in
+  let victim = hand_of t 0 in
+  let catcher = hand_of t 1 in
+  print_s
+    [%message (victim : int) (catcher : int) (t.uno_vulnerable : int option)];
+  [%expect {| ((victim 3) (catcher 1) (t.uno_vulnerable ())) |}]
+;;
+
+(* both piles empty: a draw click yields nothing and passes the turn
+   instead of erroring the seat into an unplayable state *)
+let%expect_test "a draw click on a dry deck passes the turn" =
+  let top = { Card.color = Red; value = Five; id = 970 } in
+  let blue = { Card.color = Blue; value = Two; id = 971 } in
+  let green = { Card.color = Green; value = Four; id = 972 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ blue ]; "b", [ green ] ]
+      ~top_card:top
+      ~draw_pile:[]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0 ~action:Draw
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message (hand_of t 0 : int) (t.turn : int) (t.drew_playable : bool)];
+  [%expect {| (("hand_of t 0" 1) (t.turn 1) (t.drew_playable false)) |}]
+;;
+
+(* a +2 near the end of the deck delivers what is left (here: only the
+   recycled old top card) instead of rejecting the whole play *)
+let%expect_test "a +2 short-draws when the piles nearly run out" =
+  let top = { Card.color = Red; value = Five; id = 975 } in
+  let plus = { Card.color = Red; value = Plus; id = 976 } in
+  let blue = { Card.color = Blue; value = Two; id = 977 } in
+  let green = { Card.color = Green; value = Four; id = 978 } in
+  let green2 = { Card.color = Green; value = Four; id = 979 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:
+        [ "a", [ plus; blue ]; "b", [ green ]; "c", [ green2 ] ]
+      ~top_card:top
+      ~draw_pile:[]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action
+      rules
+      t
+      ~player_id:0
+      ~action:(Play { card_id = 976; declared_color = None; swap_with = None })
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message (hand_of t 0 : int) (hand_of t 1 : int) (t.turn : int)];
+  [%expect
+    {| (("hand_of t 0" 1) ("hand_of t 1" 2) (t.turn 2)) |}]
+;;
+
+(* availability is simulated, so a blocking rule that outranks the
+   permissive pass rule hides the pass button instead of offering a pass
+   that can never land *)
+let%expect_test "pass_available honors a winning reject-on-pass rule" =
+  let rules =
+    Rule_parser.parse_ruleset
+      (Presets.stacking_text
+       ^ {|
+rule "no bailing out" priority 300:
+  when player passes and stack is open
+  do reject "finish your stack"
+|})
+    |> Or_error.ok_exn
+  in
+  let top = { Card.color = Red; value = Three; id = 980 } in
+  let five = { Card.color = Red; value = Five; id = 981 } in
+  let spare = { Card.color = Blue; value = Two; id = 982 } in
+  let green = { Card.color = Green; value = Four; id = 983 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ five; spare ]; "b", [ green ] ]
+      ~top_card:top
+      ~draw_pile:[]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action
+      rules
+      t
+      ~player_id:0
+      ~action:(Play { card_id = 981; declared_color = None; swap_with = None })
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message
+      (t.stacking_value : Card.Value.t option)
+        (Rule_engine.pass_available rules t : bool)];
+  (match Rule_engine.apply_action rules t ~player_id:0 ~action:Pass with
+   | Ok _ -> print_endline "pass unexpectedly accepted"
+   | Error e -> print_s [%message (e : Error.t)]);
+  [%expect
+    {|
+    ((t.stacking_value (Five)) ("Rule_engine.pass_available rules t" false))
+    (e "finish your stack")
+    |}]
+;;
+
+(* the seven-zero rules are blocked mid-stack: a 7 played into an open
+   stack no longer swaps hands and walks away, stranding the stack *)
+let%expect_test "a mid-stack 7 is illegal under stacking + seven zero" =
+  let rules =
+    Rule_parser.parse_ruleset {|use stacking
+use seven zero|} |> Or_error.ok_exn
+  in
+  let top = { Card.color = Red; value = Three; id = 985 } in
+  let five = { Card.color = Red; value = Five; id = 986 } in
+  let seven = { Card.color = Red; value = Seven; id = 987 } in
+  let spare = { Card.color = Blue; value = Two; id = 988 } in
+  let green = { Card.color = Green; value = Four; id = 989 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ five; seven; spare ]; "b", [ green ] ]
+      ~top_card:top
+      ~draw_pile:[]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action
+      rules
+      t
+      ~player_id:0
+      ~action:(Play { card_id = 986; declared_color = None; swap_with = None })
+    |> Or_error.ok_exn
+  in
+  (match
+     Rule_engine.apply_action
+       rules
+       t
+       ~player_id:0
+       ~action:
+         (Play { card_id = 987; declared_color = None; swap_with = Some "b" })
+   with
+   | Ok _ -> print_endline "seven unexpectedly accepted mid-stack"
+   | Error e -> print_s [%message (e : Error.t)]);
+  (* closing the stack normally still works *)
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0 ~action:Pass
+    |> Or_error.ok_exn
+  in
+  print_s [%message (t.stacking_value : Card.Value.t option) (t.turn : int)];
+  [%expect
+    {|
+    (e "Illegal move: no rule allows that right now")
+    ((t.stacking_value ()) (t.turn 1))
+    |}]
+;;
+
+(* jump-in is number-cards-only: a jumped +2 twin used to play as a blank
+   and leave the pending penalty to whoever held the turn after the jump *)
+let%expect_test "jump-in rejects action cards" =
+  let rules = Rule_engine.Ruleset.stacking_jump_in_variant in
+  let top = { Card.color = Red; value = Three; id = 990 } in
+  let plus_a = { Card.color = Red; value = Plus; id = 991 } in
+  let spare = { Card.color = Blue; value = Two; id = 992 } in
+  let green = { Card.color = Green; value = Four; id = 993 } in
+  let plus_c = { Card.color = Red; value = Plus; id = 994 } in
+  let green2 = { Card.color = Green; value = Four; id = 995 } in
+  let d1 = { Card.color = Yellow; value = One; id = 996 } in
+  let d2 = { Card.color = Yellow; value = Two; id = 997 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:
+        [ "a", [ plus_a; spare ]; "b", [ green ]; "c", [ plus_c; green2 ] ]
+      ~top_card:top
+      ~draw_pile:[ d1; d2 ]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action
+      rules
+      t
+      ~player_id:0
+      ~action:(Play { card_id = 991; declared_color = None; swap_with = None })
+    |> Or_error.ok_exn
+  in
+  (* c holds the exact twin of the top card - but it is an action card *)
+  (match
+     Rule_engine.apply_action
+       rules
+       t
+       ~player_id:2
+       ~action:
+         (Play { card_id = 994; declared_color = None; swap_with = None })
+   with
+   | Ok _ -> print_endline "action-card jump unexpectedly accepted"
+   | Error e -> print_s [%message (e : Error.t)]);
+  (* so the penalty still lands on its intended victim *)
+  let t =
+    Rule_engine.apply_action rules t ~player_id:1 ~action:Draw
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message (hand_of t 1 : int) (t.pending_draws : int) (t.turn : int)];
+  [%expect
+    {|
+    (e "Illegal move: no rule allows that right now")
+    (("hand_of t 1" 3) (t.pending_draws 0) (t.turn 2))
+    |}]
+;;
+
+(* the drawn card is judged by the ruleset in force, not official-rules
+   matching, so the play-or-pass window agrees with the hand highlights *)
+let%expect_test "draw-and-decide judges the drawn card by the live ruleset" =
+  let rules =
+    Rule_parser.parse_ruleset
+      (Presets.standard_text
+       ^ {|
+rule "blue anywhere" priority 60:
+  when card is blue and your turn
+  do play the card, set color from card, advance turn
+|})
+    |> Or_error.ok_exn
+  in
+  let top = { Card.color = Red; value = Five; id = 1000 } in
+  let unplayable = { Card.color = Green; value = Four; id = 1001 } in
+  let blue = { Card.color = Blue; value = Nine; id = 1002 } in
+  let filler = { Card.color = Yellow; value = One; id = 1003 } in
+  let t =
+    Game_state.for_testing
+      ~player_hands:[ "a", [ unplayable ]; "b", [ filler ] ]
+      ~top_card:top
+      ~draw_pile:[ blue ]
+      ~pending_draws:0
+      ~turn:0
+  in
+  let t =
+    Rule_engine.apply_action rules t ~player_id:0 ~action:Draw
+    |> Or_error.ok_exn
+  in
+  (* official rules call a blue 9 on a red 5 unplayable; the live ruleset
+     does not, so the turn must stay open *)
+  print_s [%message (t.drew_playable : bool) (t.turn : int)];
+  [%expect {| ((t.drew_playable true) (t.turn 0)) |}]
+;;
+
+let%expect_test "a huge number is a parse error, not an exception" =
+  (match
+     Rule_parser.parse_ruleset
+       {|rule "big" priority 99999999999999999999: when your turn do advance turn|}
+   with
+   | Ok _ -> print_endline "unexpectedly parsed"
+   | Error e -> print_s [%message (e : Error.t)]);
+  [%expect {| (e "line 1: number '99999999999999999999' is too large") |}]
 ;;

@@ -47,6 +47,10 @@ module Connection_state = struct
   type t =
     { mutable player_name : string option
     ; mutable room : Room.t option
+    ; mutable stream : Action.Server_to_client.t Pipe.Writer.t option
+    (* the event pipe THIS connection registered, if any; close_finished
+       compares it against the room's live entry so a dead duplicate
+       connection cannot kick or bot the player who is still here *)
     }
 end
 
@@ -279,15 +283,19 @@ let after_if_idle (room : Room.t) span ~f =
        then f state)
 ;;
 
-let enqueue_auto_action (room : Room.t) (state : Game_state.t) player_name =
+let enqueue_timer_action (room : Room.t) player_name action =
   don't_wait_for
     (Pipe.write_if_open
        room.request_writer
        { Queued_request.player_name
-       ; action = bot_action state player_name
+       ; action
        ; enqueued_at = Time_ns.now ()
        ; from_timer = true
        })
+;;
+
+let enqueue_auto_action (room : Room.t) (state : Game_state.t) player_name =
+  enqueue_timer_action room player_name (bot_action state player_name)
 ;;
 
 (* Arm whatever drives the seat whose turn it is: bots move after a short
@@ -299,21 +307,34 @@ let schedule_turn_driver ?(after_rejection = false) (room : Room.t) state =
   match name_of_player_id state state.Game_state.turn with
   | None -> ()
   | Some current ->
+    (* autopilot covers only the remainder of the timed-out turn: the
+       moment the turn belongs to anyone else - bot seats included - it is
+       over, or one missed timeout would shadow a player for the rest of
+       the game whenever every seat in between is a bot *)
+    (match room.autopilot with
+     | Some p when not (String.equal p current) -> room.autopilot <- None
+     | _ -> ());
     (match Hashtbl.find room.clients current with
      | None -> ()
      | Some client when client.is_bot ->
        after_if_idle room bot_move_delay ~f:(fun st ->
-         Core.print_s
-           [%message
-             "Bot execution triggered" (room.code : string) (current : string)];
-         enqueue_auto_action room st current)
+         (* the seat may have been reclaimed while the timer ran; a
+            reconnected player must not have their move made for them *)
+         match Hashtbl.find room.clients current with
+         | Some c when c.is_bot ->
+           Core.print_s
+             [%message
+               "Bot execution triggered"
+                 (room.code : string)
+                 (current : string)];
+           enqueue_auto_action room st current
+         | _ -> ())
      | Some _ ->
        if Option.exists room.autopilot ~f:(String.equal current)
        then after_if_idle room autopilot_delay ~f:(fun st ->
          enqueue_auto_action room st current)
        else if not after_rejection
        then (
-         room.autopilot <- None;
          let timer_s = room.turn_timer in
          if timer_s > 0
          then (
@@ -389,8 +410,14 @@ let maybe_bot_calls_uno (room : Room.t) (next_state : Game_state.t) =
              match room.game_state with
              | None -> ()
              | Some verified_state ->
-               if Option.exists verified_state.Game_state.uno_vulnerable
-                    ~f:(Int.equal player_id)
+               let still_bot =
+                 match Hashtbl.find room.clients player_name with
+                 | Some c -> c.is_bot
+                 | None -> false
+               in
+               if still_bot
+                  && Option.exists verified_state.Game_state.uno_vulnerable
+                       ~f:(Int.equal player_id)
                then
                  Pipe.write_without_pushback
                    room.request_writer
@@ -590,18 +617,29 @@ let remove_bot (room : Room.t) : unit Or_error.t =
 
 (* A room with no HUMANS and no running game can be forgotten - bots alone
    must not keep it alive, or every abandoned lobby with a bot in it would
-   leak a room and its engine loop. *)
+   leak a room and its engine loop. Not forgotten on the spot, though: a
+   page refresh empties a lobby for only a moment (the pagehide beacon
+   fires on reload too), and the join code may already be in friends'
+   hands. Re-check after a grace window and only then close the room. *)
+let room_close_grace = Time_ns.Span.of_sec 30.0
+
 let maybe_remove_room t (room : Room.t) =
   if human_count room = 0 && Option.is_none room.game_state
-  then (
-    Hashtbl.iter room.clients ~f:(fun c ->
-      if not (Pipe.is_closed c.writer) then Pipe.close c.writer);
-    Hashtbl.clear room.clients;
-    Hash_set.clear room.bots;
-    Hash_set.clear room.ready;
-    Hashtbl.remove t.rooms room.code;
-    Pipe.close room.request_writer;
-    Core.print_s [%message "Room closed" (room.code : string)])
+  then
+    don't_wait_for
+      (let%map () = Clock_ns.after room_close_grace in
+       if human_count room = 0
+          && Option.is_none room.game_state
+          && Hashtbl.mem t.rooms room.code
+       then (
+         Hashtbl.iter room.clients ~f:(fun c ->
+           if not (Pipe.is_closed c.writer) then Pipe.close c.writer);
+         Hashtbl.clear room.clients;
+         Hash_set.clear room.bots;
+         Hash_set.clear room.ready;
+         Hashtbl.remove t.rooms room.code;
+         Pipe.close room.request_writer;
+         Core.print_s [%message "Room closed" (room.code : string)]))
 ;;
 
 (* per-room engine loop pulling actions off the room's pipe *)
@@ -647,10 +685,40 @@ let start_engine_loop t (room : Room.t) request_reader =
                          { reason = Error.to_string_hum e })
                   | _ -> ());
                  (* a bot or autopilot whose move was rejected must get
-                    another shot, or its seat would freeze the game *)
-                 schedule_turn_driver ~after_rejection:true room current_state
+                    another shot - but never the same one: the chooser is
+                    deterministic on an unchanged state, so retrying the
+                    move verbatim would loop forever against a blocking
+                    rule. Step the seat down play -> draw -> pass; a seat
+                    with all three rejected has no legal move left and the
+                    driver stands down until something changes. *)
+                 if from_timer
+                 then (
+                   match
+                     match action with
+                     | Action.Client_to_server.Play _ ->
+                       Some Action.Client_to_server.Draw
+                     | Draw -> Some Action.Client_to_server.Pass
+                     | Pass | Call_uno -> None
+                   with
+                   | Some fallback ->
+                     after_if_idle room bot_move_delay ~f:(fun _st ->
+                       enqueue_timer_action room player_name fallback)
+                   | None ->
+                     Core.print_s
+                       [%message
+                         "Seat has no accepted move; driver stands down"
+                           (room.code : string)
+                           (player_name : string)])
+                 else schedule_turn_driver ~after_rejection:true room current_state
                | Ok next_state ->
-                 room.action_seq <- room.action_seq + 1;
+                 (* an UNO press is not a gameplay move: the turn does not
+                    change hands, so the timers already driving it stay
+                    armed. Bumping the seq here would let a free press (a
+                    one-card holder whose window closed) reset the current
+                    player's clock forever. *)
+                 (match action with
+                  | Action.Client_to_server.Call_uno -> ()
+                  | _ -> room.action_seq <- room.action_seq + 1);
                  room.game_state <- Some next_state;
                  broadcast
                    room
@@ -729,7 +797,13 @@ let start_engine_loop t (room : Room.t) request_reader =
                        broadcast room (lobby_event room);
                        maybe_remove_room t room
                      | None -> ())
-                  | None -> drive_or_auto_pass room next_state)))))
+                  | None ->
+                    (match action with
+                     | Action.Client_to_server.Call_uno ->
+                       (* the turn is unchanged and its drivers are still
+                          armed; re-driving would restart the clock *)
+                       ()
+                     | _ -> drive_or_auto_pass room next_state))))))
 ;;
 
 let code_alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ"
@@ -855,13 +929,24 @@ let start
                               "Reconnection registered"
                                 (room.code : string)
                                 (canonical : string)];
-                          return (Ok ())))
+                          return (Ok canonical)))
                    | None ->
+                     (* caseless: mid-game rejoin resolves seats
+                        caselessly, so seating both "Dani" and "dani"
+                        would make that resolution ambiguous - one could
+                        capture the other's hand *)
+                     let existing =
+                       List.find
+                         (Hashtbl.to_alist room.clients)
+                         ~f:(fun (key, _) ->
+                           String.Caseless.equal key name)
+                     in
                      let seat_free =
-                       match Hashtbl.find room.clients name with
+                       match existing with
                        | None -> true
                        (* a lobby seat whose pipe died is free to retake *)
-                       | Some c -> Pipe.is_closed c.writer
+                       | Some (_, c) ->
+                         Pipe.is_closed c.Client_connection.writer
                      in
                      if not seat_free
                      then
@@ -871,7 +956,7 @@ let start
                      else if Hashtbl.length room.clients >= max_participants
                              (* retaking a dead seat adds nobody, so it is not
                                 blocked by a full room *)
-                             && not (Hashtbl.mem room.clients name)
+                             && Option.is_none existing
                      then
                        (* bots occupy seats too, so a room full of them
                           turns people away just like a room of players *)
@@ -889,7 +974,7 @@ let start
                              (room.code : string)
                              (name : string)];
                        broadcast room (lobby_event room);
-                       return (Ok ()))))
+                       return (Ok name))))
         ; Rpc.Pipe_rpc.implement
             Rpc_protocol.game_stream_rpc
             (fun state () ->
@@ -900,12 +985,38 @@ let start
                  let connection =
                    { Client_connection.name; writer; is_bot = false }
                  in
+                 (* two connections carrying the same name can both clear
+                    the join RPC (registration only happens here); letting
+                    the second one in would silently orphan the first
+                    stream, whose eventual close would then take down the
+                    live seat *)
+                 let name_already_streaming () =
+                   Hashtbl.existsi room.clients ~f:(fun ~key ~data ->
+                     String.Caseless.equal key name
+                     && (not data.Client_connection.is_bot)
+                     && not (Pipe.is_closed data.writer))
+                 in
                  (match room.game_state with
                   | None ->
-                    Hashtbl.set room.clients ~key:name ~data:connection;
-                    (* everyone in the room learns about the newcomer *)
-                    broadcast room (lobby_event room);
-                    return (Ok reader)
+                    if name_already_streaming ()
+                    then
+                      return
+                        (Error
+                           (Error.of_string
+                              "Already connected in this room"))
+                    else (
+                      state.stream <- Some writer;
+                      (* retaking a dead seat under a different
+                         capitalisation must not leave the old casing
+                         behind in the roster *)
+                      Hashtbl.filter_keys_inplace room.clients
+                        ~f:(fun key ->
+                          String.equal key name
+                          || not (String.Caseless.equal key name));
+                      Hashtbl.set room.clients ~key:name ~data:connection;
+                      (* everyone in the room learns about the newcomer *)
+                      broadcast room (lobby_event room);
+                      return (Ok reader))
                   | Some game ->
                     (* a reconnection: the join RPC only lets the name of an
                        abandoned seat get this far. Take the seat back from
@@ -920,6 +1031,14 @@ let start
                             (Error.of_string
                                "Access denied: Game is already in progress!"))
                      | Some player ->
+                       if name_already_streaming ()
+                       then
+                         return
+                           (Error
+                              (Error.of_string
+                                 "Already connected in this room"))
+                       else (
+                       state.stream <- Some writer;
                        Hashtbl.set room.clients ~key:name ~data:connection;
                        Core.print_s
                          [%message
@@ -930,6 +1049,18 @@ let start
                          room
                          (Action.Server_to_client.Player_rejoined
                             { player_name = name });
+                       (* a bot driver may already be armed for this seat -
+                          it was a bot until a moment ago. Stale every
+                          pending timer and hand the returned player a
+                          fresh one, countdown included, instead of letting
+                          the bot play their turn out from under them *)
+                       (if Option.equal
+                             String.equal
+                             (name_of_player_id game game.Game_state.turn)
+                             (Some name)
+                        then (
+                          room.action_seq <- room.action_seq + 1;
+                          schedule_turn_driver room game));
                        List.iter
                          [ game_started_event room game player
                          ; Action.Server_to_client.Direction_changed
@@ -939,7 +1070,7 @@ let start
                          ; turn_changed_event room game
                          ]
                          ~f:(Pipe.write_without_pushback writer);
-                       return (Ok reader))))
+                       return (Ok reader)))))
         ; Rpc.Rpc.implement Rpc_protocol.get_state_rpc (fun state () ->
             match in_room state with
             | Error e -> return (Error e)
@@ -1127,13 +1258,26 @@ let start
     Rpc.Connection.serve
       ~implementations
       ~initial_connection_state:(fun _addr _conn ->
-        let state = { Connection_state.player_name = None; room = None } in
+        let state =
+          { Connection_state.player_name = None; room = None; stream = None }
+        in
         don't_wait_for
           (let%bind () = Rpc.Connection.close_finished _conn in
            match state.Connection_state.player_name, state.room with
            | Some name, Some room ->
-             if Option.is_some room.game_state
-             then (
+             (* only the connection whose pipe is the room's live entry may
+                drop the seat: a dead duplicate (two tabs racing the join)
+                must not kick or bot the player who is still here *)
+             let owns_seat =
+               match state.stream, Hashtbl.find room.clients name with
+               | Some w, Some client ->
+                 phys_equal w client.Client_connection.writer
+               | _ -> false
+             in
+             (if not owns_seat
+              then ()
+              else if Option.is_some room.game_state
+              then (
                match Hashtbl.find room.clients name with
                | None -> ()
                | Some client ->
@@ -1168,16 +1312,16 @@ let start
                             (Some name) ->
                      schedule_turn_driver room game
                    | _ -> ()))
-             else (
-               Hashtbl.remove room.clients name;
-               Hash_set.remove room.ready name;
-               Core.print_s
-                 [%message
-                   "Player left the lobby"
-                     (room.code : string)
-                     (name : string)];
-               broadcast room (lobby_event room);
-               maybe_remove_room t room);
+              else (
+                Hashtbl.remove room.clients name;
+                Hash_set.remove room.ready name;
+                Core.print_s
+                  [%message
+                    "Player left the lobby"
+                      (room.code : string)
+                      (name : string)];
+                broadcast room (lobby_event room);
+                maybe_remove_room t room));
              Deferred.unit
            | _ -> Deferred.unit);
         state)

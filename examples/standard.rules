@@ -38,7 +38,7 @@ rule "pass after draw" priority 1:
 # The UNO button. Anyone may press it at any time; priority decides the race.
 # Raise the 2s to make forgetting to call UNO hurt more.
 rule "call uno" priority 200:
-  when player calls uno and has uno
+  when player calls uno and has uno and not someone has uno
   do mark uno called
 
 rule "catch uno" priority 190:
