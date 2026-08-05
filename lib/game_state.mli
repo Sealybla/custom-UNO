@@ -100,6 +100,18 @@ val is_finished : t -> int -> bool
 
 (* a gameplay move consumes a turn; an UNO press does not *)
 val is_gameplay_event : Event.t -> bool
+
+(** does this card satisfy the colour in force? An undeclared colour
+    (NoColor, i.e. the game opened on a flipped wild) accepts anything. *)
+val matches_color : t -> played_card:Card.t -> bool
+
+(** can this card legally be placed onto the discard pile under official Uno
+    rules? Custom rules layer on top of this via [Rule_engine]. *)
+val is_valid_play : t -> played_card:Card.t -> bool
+
+(** first playable card in [hand], or [None] if nothing plays; bot logic *)
+val first_playable_card : t -> hand:Card.t list -> Card.t option
+
 val apply_effect : t -> event:Event.t -> Effect.t -> t Or_error.t
 
 (* recomputes who can be caught for not calling UNO; called once per action

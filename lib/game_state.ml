@@ -126,6 +126,28 @@ type t =
   }
 [@@deriving sexp, compare, equal, bin_io]
 
+(* NoColor means no color is in force yet. The only way a game reaches that
+   state is the flipped starting card being a wild, which nobody chose a
+   color for - so the opening player may lead with whatever they like. *)
+let matches_color t ~(played_card : Card.t) =
+  match t.current_color with
+  | Card.Color.NoColor -> true
+  | color -> Card.Color.equal played_card.color color
+;;
+
+let is_valid_play t ~(played_card : Card.t) =
+  match played_card.value with
+  | Card.Value.Wild | Card.Value.Wild4 -> true
+  | _ ->
+    matches_color t ~played_card
+    || Card.Value.equal played_card.value t.top_card.Card.value
+;;
+
+(* first playable card in hand, or None if nothing is playable; bot logic *)
+let first_playable_card t ~hand =
+  List.find hand ~f:(fun card -> is_valid_play t ~played_card:card)
+;;
+
 let for_testing ~player_hands ~top_card ~draw_pile ~pending_draws ~turn =
   (* player_hands : (string * Card.t list) list *)
   let all_cards =
@@ -387,10 +409,7 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
      | [] -> Ok t
      | newest_id :: _ ->
        let%map card = Card_registry.find t.card_registry newest_id in
-       if Game_rules.is_valid_play
-            ~top_card:t.top_card
-            ~played_card:card
-            ~current_color:t.current_color
+       if is_valid_play t ~played_card:card
        then { t with drew_playable = true }
        else t)
   | DrawAndDecide ->
@@ -409,10 +428,7 @@ let apply_effect t ~(event : Event.t) (eff : Effect.t) : t Or_error.t =
      | [] -> Ok (advance_turn t)
      | newest_id :: _ ->
        let%map card = Card_registry.find t.card_registry newest_id in
-       if Game_rules.is_valid_play
-            ~top_card:t.top_card
-            ~played_card:card
-            ~current_color:t.current_color
+       if is_valid_play t ~played_card:card
        then { t with drew_playable = true }
        else advance_turn t)
   | ReverseDirection ->

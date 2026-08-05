@@ -201,12 +201,7 @@ let%expect_test "full game plays to completion" =
         in
         let hand = resolve_hand state player in
         let action =
-          match
-            Game_rules.choose_card
-              ~hand
-              ~top_card:state.Game_state.top_card
-              ~current_color:state.Game_state.current_color
-          with
+          match Game_state.first_playable_card state ~hand with
           | Some card ->
             let declared_color =
               match card.Card.value with
@@ -2724,5 +2719,123 @@ rule "low pile tax" priority 60:
        (And (DrawPileLessThan 5) (And TopCardIsAction IsPlayerTurn)))))
     ("taxed draw" ("List.length (Player.get_hand (List.nth_exn t.players 0))" 2)
      (t.turn 1))
+    |}]
+;;
+
+let%expect_test "opponent-hand conditions parse and fire" =
+  (match
+     Rule_parser.parse_ruleset
+       {|rule "t": when any opponent has 1 card and any opponent has more than 10 cards do advance turn|}
+   with
+   | Ok [ rule ] -> print_s [%message (rule.Rule.condition : Rule.Condition.t)]
+   | Ok _ -> print_endline "unexpected rule count"
+   | Error e -> print_s [%message (e : Error.t)]);
+  (* a defensive draw that only exists while somebody is on their last card *)
+  let rules =
+    Rule_parser.parse_ruleset
+      {|use standard
+rule "panic draw" priority 60:
+  when player draws and any opponent has 1 card and your turn
+  do draw 2 cards, advance turn|}
+    |> Or_error.ok_exn
+  in
+  let top = { Card.color = Red; value = Five; id = 900 } in
+  let pile =
+    List.init 6 ~f:(fun i ->
+      { Card.color = Card.Color.Green; value = Card.Value.One; id = 901 + i })
+  in
+  let last_card = { Card.color = Card.Color.Blue; value = Card.Value.Two; id = 950 } in
+  let fire =
+    Game_state.for_testing
+      ~player_hands:[ "a", []; "b", [ last_card ] ]
+      ~top_card:top
+      ~draw_pile:pile
+      ~pending_draws:0
+      ~turn:0
+  in
+  let fire =
+    Rule_engine.apply_action rules fire ~player_id:0 ~action:Draw
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message
+      "opponent at 1 card: panic draw fires"
+        (List.length (Player.get_hand (List.nth_exn fire.players 0)) : int)
+        (fire.turn : int)];
+  (* same table, but b holds two cards - the rule stays out of the way *)
+  let calm =
+    Game_state.for_testing
+      ~player_hands:
+        [ "a", []
+        ; ( "b"
+          , [ last_card
+            ; { Card.color = Card.Color.Blue; value = Card.Value.Three; id = 951 }
+            ] )
+        ]
+      ~top_card:top
+      ~draw_pile:pile
+      ~pending_draws:0
+      ~turn:0
+  in
+  let calm =
+    Rule_engine.apply_action rules calm ~player_id:0 ~action:Draw
+    |> Or_error.ok_exn
+  in
+  print_s
+    [%message
+      "opponent safe: normal draw"
+        (List.length (Player.get_hand (List.nth_exn calm.players 0)) : int)
+        (calm.turn : int)];
+  [%expect {|
+    (rule.Rule.condition
+     (And (AnyOpponentHandEquals 1) (AnyOpponentHandGreaterThan 10)))
+    ("opponent at 1 card: panic draw fires"
+     ("List.length (Player.get_hand (List.nth_exn fire.players 0))" 2)
+     (fire.turn 1))
+    ("opponent safe: normal draw"
+     ("List.length (Player.get_hand (List.nth_exn calm.players 0))" 1)
+     (calm.turn 1))
+    |}]
+;;
+
+let%expect_test "remove rule drops a preset rule; positional; caseless" =
+  let count text =
+    match Rule_parser.parse_ruleset text with
+    | Ok rules -> printf "%d rules\n" (List.length rules)
+    | Error e -> print_s [%message (e : Error.t)]
+  in
+  count {|use standard|};
+  count {|use standard
+remove rule "play plus four"|};
+  (* caseless, like redefinition *)
+  count {|use standard
+remove rule "Play Plus Four"|};
+  (* remove then redefine: the later definition re-adds the name *)
+  count
+    {|use standard
+remove rule "play plus four"
+rule "play plus four" priority 110:
+  when card is plus four and your turn
+  do play the card, set color to declared, chosen player draws 4 cards, advance turn|};
+  (* nothing defined above the removal yet *)
+  count {|remove rule "play plus four"
+use standard|};
+  (* unknown name lists what exists *)
+  count {|use seven zero
+remove rule "play plus four"|};
+  (* the quoted name is required *)
+  count {|use standard
+remove rule play plus four|};
+  [%expect {|
+    11 rules
+    10 rules
+    10 rules
+    11 rules
+    (e
+     "line 1: no rule named \"play plus four\" to remove (defined so far: none - put it after the `use` line)")
+    (e
+     "line 2: no rule named \"play plus four\" to remove (defined so far: sevens swap hands, zeros rotate hands)")
+    (e
+     "line 2: remove rule needs the quoted rule name, like: remove rule \"play plus four\"")
     |}]
 ;;

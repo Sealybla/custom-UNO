@@ -217,6 +217,10 @@ let event_json (event : Action.Server_to_client.t) =
             sprintf "[%s,%s]" (jstr from) (jstr to_))))
   | Jumped_in { player_name } ->
     sprintf {|{"type":"jumped_in","player":%s}|} (jstr player_name)
+  | Player_dropped { player_name } ->
+    sprintf {|{"type":"player_dropped","player":%s}|} (jstr player_name)
+  | Player_rejoined { player_name } ->
+    sprintf {|{"type":"player_rejoined","player":%s}|} (jstr player_name)
 ;;
 
 (* names are only unique within a room, so sessions key on both *)

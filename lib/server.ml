@@ -125,26 +125,29 @@ let hand_counts_event (state : Game_state.t) =
     }
 ;;
 
+let hand_updated_event (room : Room.t) state player =
+  (* asked per player, because with jump-in enabled someone who is not
+     the current player may still have a legal move *)
+  let playable_ids, swap_target_ids =
+    Rule_engine.playable_and_swap_ids
+      room.ruleset
+      state
+      ~player_id:(Player.get_id player)
+  in
+  Action.Server_to_client.Hand_updated
+    { your_hand = hand_of_player state player; playable_ids; swap_target_ids }
+;;
+
 let send_hands (room : Room.t) state =
   List.iter state.Game_state.players ~f:(fun player ->
     match Hashtbl.find room.clients (Player.get_name player) with
     | None -> ()
     | Some client ->
-      let hand = hand_of_player state player in
-      (* asked per player, because with jump-in enabled someone who is not
-         the current player may still have a legal move *)
-      let playable_ids, swap_target_ids =
-        Rule_engine.playable_and_swap_ids
-          room.ruleset
-          state
-          ~player_id:(Player.get_id player)
-      in
       if not (Pipe.is_closed client.writer)
       then
         Pipe.write_without_pushback
           client.writer
-          (Action.Server_to_client.Hand_updated
-             { your_hand = hand; playable_ids; swap_target_ids }))
+          (hand_updated_event room state player))
 ;;
 
 (* current player + whether a pass is legal + any open stack's value; sent
@@ -159,12 +162,20 @@ let turn_changed_event (room : Room.t) (state : Game_state.t) =
     }
 ;;
 
+let game_started_event (room : Room.t) (state : Game_state.t) player =
+  Action.Server_to_client.Game_started
+    { your_hand = hand_of_player state player
+    ; top_card = state.Game_state.top_card
+    ; current_color = state.Game_state.current_color
+    ; player_names = List.map state.Game_state.players ~f:Player.get_name
+    ; current_player_name =
+        Option.value (name_of_player_id state state.Game_state.turn) ~default:""
+    ; pending_draws = state.Game_state.pending_draws
+    ; stacking_enabled = Rule_engine.Ruleset.uses_stacking room.ruleset
+    }
+;;
+
 let broadcast_game_started (room : Room.t) state =
-  let player_names = List.map state.Game_state.players ~f:Player.get_name in
-  let current_player_name =
-    Option.value (name_of_player_id state state.Game_state.turn) ~default:""
-  in
-  let stacking_enabled = Rule_engine.Ruleset.uses_stacking room.ruleset in
   List.iter state.Game_state.players ~f:(fun player ->
     match Hashtbl.find room.clients (Player.get_name player) with
     | None -> ()
@@ -173,15 +184,7 @@ let broadcast_game_started (room : Room.t) state =
       then
         Pipe.write_without_pushback
           client.writer
-          (Action.Server_to_client.Game_started
-             { your_hand = hand_of_player state player
-             ; top_card = state.Game_state.top_card
-             ; current_color = state.Game_state.current_color
-             ; player_names
-             ; current_player_name
-             ; pending_draws = state.Game_state.pending_draws
-             ; stacking_enabled
-             }));
+          (game_started_event room state player));
   (* Game_started carries the hand but not what is playable; send that too so
      the opening player sees highlights before anyone has acted *)
   send_hands room state;
@@ -249,17 +252,9 @@ let bot_action (state : Game_state.t) player_name =
               List.find hand ~f:(fun c ->
                 match c.Card.value with
                 | Wild4 -> true
-                | Plus ->
-                  Game_rules.is_valid_play
-                    ~top_card:state.Game_state.top_card
-                    ~played_card:c
-                    ~current_color:state.Game_state.current_color
+                | Plus -> Game_state.is_valid_play state ~played_card:c
                 | _ -> false)
-            else
-              Game_rules.choose_card
-                ~hand
-                ~top_card:state.Game_state.top_card
-                ~current_color:state.Game_state.current_color
+            else Game_state.first_playable_card state ~hand
           in
           (match candidate with
            | None -> fallback
@@ -816,26 +811,67 @@ let start
                    (Or_error.error_string
                       "No room with that code (it may have closed)")
                | Some room ->
-                 if Option.is_some room.game_state
+                 let name = String.strip name in
+                 if String.is_empty name
+                 then return (Or_error.error_string "Invalid name")
+                 else if Option.is_some state.Connection_state.player_name
                  then
                    return
                      (Or_error.error_string
-                        "Cannot join: a game is in progress in this room")
-                 else if String.is_empty (String.strip name)
-                 then return (Or_error.error_string "Invalid name")
+                        "Already registered on this connection")
                  else (
-                   match state.Connection_state.player_name with
-                   | Some _ ->
-                     return
-                       (Or_error.error_string
-                          "Already registered on this connection")
+                   match room.game_state with
+                   | Some game ->
+                     (* mid-game, the only way in is back into your own
+                        abandoned seat: match a player name whose client is
+                        gone (or playing as a bot) and take it over *)
+                     (match
+                        List.find game.Game_state.players ~f:(fun p ->
+                          String.Caseless.equal (Player.get_name p) name)
+                      with
+                      | None ->
+                        return
+                          (Or_error.error_string
+                             "Cannot join: a game is in progress in this \
+                              room")
+                      | Some player ->
+                        let canonical = Player.get_name player in
+                        let abandoned =
+                          match Hashtbl.find room.clients canonical with
+                          | None -> true
+                          | Some c -> c.is_bot || Pipe.is_closed c.writer
+                        in
+                        if not abandoned
+                        then
+                          return
+                            (Or_error.errorf
+                               "%s is still connected in this room"
+                               canonical)
+                        else (
+                          state.player_name <- Some canonical;
+                          state.room <- Some room;
+                          Core.print_s
+                            [%message
+                              "Reconnection registered"
+                                (room.code : string)
+                                (canonical : string)];
+                          return (Ok ())))
                    | None ->
-                     if Hashtbl.mem room.clients name
+                     let seat_free =
+                       match Hashtbl.find room.clients name with
+                       | None -> true
+                       (* a lobby seat whose pipe died is free to retake *)
+                       | Some c -> Pipe.is_closed c.writer
+                     in
+                     if not seat_free
                      then
                        return
                          (Or_error.error_string
                             "Username already taken in this room")
                      else if Hashtbl.length room.clients >= max_participants
+                             (* retaking a dead seat adds nobody, so it is not
+                                blocked by a full room *)
+                             && not (Hashtbl.mem room.clients name)
                      then
                        (* bots occupy seats too, so a room full of them
                           turns people away just like a room of players *)
@@ -860,21 +896,50 @@ let start
                match in_room state with
                | Error e -> return (Error e)
                | Ok (name, room) ->
-                 if Option.is_some room.game_state
-                 then
-                   return
-                     (Error
-                        (Error.of_string
-                           "Access denied: Game is already in progress!"))
-                 else (
-                   let reader, writer = Pipe.create () in
-                   let connection =
-                     { Client_connection.name; writer; is_bot = false }
-                   in
-                   Hashtbl.set room.clients ~key:name ~data:connection;
-                   (* everyone in the room learns about the newcomer *)
-                   broadcast room (lobby_event room);
-                   return (Ok reader)))
+                 let reader, writer = Pipe.create () in
+                 let connection =
+                   { Client_connection.name; writer; is_bot = false }
+                 in
+                 (match room.game_state with
+                  | None ->
+                    Hashtbl.set room.clients ~key:name ~data:connection;
+                    (* everyone in the room learns about the newcomer *)
+                    broadcast room (lobby_event room);
+                    return (Ok reader)
+                  | Some game ->
+                    (* a reconnection: the join RPC only lets the name of an
+                       abandoned seat get this far. Take the seat back from
+                       the bot and replay enough state to redraw the table *)
+                    (match
+                       List.find game.Game_state.players ~f:(fun p ->
+                         String.equal (Player.get_name p) name)
+                     with
+                     | None ->
+                       return
+                         (Error
+                            (Error.of_string
+                               "Access denied: Game is already in progress!"))
+                     | Some player ->
+                       Hashtbl.set room.clients ~key:name ~data:connection;
+                       Core.print_s
+                         [%message
+                           "Player reconnected"
+                             (room.code : string)
+                             (name : string)];
+                       broadcast
+                         room
+                         (Action.Server_to_client.Player_rejoined
+                            { player_name = name });
+                       List.iter
+                         [ game_started_event room game player
+                         ; Action.Server_to_client.Direction_changed
+                             { direction = game.Game_state.direction }
+                         ; hand_updated_event room game player
+                         ; hand_counts_event game
+                         ; turn_changed_event room game
+                         ]
+                         ~f:(Pipe.write_without_pushback writer);
+                       return (Ok reader))))
         ; Rpc.Rpc.implement Rpc_protocol.get_state_rpc (fun state () ->
             match in_room state with
             | Error e -> return (Error e)
@@ -1073,6 +1138,10 @@ let start
                | None -> ()
                | Some client ->
                  client.is_bot <- true;
+                 broadcast
+                   room
+                   (Action.Server_to_client.Player_dropped
+                      { player_name = name });
                  Core.print_s
                    [%message
                      "Player dropped mid-game. Bot activated."

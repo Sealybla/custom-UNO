@@ -134,6 +134,56 @@ let html =
   #table-settings input[type=number] { width:4.6rem; border-radius:8px;
     padding:.3rem .45rem; font-size:.88rem; }
   .cheat-note { opacity:.7; font-size:.78rem; margin:.1rem 0 .3rem; }
+  #recipes-head { margin:.7rem 0 0; font-size:.78rem; text-transform:uppercase;
+    letter-spacing:.08em; opacity:.7; }
+  #recipes { display:grid; grid-template-columns:repeat(auto-fill,minmax(11.5rem,1fr));
+    gap:.55rem; margin:.45rem 0 .2rem; }
+  .recipe { border:1px solid rgba(255,255,255,.22); border-radius:12px;
+    background:rgba(255,255,255,.06); padding:.55rem .65rem; cursor:pointer;
+    display:flex; gap:.55rem; align-items:flex-start;
+    transition:border-color .15s, background .15s; }
+  .recipe:hover { border-color:rgba(255,206,0,.6); }
+  .recipe.on { border-color:var(--c-yellow); background:rgba(255,206,0,.13); }
+  .recipe .r-mini { flex:0 0 1.5rem; height:2.1rem; border-radius:5px; position:relative;
+    box-shadow:0 2px 4px rgba(0,0,0,.4); }
+  .recipe .r-mini::after { content:attr(data-g); position:absolute; inset:0;
+    display:grid; place-items:center; color:#fff; font-weight:800; font-size:.72rem;
+    text-shadow:0 1px 2px rgba(0,0,0,.5); }
+  .recipe .r-t { font-weight:650; font-size:.82rem; line-height:1.25; display:block; }
+  .recipe.on .r-t::after { content:" ✓"; color:var(--c-yellow); }
+  .recipe .r-d { opacity:.72; font-size:.74rem; line-height:1.3; margin-top:.15rem; display:block; }
+  .recipe input { width:3rem; margin:0 .15rem; border-radius:6px; border:none;
+    padding:.1rem .3rem; font-size:.74rem; }
+  .r-red { background:var(--c-red); } .r-blue { background:var(--c-blue); }
+  .r-green { background:var(--c-green); } .r-yellow { background:#d4a900; }
+  #custom-rules > summary { cursor:pointer; font-size:.95rem; margin:.9rem 0 .3rem;
+    user-select:none; opacity:.9; }
+  /* smart editor: a colored copy of the text sits behind a transparent
+     textarea, so both must share every metric that affects layout */
+  #ed-wrap { position:relative; }
+  #ed-wrap textarea, #hl, #ed-mirror { font-family:ui-monospace,monospace;
+    font-size:.85rem; line-height:1.5; padding:.5rem .6rem; margin:0;
+    box-sizing:border-box; width:100%; white-space:pre-wrap; overflow-wrap:break-word; }
+  #hl, #ed-mirror { position:absolute; inset:0; overflow:hidden;
+    border:1px solid transparent; pointer-events:none; }
+  #hl { background:#140c0c; color:#ffe9c9; }
+  #ed-mirror { visibility:hidden; }
+  #ed-wrap textarea { position:relative; display:block; background:transparent;
+    color:transparent; caret-color:#ffe9c9; resize:vertical; }
+  .e-kw { color:#ffce00; font-weight:600; } .e-cond { color:#7cc7ff; }
+  .e-eff { color:#8fe3a8; } .e-str { color:#ffb0b0; } .e-num { color:#ffd97a; }
+  .e-cm { opacity:.55; }
+  #ac-pop { position:absolute; z-index:5; background:#2c1b18;
+    border:1px solid rgba(255,206,0,.5); border-radius:8px; overflow:hidden;
+    box-shadow:0 6px 18px rgba(0,0,0,.5); font-size:.78rem; max-width:26rem; }
+  #ac-pop div { padding:.3rem .7rem; cursor:pointer; white-space:nowrap;
+    overflow:hidden; text-overflow:ellipsis; }
+  #ac-pop div.sel { background:rgba(255,206,0,.2); }
+  #ac-pop b { font-family:ui-monospace,monospace; font-weight:600; }
+  #ac-pop small { opacity:.65; margin-left:.6rem; }
+  #phrase-help { min-height:1.1rem; font-size:.76rem; opacity:.85;
+    margin:.25rem 0 0; font-family:ui-monospace,monospace; }
+  #phrase-help b { color:var(--c-yellow); }
   #check-status button { margin-left:.5rem; padding:.05rem .5rem; font-size:.72rem; }
   #override-list { display:flex; flex-wrap:wrap; gap:.35rem; margin-top:.5rem; font-size:.83rem; }
   #override-list code { cursor:pointer; padding:.14rem .45rem; border-radius:6px;
@@ -500,14 +550,24 @@ let html =
         </select>
         <input id="ends-count" type="number" min="1" max="9" value="2" hidden>
       </div>
+      <div id="recipes-head">House rules — click to add</div>
+      <div id="recipes"></div>
       <div id="modes-row" class="preset-row" hidden>
         <span style="opacity:.8">My modes:</span>
         <span id="mode-chips" style="display:contents"></span>
         <input id="mode-name" placeholder="save as…" maxlength="40" style="width:7.5rem">
         <button id="mode-save" class="small">Save current</button>
       </div>
+
+      <details id="custom-rules">
+        <summary>✍️ Custom rules — write your own (builder, editor, all phrases)</summary>
       <div id="check-status"></div>
-      <textarea id="rules-text" rows="12" spellcheck="false"></textarea>
+      <div id="ed-wrap">
+        <pre id="hl" aria-hidden="true"></pre>
+        <textarea id="rules-text" rows="12" spellcheck="false"></textarea>
+        <div id="ac-pop" hidden></div>
+      </div>
+      <div id="phrase-help"></div>
 
       <details id="builder">
         <summary>🛠 Compose a new rule without typing</summary>
@@ -577,6 +637,7 @@ let html =
             <code title="no passing: draw one card at a time until you can play">use draw until playable</code>
             <code title="both variants combined">use stacking with draw until playable</code>
             <code title="ADD-ON: use it after a base preset — 7s swap hands with the next player, 0s rotate all hands">use seven zero</code>
+            <code title="drop a rule pulled in by use — the cards it powered become unplayable. Put it AFTER the use line; a later rule with the same name re-adds it">remove rule "play plus four"</code>
             <h4 style="margin-top:.6rem">Settings</h4>
             <div class="cheat-note">not rules — no when/do, just a line of its own:<br>
             <b>deal</b> &lt;1–30&gt; <b>cards</b> · <b>turn timer</b> &lt;5–300&gt; <b>seconds</b> · <b>turn timer off</b> · <b>play until</b> …</div>
@@ -601,6 +662,8 @@ let html =
             <code title="the played card is any 0-9, whatever its color">card is number</code>
             <code title="the acting player holds exactly this many cards (counted before the card leaves the hand)">hand size = 1</code>
             <code title="the acting player holds more than this many cards">hand size > 6</code>
+            <code title="some player OTHER than you holds exactly that many — leader-watch rules">any opponent has 1 card</code>
+            <code title="some player other than you holds more than that many">any opponent has more than 10 cards</code>
             <code title="the pile SHOWS this number (whatever you're doing) — different from 'card is 7', which tests the card you're playing">top card is 7</code>
             <code title="the pile shows a skip, reverse, +2, +4 or wild">top card is action</code>
             <code title="play is moving clockwise — write 'direction is counter' for the other way">direction is clockwise</code>
@@ -649,6 +712,7 @@ let html =
           </div>
         </div>
         <p style="opacity:.75; font-size:.82rem">Join conditions with <b>and</b> / <b>or</b> / <b>not</b>, parentheses to group. When several rules match, the highest priority wins; on a tie, the rule defined first wins (so built-ins pulled in by <b>use</b> beat same-priority rules below them — replace them by name or use a higher priority).</p>
+      </details>
       </details>
 
       <p style="margin:.7rem 0 0"><button id="rules-btn">Submit rules</button></p>
@@ -798,6 +862,8 @@ const WHEN_OPTIONS = [
   ['pending draws > N', 'penalty draws are pending'],
   ['hand size = N', 'the acting player holds exactly N cards'],
   ['hand size > N', 'the acting player holds more than N cards'],
+  ['any opponent has N cards', 'some other player holds exactly N'],
+  ['any opponent has more than N cards', 'some other player holds more than N'],
   ['top card is N', 'the pile shows a specific number (0-9)'],
   ['top card is action', 'the pile shows a skip/reverse/+2/+4/wild'],
   ['direction is clockwise', 'play is moving clockwise'],
@@ -1106,6 +1172,16 @@ function apply(ev, fx){
     case 'jumped_in':
       logLine((ev.player === name ? 'you' : ev.player) + ' jumped in!');
       if (fx) fx.push({kind:'jumpin', player:ev.player});
+      break;
+    case 'player_dropped':
+      if (ev.player !== name){
+        logLine(ev.player + ' disconnected — the table plays for them');
+        toast(ev.player + ' disconnected — the table plays for them');
+      }
+      break;
+    case 'player_rejoined':
+      logLine((ev.player === name ? 'you' : ev.player) + ' reconnected');
+      if (ev.player !== name) toast(ev.player + ' is back!');
       break;
     case 'game_over':
       state.inGame = false;
@@ -1650,6 +1726,8 @@ async function leaveParty(){
   if (polling){ clearInterval(polling); polling = null; }
   sessionStorage.removeItem('uno-name');
   sessionStorage.removeItem('uno-code');
+  localStorage.removeItem('uno-last-name');
+  localStorage.removeItem('uno-last-code');
   name = null; code = null;
   state = freshState();
   pendingWild = null; lastPlayedId = null; handOrder = [];
@@ -1687,6 +1765,8 @@ async function applyRules(){
 
 // nag whenever the box has drifted from what was actually sent
 function markRulesDirty(){
+  renderHl();   // every programmatic editor write passes through here or
+                // checkRules; with transparent text the overlay IS the display
   const dirtyRules =
     appliedText !== null && $('rules-text').value.trim() !== appliedText.trim();
   $('rules-btn').classList.toggle('needs-apply', dirtyRules);
@@ -1702,6 +1782,8 @@ let checkT = null;
 async function checkRules(){
   const text = $('rules-text').value;
   const st = $('check-status');
+  renderHl();
+  syncRecipes();
   if (!text.trim()){ st.textContent = ''; return; }
   try {
     const r = await api('/api/check-rules', {method:'POST', body:text});
@@ -1867,11 +1949,416 @@ function applySettingsToText(){
 $('set-deal').onchange = applySettingsToText;
 $('set-timer').onchange = applySettingsToText;
 
+/* ---------- house-rule recipe cards ----------
+   A recipe is a named rule (or a settings pair) the card inserts into the
+   text; the text stays the single source of truth. Card state is derived
+   from the text by name-match, the same machinery preset overrides use,
+   so hand-editing the rule flips the card and vice versa. */
+const RECIPES = [
+  { id:'noaf', cls:'r-red', g:'⊘', title:'No action finish',
+    desc:'can’t go out on a skip, reverse, +2, +4 or wild',
+    rule:'no action finish',
+    text: () => 'rule "no action finish" priority 200:\n' +
+      '  when card is action and hand size = 1\n' +
+      '  do reject "no going out on an action card"' },
+  { id:'t4', cls:'r-blue', g:'+4', title:'Targeted +4',
+    desc:'a wild +4 hits a player you pick, not the next one',
+    rule:'play plus four', marker:'chosen player draws', conflicts:['no4'],
+    text: () => 'rule "play plus four" priority 110:\n' +
+      '  when card is plus four and your turn\n' +
+      '  do play the card, set color to declared, chosen player draws 4 cards, advance turn' },
+  { id:'speed', cls:'r-yellow', g:'⚡', title:'Speed UNO',
+    desc:'deal 5 cards, 10-second turns', settings:{deal:5, timer:10} },
+  { id:'sevens', cls:'r-green', g:'7', title:'Cruel sevens',
+    desc:'a 7 makes everyone else draw', param:{def:2, min:1, max:10}, suffix:'cards',
+    rule:'cruel sevens',
+    paramRe:/rule "cruel sevens"[\s\S]*?everyone else draws (\d+)/,
+    text: n => 'rule "cruel sevens" priority 60:\n' +
+      '  when card is 7 and (card matches color or card matches value) and your turn\n' +
+      '  do play the card, set color from card, everyone else draws ' + n + ' cards, advance turn' },
+  { id:'panic', cls:'r-red', g:'∅', title:'Endgame panic',
+    desc:'draw pile under 10: every draw comes doubled',
+    rule:'endgame panic',
+    text: () => 'rule "endgame panic" priority 5:\n' +
+      '  when player draws and your turn and draw pile < 10\n' +
+      '  do draw 2 cards' },
+  { id:'hoard', cls:'r-blue', g:'🂠', title:'No hoarding',
+    desc:'no drawing while holding more than', param:{def:15, min:5, max:29}, suffix:'cards',
+    rule:'no hoarding',
+    paramRe:/rule "no hoarding"[\s\S]*?hand size > (\d+)/,
+    text: n => 'rule "no hoarding" priority 200:\n' +
+      '  when player draws and hand size > ' + n + '\n' +
+      '  do reject "you have enough cards already"' },
+  { id:'no4', cls:'r-yellow', g:'✕4', title:'No +4s',
+    desc:'wild +4s become dead cards — unplayable',
+    line:'remove rule "play plus four"', conflicts:['t4'] },
+  { id:'tax', cls:'r-green', g:'+2', title:'Leader tax',
+    desc:'while someone is on their last card, +2s double and hit a player you pick',
+    rule:'leader tax',
+    text: () => 'rule "leader tax" priority 105:\n' +
+      '  when card is plus two and any opponent has 1 card and your turn\n' +
+      '  do play the card, set color from card, chosen player draws 4 cards, advance turn' },
+];
+
+function lineRe(r){
+  const esc = r.line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp('^\\s*' + esc + '\\s*$', 'm');
+}
+
+function recipeOn(r, t){
+  if (r.line) return lineRe(r).test(t);
+  if (r.settings)
+    return new RegExp('^\\s*deal ' + r.settings.deal + ' cards\\s*$', 'm').test(t) &&
+      new RegExp('^\\s*turn timer ' + r.settings.timer + ' seconds\\s*$', 'm').test(t);
+  if (!new RegExp('^\\s*rule "' + r.rule + '"', 'm').test(t)) return false;
+  return r.marker ? t.includes(r.marker) : true;
+}
+
+// drop a named rule: its header line, its indented body, one trailing blank
+function removeRuleBlock(text, ruleName){
+  const out = []; let skip = false;
+  for (const l of text.split('\n')){
+    if (new RegExp('^\\s*rule "' + ruleName + '"').test(l)){ skip = true; continue; }
+    if (skip){
+      if (/^\s+\S/.test(l)) continue;
+      skip = false;
+      if (l.trim() === '') continue;
+    }
+    out.push(l);
+  }
+  return out.join('\n');
+}
+
+function appendRecipe(text, r){
+  const n = r.param ? (parseInt($('rp-' + r.id).value, 10) || r.param.def) : null;
+  return text.replace(/\s*$/, '') + '\n\n' + r.text(n) + '\n';
+}
+
+function stripRecipe(t, r){
+  if (r.line) return t.split('\n').filter(l => !lineRe(r).test(l)).join('\n');
+  if (r.rule) return removeRuleBlock(t, r.rule);
+  return t;
+}
+
+// a directive line must sit AFTER the use line it subtracts from
+function insertLine(t, line){
+  const lines = t.split('\n');
+  let at = 0;
+  lines.forEach((l, i) => { if (/^\s*use\s+/i.test(l)) at = i + 1; });
+  lines.splice(at, 0, line);
+  return lines.join('\n');
+}
+
+function toggleRecipe(r){
+  const ta = $('rules-text');
+  if (ta.value.trim() === '') ta.value = presetText();
+  if (r.settings){
+    // ride the Table row: same directive lines, same surgical editing
+    const on = recipeOn(r, ta.value);
+    $('set-deal').value = on ? DEFAULT_DEAL : r.settings.deal;
+    $('set-timer').value = on ? DEFAULT_TIMER : r.settings.timer;
+    applySettingsToText();
+    return;
+  }
+  const wasOn = recipeOn(r, ta.value);
+  let t = stripRecipe(ta.value, r);
+  if (!wasOn){
+    // two recipes fighting over the same rule can't both hold
+    for (const cid of (r.conflicts || [])){
+      const c = RECIPES.find(x => x.id === cid);
+      if (c && recipeOn(c, t)){
+        t = stripRecipe(t, c);
+        toast(r.title + ' replaces ' + c.title);
+      }
+    }
+    t = r.line ? insertLine(t, r.line) : appendRecipe(t, r);
+  }
+  ta.value = t;
+  lastLoaded = t;
+  checkRules();
+  applyRules();
+}
+
+function syncRecipes(){
+  const t = $('rules-text').value;
+  for (const r of RECIPES){
+    $('rc-' + r.id).classList.toggle('on', recipeOn(r, t));
+    if (r.paramRe && !$('rp-' + r.id).matches(':focus')){
+      const m = t.match(r.paramRe);
+      if (m) $('rp-' + r.id).value = m[1];
+    }
+  }
+}
+
+for (const r of RECIPES){
+  const d = document.createElement('div');
+  d.className = 'recipe'; d.id = 'rc-' + r.id;
+  d.setAttribute('role', 'button'); d.tabIndex = 0;
+  d.innerHTML = '<span class="r-mini ' + r.cls + '" data-g="' + r.g + '"></span>' +
+    '<span><span class="r-t">' + r.title + '</span><span class="r-d">' + r.desc +
+    (r.param ? ' <input id="rp-' + r.id + '" type="number" min="' + r.param.min +
+      '" max="' + r.param.max + '" value="' + r.param.def + '"> ' + r.suffix : '') +
+    '</span></span>';
+  d.onclick = () => toggleRecipe(r);
+  d.onkeydown = e => {
+    if (e.key === 'Enter' || e.key === ' '){ e.preventDefault(); toggleRecipe(r); }
+  };
+  $('recipes').appendChild(d);
+  if (r.param){
+    const inp = $('rp-' + r.id);
+    inp.onclick = e => e.stopPropagation();
+    inp.onkeydown = e => e.stopPropagation();
+    inp.onchange = e => {
+      e.stopPropagation();
+      if (!$('rc-' + r.id).classList.contains('on')) return;
+      const ta = $('rules-text');
+      const t = appendRecipe(removeRuleBlock(ta.value, r.rule), r);
+      ta.value = t; lastLoaded = t;
+      checkRules(); applyRules();
+    };
+  }
+}
+
 document.querySelectorAll('.cheat code').forEach(c => c.onclick = () => {
   const ta = $('rules-text');
   ta.setRangeText(c.textContent, ta.selectionStart, ta.selectionEnd, 'end');
   ta.focus();
+  renderHl();
   scheduleCheck();
+});
+
+/* ---------- smart editor: coloring, autocomplete, caret help ----------
+   The textarea's own text is transparent; a synced <pre> behind it carries
+   the colors. Every programmatic value-set flows through checkRules or
+   markRulesDirty, both of which re-render, so the display never lies. */
+const ED = $('rules-text');
+
+function escH(s){
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function renderHl(){
+  let mode = 'top';
+  const html = ED.value.split('\n').map(line => {
+    // a # opens a comment only outside quotes (an even count precedes it)
+    const cmM = line.match(/#(?=(?:[^"]*"[^"]*")*[^"]*$)/);
+    let code = line, cm = '';
+    if (cmM){ code = line.slice(0, cmM.index); cm = line.slice(cmM.index); }
+    const first = (code.match(/^\s*([a-z]+)/i) || [])[1];
+    if (first && /^(rule|use|remove|deal|turn)$/i.test(first)) mode = 'top';
+    let out = '';
+    const re = /("[^"]*"?)|(\d+)|([A-Za-z][A-Za-z']*)|(\s+)|(.)/g;
+    let m;
+    while ((m = re.exec(code))){
+      if (m[1]) out += '<span class="e-str">' + escH(m[1]) + '</span>';
+      else if (m[2]) out += '<span class="e-num">' + m[2] + '</span>';
+      else if (m[3]){
+        const w = m[3].toLowerCase();
+        if (w === 'when'){ mode = 'cond'; out += '<span class="e-kw">' + m[3] + '</span>'; }
+        else if (w === 'do'){ mode = 'eff'; out += '<span class="e-kw">' + m[3] + '</span>'; }
+        else if (w === 'and' || w === 'or' || w === 'not')
+          out += '<span class="e-kw">' + m[3] + '</span>';
+        else if (mode === 'top' &&
+                 /^(rule|priority|use|remove|deal|turn|timer|seconds?|cards?|off)$/.test(w))
+          out += '<span class="e-kw">' + m[3] + '</span>';
+        else if (mode === 'cond') out += '<span class="e-cond">' + escH(m[3]) + '</span>';
+        else if (mode === 'eff') out += '<span class="e-eff">' + escH(m[3]) + '</span>';
+        else out += escH(m[3]);
+      }
+      else if (m[4]) out += m[4];
+      else out += escH(m[5]);
+    }
+    if (cm) out += '<span class="e-cm">' + escH(cm) + '</span>';
+    return out;
+  }).join('\n');
+  $('hl').innerHTML = html + '\n';
+}
+
+/* the cheat sheet is the single source of phrases: harvest its entries so
+   autocomplete and caret help stay in sync with the DSL automatically */
+function phrasePat(t){
+  let e = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  e = e.replace(/"[^"]*"/, '"[^"]*"');
+  e = e.replace(/\b\d+\b/g, '\\d+');
+  e = e.replace(/\b(red|yellow|green|blue)\b/, '(?:red|yellow|green|blue)');
+  return new RegExp(e, 'gi');
+}
+const ACD = { cond:[], eff:[], top:[] };
+const PHRASES = [];
+{
+  let group = '';
+  document.querySelectorAll('.cheat h4, .cheat code').forEach(el => {
+    if (el.tagName === 'H4'){ group = el.textContent; return; }
+    const item = { t: el.textContent, d: el.title || '' };
+    PHRASES.push({ ...item, re: phrasePat(item.t) });
+    if (/Condition/i.test(group)) ACD.cond.push(item);
+    else if (/Effect/i.test(group)) ACD.eff.push(item);
+    else ACD.top.push(item);
+  });
+  ACD.top.unshift({ t: 'rule "my rule" priority 60:',
+    d: 'start a new rule - follow with a when line and a do line' });
+}
+
+let acItems = [], acSel = 0, acStart = 0;
+
+function acContext(){
+  const pos = ED.selectionStart;
+  if (pos !== ED.selectionEnd) return null;
+  const before = ED.value.slice(0, pos);
+  const ls = before.lastIndexOf('\n') + 1;
+  const line = before.slice(ls);
+  if (/^\s*#/.test(line)) return null;
+  let ctx = null, m;
+  if (/\bdo\b/i.test(line) && (m = line.match(/^([\s\S]*(?:\bdo\b|,))([^,]*)$/i)))
+    ctx = { kind:'eff', start: ls + m[1].length, frag: m[2] };
+  else if ((m = line.match(/^([\s\S]*(?:\bwhen\b|\band\b|\bor\b|\bnot\b|\())([^()]*)$/i)))
+    ctx = { kind:'cond', start: ls + m[1].length, frag: m[2] };
+  else if (/^\s*rule\b/i.test(line)) return null;
+  else {
+    m = line.match(/^(\s*)([\s\S]*)$/);
+    ctx = { kind:'top', start: ls + m[1].length, frag: m[2] };
+  }
+  const lead = ctx.frag.match(/^\s*/)[0].length;
+  ctx.start += lead;
+  ctx.frag = ctx.frag.slice(lead);
+  return ctx;
+}
+
+function acFilter(list, frag){
+  const f = frag.toLowerCase();
+  const pre = [], sub = [];
+  for (const it of list){
+    const t = it.t.toLowerCase();
+    if (t.startsWith(f)) pre.push(it);
+    else if (f.length >= 2 && t.includes(f)) sub.push(it);
+  }
+  return pre.concat(sub).slice(0, 8);
+}
+
+let edLineH = 0, edMirror = null;
+function caretXY(){
+  if (!edMirror){
+    edMirror = document.createElement('div');
+    edMirror.id = 'ed-mirror';
+    edMirror.setAttribute('aria-hidden', 'true');
+    $('ed-wrap').appendChild(edMirror);
+  }
+  edMirror.textContent = ED.value.slice(0, ED.selectionStart);
+  const mark = document.createElement('span');
+  mark.textContent = '​';
+  edMirror.appendChild(mark);
+  return { x: mark.offsetLeft, y: mark.offsetTop - ED.scrollTop };
+}
+
+function paintAc(){
+  const p = $('ac-pop');
+  p.innerHTML = '';
+  acItems.forEach((it, i) => {
+    const d = document.createElement('div');
+    if (i === acSel) d.className = 'sel';
+    d.innerHTML = '<b>' + escH(it.t) + '</b>' +
+      (it.d ? '<small>' + escH(it.d) + '</small>' : '');
+    d.onmousedown = e => e.preventDefault();  // keep focus in the editor
+    d.onclick = () => acAccept(it);
+    d.onmouseenter = () => { acSel = i; paintAc(); setHelp(it); };
+    p.appendChild(d);
+  });
+}
+
+function placeAc(){
+  const p = $('ac-pop');
+  if (!edLineH) edLineH = parseFloat(getComputedStyle(ED).lineHeight) || 18;
+  const { x, y } = caretXY();
+  const wrap = $('ed-wrap');
+  p.style.left = Math.max(0, Math.min(x, wrap.clientWidth - p.offsetWidth - 4)) + 'px';
+  p.style.top = (y + edLineH + 2) + 'px';
+}
+
+function setHelp(it){
+  $('phrase-help').innerHTML =
+    it ? '<b>' + escH(it.t) + '</b> — ' + escH(it.d) : '';
+}
+
+function updateHelp(){
+  if (!$('ac-pop').hidden && acItems[acSel]){ setHelp(acItems[acSel]); return; }
+  const pos = ED.selectionStart;
+  const ls = ED.value.lastIndexOf('\n', pos - 1) + 1;
+  let le = ED.value.indexOf('\n', pos);
+  if (le < 0) le = ED.value.length;
+  const line = ED.value.slice(ls, le), col = pos - ls;
+  let best = null;
+  for (const p of PHRASES){
+    p.re.lastIndex = 0;
+    let m;
+    while ((m = p.re.exec(line))){
+      if (m.index > col) break;
+      if (col <= m.index + m[0].length){
+        if (!best || m[0].length > best.t.length) best = { t: m[0], d: p.d };
+        break;
+      }
+    }
+  }
+  setHelp(best);
+}
+
+function closeAc(){
+  $('ac-pop').hidden = true;
+  acItems = [];
+  updateHelp();
+}
+
+function acAccept(it){
+  ED.setRangeText(it.t, acStart, ED.selectionStart, 'end');
+  renderHl();
+  markRulesDirty();
+  scheduleCheck();
+  closeAc();
+  ED.focus();
+}
+
+function updateAc(){
+  const ctx = acContext();
+  if (!ctx || !ctx.frag){ closeAc(); return; }
+  const list = ACD[ctx.kind];
+  acItems = acFilter(list, ctx.frag);
+  if (!acItems.length ||
+      (acItems.length === 1 && acItems[0].t.toLowerCase() === ctx.frag.toLowerCase())){
+    closeAc();
+    return;
+  }
+  acStart = ctx.start;
+  acSel = 0;
+  paintAc();
+  $('ac-pop').hidden = false;
+  placeAc();
+  updateHelp();
+}
+
+ED.addEventListener('input', () => { renderHl(); updateAc(); });
+ED.addEventListener('scroll', () => {
+  $('hl').scrollTop = ED.scrollTop;
+  $('hl').scrollLeft = ED.scrollLeft;
+  if (!$('ac-pop').hidden) closeAc();
+});
+ED.addEventListener('click', () => { closeAc(); updateHelp(); });
+ED.addEventListener('keyup', e => {
+  if ($('ac-pop').hidden &&
+      ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key))
+    updateHelp();
+});
+ED.addEventListener('blur', () => setTimeout(() => { $('ac-pop').hidden = true; }, 150));
+ED.addEventListener('keydown', e => {
+  if ($('ac-pop').hidden) return;
+  if (e.key === 'ArrowDown'){
+    e.preventDefault(); acSel = (acSel + 1) % acItems.length; paintAc(); updateHelp();
+  } else if (e.key === 'ArrowUp'){
+    e.preventDefault();
+    acSel = (acSel + acItems.length - 1) % acItems.length; paintAc(); updateHelp();
+  } else if (e.key === 'Enter' || e.key === 'Tab'){
+    e.preventDefault(); acAccept(acItems[acSel]);
+  } else if (e.key === 'Escape'){
+    e.preventDefault(); closeAc();
+  }
 });
 
 /* the current preset's rules, offered for copy-and-customize: clicking one
@@ -2204,10 +2691,17 @@ async function joinAs(v){
       name = null;
       sessionStorage.removeItem('uno-name');
       sessionStorage.removeItem('uno-code');
+      localStorage.removeItem('uno-last-name');
+      localStorage.removeItem('uno-last-code');
       return;
     }
     sessionStorage.setItem('uno-name', v);
     sessionStorage.setItem('uno-code', code);
+    // localStorage survives a closed tab or crashed browser, so a fresh
+    // tab can walk straight back into a live game (the server hands the
+    // seat back from the stand-in bot)
+    localStorage.setItem('uno-last-name', v);
+    localStorage.setItem('uno-last-code', code);
     $('room-code').textContent = code;
     $('game-code').textContent = 'ROOM ' + code;
     setView('lobby');
@@ -2283,11 +2777,12 @@ $('rules-text').value = presetText();
 lastLoaded = $('rules-text').value;
 checkRules();
 
-// invite links carry ?code=XXXX; a saved session (per-tab) wins unless the
-// link points at a different room
+// invite links carry ?code=XXXX; a saved session (per-tab refresh) wins,
+// then the last game this browser was in (reconnect after a closed tab or
+// crash), unless the link points at a different room
 const urlCode = (new URLSearchParams(location.search).get('code') || '').toUpperCase();
-const savedName = sessionStorage.getItem('uno-name');
-const savedCode = sessionStorage.getItem('uno-code');
+const savedName = sessionStorage.getItem('uno-name') || localStorage.getItem('uno-last-name');
+const savedCode = sessionStorage.getItem('uno-code') || localStorage.getItem('uno-last-code');
 if (savedName && savedCode && (!urlCode || urlCode === savedCode)){
   $('name-input').value = savedName;
   code = savedCode;
