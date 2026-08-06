@@ -2811,19 +2811,27 @@ $('rules-text').value = presetText();
 lastLoaded = $('rules-text').value;
 checkRules();
 
-// invite links carry ?code=XXXX; a saved session (per-tab refresh) wins,
-// then the last game this browser was in (reconnect after a closed tab or
-// crash), unless the link points at a different room
+// invite links carry ?code=XXXX. Only this exact tab's session (a refresh)
+// may auto-resume over one; the cross-tab localStorage fallback must not,
+// or opening a link in the same browser silently rejoins as whoever last
+// played here instead of offering a fresh seat. localStorage reconnect
+// (closed tab, crash) still fires on a plain visit with no code.
 const urlCode = (new URLSearchParams(location.search).get('code') || '').toUpperCase();
-const savedName = sessionStorage.getItem('uno-name') || localStorage.getItem('uno-last-name');
-const savedCode = sessionStorage.getItem('uno-code') || localStorage.getItem('uno-last-code');
-if (savedName && savedCode && (!urlCode || urlCode === savedCode)){
-  $('name-input').value = savedName;
-  code = savedCode;
-  joinAs(savedName);
+const tabName = sessionStorage.getItem('uno-name');
+const tabCode = sessionStorage.getItem('uno-code');
+const lastName = localStorage.getItem('uno-last-name');
+const lastCode = localStorage.getItem('uno-last-code');
+if (tabName && tabCode && (!urlCode || urlCode === tabCode)){
+  $('name-input').value = tabName;
+  code = tabCode;
+  joinAs(tabName);
 } else if (urlCode){
   $('code-input').value = urlCode;
   $('name-input').focus();
+} else if (lastName && lastCode){
+  $('name-input').value = lastName;
+  code = lastCode;
+  joinAs(lastName);
 }
 </script>
 </body>
