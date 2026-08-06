@@ -113,7 +113,7 @@ structure rather than flagged.
 | `active color is red` (etc.) | `ActiveColorIs Red` |
 | `pending draws > N` | `PendingDrawsGreaterThan N` |
 | `hand size > N` / `hand size = N` | `HandSizeGreaterThan N` / `HandSizeEquals N` — the acting player's hand, counted before a played card leaves it |
-| `any opponent has N cards` / `any opponent has more than N cards` | `AnyOpponentHandEquals N` / `AnyOpponentHandGreaterThan N` — some player *other than the actor*; leader-watch and defense rules (`someone else has uno` is the `= 1` special case the built-in UNO rules use) |
+| `any opponent has N cards` / `any opponent has more than N cards` | `AnyOpponentHandEquals N` / `AnyOpponentHandGreaterThan N` — some player *other than the actor*; leader-watch and defense rules. Not to be confused with `someone has uno`, which is window-based (true only while another player is actually catchable), not a hand-size test |
 | `top card is N` (0–9) / `top card is action` | `TopCardIsNumber N` / `TopCardIsAction` — what's *showing on the pile*, testable on any action (unlike `card is …`, which tests the played card) |
 | `direction is clockwise` / `direction is counter` | `DirectionIsClockwise` (counter parses as its negation) |
 | `draw pile is empty` / `draw pile < N` | `DrawPileLessThan 1` / `DrawPileLessThan N` — endgame triggers; the pile still reshuffles automatically |
@@ -224,7 +224,7 @@ is.** That is all "jumping in" is:
 
 ```
 rule "jump in" priority 130:
-  when card matches exactly and not your turn and not stack is open
+  when card matches exactly and not card is action and not your turn and not stack is open
   do jump in, play the card, set color from card, advance turn
 ```
 
@@ -251,8 +251,14 @@ Notes:
   not your turn` and pair it with `set color to declared`.
 - **Keep `not stack is open`** in stacking rulesets, or a jump-in can barge
   into someone's open stack and strand it.
-- The jumped-in card's own effect does *not* fire — a jumped Skip does not
-  additionally skip. Add a higher-priority rule if you want that.
+- **The default excludes action cards** (`not card is action`): the rule's
+  effect list is the generic play sequence, so a jumped Skip would not skip
+  and a jumped +2 would deliver no draws — in stacking rulesets it would
+  even leave the original pending penalty to whoever holds the turn *after*
+  the jump. To allow an action-card jump, write a rule that spells the
+  effects out, e.g. `when card is plus two and not your turn do jump in,
+  play the card, set color from card, next player draws 2 cards, advance
+  turn, advance turn`.
 - The UI highlights whatever the engine would accept (it asks the server
   rather than guessing), so a custom jump condition lights up correctly
   without any client change.
@@ -272,11 +278,11 @@ which expands to
 
 ```
 rule "sevens swap hands" priority 60:
-  when card is 7 and (card matches color or card matches value) and your turn
+  when card is 7 and (card matches color or card matches value) and your turn and not stack is open
   do play the card, set color from card, swap hands with chosen player, advance turn
 
 rule "zeros rotate hands" priority 60:
-  when card is 0 and (card matches color or card matches value) and your turn
+  when card is 0 and (card matches color or card matches value) and your turn and not stack is open
   do play the card, set color from card, rotate hands, advance turn
 ```
 
@@ -294,8 +300,10 @@ Notes:
   one seat along; after a reverse it flows the other way (same for
   `swap hands with next player`).
 - Priority 60 beats the generic play rule (10) but loses to the specials
-  (100+) and to continuing an open stack (120). In stacking rulesets a 7
-  or 0 that would have *opened* a stack swaps/rotates instead.
+  (100+). In stacking rulesets a 7 or 0 that would have *opened* a stack
+  swaps/rotates instead; mid-stack both rules are blocked (`not stack is
+  open`) — without that guard a 7 played into an open stack would swap and
+  walk away, stranding the stack on the next player.
 - The UNO catch window follows the swap: swap yourself *into* a one-card
   hand and you are catchable until you call UNO, exactly as if you had
   played down to one.
@@ -361,7 +369,7 @@ action) settles it. The three UNO rules are resolved purely by priority:
 
 ```
 rule "call uno" priority 200:
-  when player calls uno and has uno
+  when player calls uno and has uno and not someone has uno
   do mark uno called
 
 rule "catch uno" priority 190:
@@ -373,12 +381,16 @@ rule "false uno call" priority 180:
   do penalize caller 2 cards
 ```
 
-Read top to bottom, that says: protecting yourself beats catching somebody
-else, and catching somebody beats a press with nothing behind it. The last
-rule matches *any* press, so a press is always resolved by these rules and
-never falls through to a turn rule — keep these priorities above everything
-else, because conditions like `pending draws > N` and `your turn` do not
-look at what the player actually did and would otherwise match a press.
+Read top to bottom, that says: while somebody is catchable, any press is a
+catch (the `not someone has uno` guard keeps the self-claim rule out of the
+way, so even a player who is themselves down to one card can make the
+catch — only one window can be open at a time, so the guard never blocks a
+genuine self-claim); otherwise a one-card press claims your own UNO, and a
+press with nothing behind it costs the presser. The last rule matches *any*
+press, so a press is always resolved by these rules and never falls through
+to a turn rule — keep these priorities above everything else, because
+conditions like `pending draws > N` and `your turn` do not look at what the
+player actually did and would otherwise match a press.
 
 **Who is catchable.** A player becomes catchable the moment they play down
 to one card, and stops being catchable as soon as *another* player takes a
@@ -496,8 +508,12 @@ actually play a card:
 ```
 rule "draw until playable" priority 1:
   when player draws and your turn
-  do draw 1 cards
+  do draw until playable
 ```
+
+(`draw until playable` rather than `draw 1 cards`: on a dry deck the
+former passes the turn, while a plain draw would be an accepted no-op
+that leaves the seat with no way out.)
 
 Stacking variant replaces "play matching card" with:
 
@@ -530,7 +546,7 @@ so nobody draws mid-stack:
 ```
 rule "draw until playable" priority 1:
   when player draws and your turn and not stack is open
-  do draw 1 cards
+  do draw until playable
 ```
 
 Every hand-coded rule is expressible, so the grammar covers the existing

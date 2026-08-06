@@ -75,7 +75,11 @@ let tokenize_line ~line_num line ~init : tokens Or_error.t =
       then (
         let j = scan_while line i ~f:Char.is_digit in
         let s = String.sub line ~pos:i ~len:(j - i) in
-        go j ((Token.Int (Int.of_string s), line_num) :: acc))
+        match Int.of_string_opt s with
+        | Some n -> go j ((Token.Int n, line_num) :: acc)
+        | None ->
+          (* Int.of_string raises past 2^62; keep the Or_error contract *)
+          Or_error.errorf "line %d: number '%s' is too large" line_num s)
       else if Char.is_alpha c
       then (
         let j = scan_while line i ~f:Char.is_alphanum in
@@ -106,15 +110,17 @@ let expect_word (toks : tokens) word =
   | _ -> Or_error.errorf "expected '%s' (%s)" word (where toks)
 ;;
 
-let color_of_word word line : Card.Color.t Or_error.t =
+(* [expected] is the caller's option list: only `set color to ...` may
+   offer 'declared'; suggesting it for a condition would be advertising a
+   word that is invalid exactly where the user typed it *)
+let color_of_word word line ~expected : Card.Color.t Or_error.t =
   match Card.Color.of_string word with
   | Some color -> Ok color
   | None ->
-    Or_error.errorf
-      "line %d: unknown color '%s' (expected red, green, blue, yellow, or declared)"
-      line
-      word
+    Or_error.errorf "line %d: unknown color '%s' (expected %s)" line word expected
 ;;
+
+let plain_colors = "red, green, blue, or yellow"
 
 (* conditions are fixed multi-word phrases, so each is one pattern match *)
 let parse_atom (toks : tokens) : (Rule.Condition.t * tokens) Or_error.t =
@@ -151,7 +157,7 @@ let parse_atom (toks : tokens) : (Rule.Condition.t * tokens) Or_error.t =
        to the generic unknown-condition error *)
   | (Word "card", _) :: (Word "is", _)
     :: (Word (("red" | "green" | "blue" | "yellow") as color), line) :: rest ->
-    let%map color = color_of_word color line in
+    let%map color = color_of_word color line ~expected:plain_colors in
     IsCardColor color, rest
   | (Word "card", _) :: (Word "is", _) :: (Word "action", _) :: rest ->
     Ok (IsActionCard, rest)
@@ -159,7 +165,7 @@ let parse_atom (toks : tokens) : (Rule.Condition.t * tokens) Or_error.t =
     Ok (IsNumberCard, rest)
   | (Word "active", _) :: (Word "color", _) :: (Word "is", _)
     :: (Word color, line) :: rest ->
-    let%map color = color_of_word color line in
+    let%map color = color_of_word color line ~expected:plain_colors in
     ActiveColorIs color, rest
   | (Word "hand", _) :: (Word "size", _) :: (Greater, _) :: (Int n, _) :: rest ->
     Ok (HandSizeGreaterThan n, rest)
@@ -259,7 +265,9 @@ let parse_effect ~finish (toks : tokens)
     -> Ok ([ SetDeclaredColor ], rest)
   | (Word "set", _) :: (Word "color", _) :: (Word "to", _) :: (Word color, line) :: rest
     ->
-    let%map color = color_of_word color line in
+    let%map color =
+      color_of_word color line ~expected:"red, green, blue, yellow, or declared"
+    in
     [ SetActiveColor color ], rest
   | (Word "add", _) :: (Int n, _) :: (Word "pending", _) :: (Word "draws", _) :: rest ->
     Ok ([ AddPendingDraws n ], rest)

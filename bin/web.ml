@@ -10,6 +10,7 @@ open Custom_uno
 module Session = struct
   type t =
     { conn : Rpc.Connection.t
+    ; name : string (* canonical seat name the server registered us under *)
     ; events : string Queue.t (* JSON-encoded, in arrival order *)
     ; mutable last_poll : Time_ns.t
     }
@@ -223,8 +224,11 @@ let event_json (event : Action.Server_to_client.t) =
     sprintf {|{"type":"player_rejoined","player":%s}|} (jstr player_name)
 ;;
 
-(* names are only unique within a room, so sessions key on both *)
-let session_key ~code ~name = code ^ "/" ^ name
+(* names are only unique within a room, so sessions key on both. The name
+   half is lowercased: the server resolves seats caselessly (a rejoin may
+   come back canonicalised to a different capitalisation), and the room
+   admits no caseless collisions, so the folded key is unambiguous *)
+let session_key ~code ~name = code ^ "/" ^ String.lowercase name
 
 let connect t =
   Rpc.Connection.client
@@ -257,7 +261,7 @@ let join t ~code ~name =
        | Error err | Ok (Error err) ->
          let%map () = Rpc.Connection.close conn in
          Error err
-       | Ok (Ok ()) ->
+       | Ok (Ok canonical) ->
          (match%bind
             Rpc.Pipe_rpc.dispatch Rpc_protocol.game_stream_rpc conn ()
           with
@@ -267,21 +271,27 @@ let join t ~code ~name =
           | Ok (Ok (reader, _metadata)) ->
             let session =
               { Session.conn
+              ; name = canonical
               ; events = Queue.create ()
               ; last_poll = Time_ns.now ()
               }
             in
-            Hashtbl.set t.sessions ~key ~data:session;
+            (* keyed by the canonical name; the caseless session_key makes
+               the page's typed spelling find it regardless *)
+            Hashtbl.set
+              t.sessions
+              ~key:(session_key ~code ~name:canonical)
+              ~data:session;
             don't_wait_for
               (Pipe.iter_without_pushback reader ~f:(fun event ->
                  Queue.enqueue session.events (event_json event)));
-            return (Ok ())))
+            return (Ok canonical)))
   in
   match Hashtbl.find t.sessions key with
   | Some session when not (Rpc.Connection.is_closed session.conn) ->
     (* same player joining again, e.g. after a page reload: re-attach *)
     session.last_poll <- Time_ns.now ();
-    return (Ok ())
+    return (Ok session.name)
   | Some _ | None ->
     Hashtbl.remove t.sessions key;
     fresh_join ()
@@ -486,7 +496,14 @@ let handle t ~body req =
     (match%bind create_room t with
      | Error err -> respond_json (error_body err)
      | Ok code -> respond_json (sprintf {|{"ok":true,"code":%s}|} (jstr code)))
-  | "/api/join" -> with_ident (fun ~code ~name -> respond_result (join t ~code ~name))
+  | "/api/join" ->
+    with_ident (fun ~code ~name ->
+      match%bind join t ~code ~name with
+      | Error err -> respond_json (error_body err)
+      | Ok canonical ->
+        (* the page adopts this name: a mid-game rejoin may resolve the
+           seat under a different capitalisation than the one typed *)
+        respond_json (sprintf {|{"ok":true,"name":%s}|} (jstr canonical)))
   | "/api/leave" -> with_ident (fun ~code ~name -> respond_result (leave t ~code ~name))
   | "/api/poll" ->
     with_ident (fun ~code ~name ->

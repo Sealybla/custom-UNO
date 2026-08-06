@@ -23,7 +23,7 @@ So there are two clients:
 | talks to the server via | Async RPC, directly | Async RPC, on the browser's behalf |
 | talks to the user via | stdin / stdout | HTTP + JSON |
 | is | a client | a **bridge**: RPC client on one side, HTTP server on the other |
-| lines | ~214 | ~591 + ~2300 |
+| lines | ~220 | ~610 + ~2800 |
 
 Both are built from `bin/dune` as `uno-client` and `custom-uno`.
 
@@ -51,13 +51,17 @@ per player** and the browser drains the queue by polling.
 ```ocaml
 type t =
   { conn : Rpc.Connection.t
+  ; name : string                (* canonical seat name from the server *)
   ; events : string Queue.t      (* JSON-encoded, in arrival order *)
   ; mutable last_poll : Time_ns.t
   }
 ```
 
-Sessions are keyed `code ^ "/" ^ name` (`session_key`), because **names are
-only unique within a room** — two rooms can each have an "alice".
+Sessions are keyed `code ^ "/" ^ String.lowercase name` (`session_key`),
+because **names are only unique within a room** — two rooms can each have an
+"alice" — and the name half is folded because the server resolves seats
+caselessly: a mid-game rejoin may come back canonicalised to a different
+capitalisation than the one typed.
 
 The critical design decision is one RPC connection *per player*, not one shared
 connection for the whole bridge. Everything below follows from it.
@@ -88,9 +92,11 @@ to stall the room for everyone else. The cost is an unbounded queue, which is
 bounded in practice by the reaper (§2.6).
 
 `join` also handles the **page reload** case: if a live session already exists
-for that `code/name`, it refreshes `last_poll` and returns `Ok` rather than
-opening a second connection. Without this, hitting F5 would look to the server
-like a *second* player with a duplicate name.
+for that `code/name`, it refreshes `last_poll` and returns `Ok session.name`
+rather than opening a second connection. Without this, hitting F5 would look
+to the server like a *second* player with a duplicate name. Either way join
+returns the canonical seat name (the join RPC is v3, `string Or_error.t`),
+which `/api/join` forwards so the page adopts the server's spelling.
 
 ### 2.4 `with_session` — the guard on every action
 

@@ -33,7 +33,7 @@ nobody remembers choosing.
 The whole thing is about twenty lines:
 
 ```ocaml
-let process_event rules state evt =
+let rec process_event rules state evt =
   (* 0. a finished game accepts nothing *)
   let%bind () =
     match state.winner with
@@ -56,11 +56,18 @@ let process_event rules state evt =
   (* 3. run the first one. The tail is discarded, unexamined. *)
   | rule :: _ ->
     List.fold_result rule.actions ~init:state ~f:(fun curr_state eff ->
-      Game_state.apply_effect curr_state ~event:evt eff)
+      Game_state.apply_effect
+        ~card_playable:(ruleset_accepts_play rules)
+        curr_state
+        ~event:evt
+        eff)
 ```
 
 Four steps: **reject if the game is over → rank everything → filter to matches
-→ run the head.**
+→ run the head.** (It is `let rec` because `ruleset_accepts_play` — how the
+draw effects judge the card they just drew — simulates a play back through
+this same machinery, so "playable" always means what the rules in force say,
+not official-rules matching.)
 
 ---
 
@@ -268,10 +275,10 @@ Candidates, evaluated against `(state, CardPlayed {player = Bob; ...})`:
 
 | rule | priority | condition | true? |
 |---|---|---|---|
-| uno call | 200 | `IsUnoCall and CallerHasUno` | ✗ — not an UNO press |
+| uno call | 200 | `IsUnoCall and CallerHasUno and not SomeoneElseHasUno` | ✗ — not an UNO press |
 | uno catch | 190 | `IsUnoCall and SomeoneElseHasUno` | ✗ |
 | uno false-call | 180 | `IsUnoCall` | ✗ |
-| **jump in** | **130** | `MatchesTopExactly and not IsPlayerTurn and not StackIsOpen` | **✓** |
+| **jump in** | **130** | `MatchesTopExactly and not IsActionCard and not IsPlayerTurn and not StackIsOpen` | **✓** |
 | play +4 | 110 | `IsPlusFour and IsPlayerTurn` | ✗ — not Bob's turn |
 | wild/skip/reverse/+2 | 100 | `... and IsPlayerTurn` | ✗ — not Bob's turn |
 | generic play | 10 | `(MatchesTopColor or MatchesTopValue) and IsPlayerTurn` | ✗ — not Bob's turn |

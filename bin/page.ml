@@ -1915,9 +1915,18 @@ function applyFix(w){
     const guarded = (/\bor\b/.test(cond) ? '(' + cond + ')' : cond) + ' and ' + w.fix;
     ta.value = src.slice(0, condStart) + guarded + sep + src.slice(condEnd);
   } else {
-    const lineEnd = src.indexOf('\n', head.index + doMatch.index);
-    const at = lineEnd === -1 ? src.length : lineEnd;
-    ta.value = src.slice(0, at).replace(/[ \t]+$/, '') + ', ' + w.fix + src.slice(at);
+    // 'advance turn' belongs at the END of the effect list, which may wrap
+    // over several lines: the do-clause runs until a blank line, the next
+    // rule/remove header, or EOF. Backing over trailing commas keeps a
+    // wrapped "do play the card,\n" from becoming "card,, advance turn".
+    const tail = src.slice(head.index + doMatch.index);
+    const stop = tail.search(/\n[ \t]*\n|\n(?=[ \t]*(?:rule\b|remove\b))/i);
+    const clauseEnd = head.index + doMatch.index + (stop === -1 ? tail.length : stop);
+    const floor = head.index + doMatch.index + doMatch[0].length;
+    let at = clauseEnd;
+    while (at > floor && /[,\s]/.test(src[at - 1])) at--;
+    ta.value = src.slice(0, at) + ', ' + w.fix +
+      src.slice(at, clauseEnd).replace(/,/g, '') + src.slice(clauseEnd);
   }
   checkRules();
 }
@@ -2750,12 +2759,16 @@ async function joinAs(v){
       localStorage.removeItem('uno-last-code');
       return;
     }
-    sessionStorage.setItem('uno-name', v);
+    // adopt the server's canonical seat name: a mid-game rejoin may
+    // resolve under a different capitalisation than the one typed, and
+    // every render compares this name against the roster
+    if (r.name) name = r.name;
+    sessionStorage.setItem('uno-name', name);
     sessionStorage.setItem('uno-code', code);
     // localStorage survives a closed tab or crashed browser, so a fresh
     // tab can walk straight back into a live game (the server hands the
     // seat back from the stand-in bot)
-    localStorage.setItem('uno-last-name', v);
+    localStorage.setItem('uno-last-name', name);
     localStorage.setItem('uno-last-code', code);
     $('room-code').textContent = code;
     $('game-code').textContent = 'ROOM ' + code;
@@ -2799,12 +2812,33 @@ $('copy-link').onclick = async () => {
 };
 
 let polling = null;
+let recovering = false;
+// the web session expired (throttled background tab, laptop sleep, server
+// blip): rejoining reclaims the seat from the stand-in bot and a snapshot
+// repaints the table. Without this the page would keep polling a dead
+// session forever, silently frozen at the pre-sleep state.
+async function recoverSession(){
+  if (recovering || !name || !code) return;
+  recovering = true;
+  try {
+    const r = await api('/api/join', {method:'POST'});
+    if (r.ok){
+      if (r.name) name = r.name;
+      await refreshState();
+      toast('reconnected');
+    } else {
+      toast('connection lost: ' + r.error);
+    }
+  } catch (e){ /* server unreachable; the next poll tries again */ }
+  recovering = false;
+}
 function startPolling(){
   if (polling) return;
   polling = setInterval(async () => {
     try {
       const r = await api('/api/poll');
       if (r.ok) processEvents(r.events);
+      else await recoverSession();
     } catch (e){ /* transient */ }
   }, 700);
 }
@@ -2832,19 +2866,27 @@ $('rules-text').value = presetText();
 lastLoaded = $('rules-text').value;
 checkRules();
 
-// invite links carry ?code=XXXX; a saved session (per-tab refresh) wins,
-// then the last game this browser was in (reconnect after a closed tab or
-// crash), unless the link points at a different room
+// invite links carry ?code=XXXX. Only this exact tab's session (a refresh)
+// may auto-resume over one; the cross-tab localStorage fallback must not,
+// or opening a link in the same browser silently rejoins as whoever last
+// played here instead of offering a fresh seat. localStorage reconnect
+// (closed tab, crash) still fires on a plain visit with no code.
 const urlCode = (new URLSearchParams(location.search).get('code') || '').toUpperCase();
-const savedName = sessionStorage.getItem('uno-name') || localStorage.getItem('uno-last-name');
-const savedCode = sessionStorage.getItem('uno-code') || localStorage.getItem('uno-last-code');
-if (savedName && savedCode && (!urlCode || urlCode === savedCode)){
-  $('name-input').value = savedName;
-  code = savedCode;
-  joinAs(savedName);
+const tabName = sessionStorage.getItem('uno-name');
+const tabCode = sessionStorage.getItem('uno-code');
+const lastName = localStorage.getItem('uno-last-name');
+const lastCode = localStorage.getItem('uno-last-code');
+if (tabName && tabCode && (!urlCode || urlCode === tabCode)){
+  $('name-input').value = tabName;
+  code = tabCode;
+  joinAs(tabName);
 } else if (urlCode){
   $('code-input').value = urlCode;
   $('name-input').focus();
+} else if (lastName && lastCode){
+  $('name-input').value = lastName;
+  code = lastCode;
+  joinAs(lastName);
 }
 </script>
 </body>

@@ -17,8 +17,10 @@ module Join_query : sig
   [@@deriving sexp, bin_io]
 end
 
-(* handles a player joining a room's lobby by code *)
-val join_lobby_rpc : (Join_query.t, unit Or_error.t) Rpc.Rpc.t
+(* handles a player joining a room's lobby by code; returns the canonical
+   seat name, which a mid-game rejoin may resolve with a different
+   capitalisation than the one typed *)
+val join_lobby_rpc : (Join_query.t, string Or_error.t) Rpc.Rpc.t
 
 (* forward players moves to game engine *) 
 val take_action_rpc : (Action.Client_to_server.t, unit Or_error.t) Rpc.Rpc.t

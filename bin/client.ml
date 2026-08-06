@@ -187,14 +187,14 @@ let run ~host ~port ~name ~room ~create_room =
     | None, false ->
       failwith "pass -room CODE to join a room, or -host to create one"
   in
-  let%bind () =
+  let%bind (seated_as : string) =
     Rpc.Rpc.dispatch_exn
       Rpc_protocol.join_lobby_rpc
       conn
       { Rpc_protocol.Join_query.code; player_name = name }
     >>| ok_exn
   in
-  print_s [%message "joined lobby" (code : string)];
+  print_s [%message "joined lobby" (code : string) (seated_as : string)];
   let%bind reader, _md =
     Rpc.Pipe_rpc.dispatch_exn Rpc_protocol.game_stream_rpc conn ()
   in

@@ -108,6 +108,10 @@ val hand_size : t -> int -> int
 (* has this player already emptied their hand and left the rotation? *)
 val is_finished : t -> int -> bool
 
+(** the next seat in play direction that has not finished, or [from] itself
+    when everybody else is out *)
+val next_live_seat : t -> from:int -> int
+
 (* a gameplay move consumes a turn; an UNO press does not *)
 val is_gameplay_event : Event.t -> bool
 
@@ -122,7 +126,16 @@ val is_valid_play : t -> played_card:Card.t -> bool
 (** first playable card in [hand], or [None] if nothing plays; bot logic *)
 val first_playable_card : t -> hand:Card.t list -> Card.t option
 
-val apply_effect : t -> event:Event.t -> Effect.t -> t Or_error.t
+(** [card_playable] is how the draw effects judge the card they just drew —
+    Rule_engine passes a full ruleset simulation so "playable" agrees with
+    the UI highlights under custom rules. Defaults to official-rules
+    [is_valid_play]. *)
+val apply_effect
+  :  ?card_playable:(t -> player_id:int -> played_card:Card.t -> bool)
+  -> t
+  -> event:Event.t
+  -> Effect.t
+  -> t Or_error.t
 
 (* recomputes who can be caught for not calling UNO; called once per action
    by Rule_engine.apply_action, never from a rule *)
