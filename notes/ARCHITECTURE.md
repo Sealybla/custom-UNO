@@ -504,28 +504,153 @@ driving a second player without a browser.
 
 ## 9. One action, end to end
 
-Playing a red 7:
+Playing a Wild +4 and declaring blue, under the `default` ruleset. This card
+is the useful example because it exercises every stage that a plain number
+card skips: a second click before the request, a declared colour the effects
+can fail on, a victim who is not the actor, and a turn that moves two seats.
 
-1. Browser: `POST /api/play?card_id=42`
-2. `web.ml` -> `take_action_rpc` -> `server.ml`
-3. Server enqueues `{player_name; action; from_timer = false}` on the room pipe
-4. Engine loop dequeues it, calls `Rule_engine.apply_action`
-5. `event_of_client_action` -> `CardPlayed {player; card; declared_color;
-   swap_with}` — the swap target is resolved and validated here
-6. Rules sorted by priority; first whose condition holds wins
-7. Its effects run in order (`fold_result`), producing a new `Game_state.t`;
-   any effect returning an error discards the lot
-8. `update_uno_window` recomputes who is catchable
-9. Server stores the new state and broadcasts: `Pile_updated`, per-player
-   `Hand_updated` (each carrying that player's freshly simulated
-   `playable_ids`), `Hand_counts`, diffed notifications, `Turn_changed`
-10. `web.ml` turns each into JSON; the browser's next `/api/poll` collects them
-11. Reducer updates `state`, sets dirty flags, pushes animation intents
-12. Renderers redraw only what changed
+**1. Browser — the click, then the wheel.** `playCard(card)` sees the value is
+`Wild4`, so it does *not* send anything yet: it parks the card in
+`pendingWild` and opens the colour wheel. Clicking blue calls
+`sendPlay(id, 'blue', null)` -> `POST /api/play?card_id=42&color=blue`. The
+shared `api()` helper appends `name=` and `code=` to every request — that pair
+*is* the session identity — and returns the parsed JSON body, so the `ok` the
+client checks is a field in that body, not the HTTP status. On `ok` it records
+`lastPlayedId = 42`, which is what later lets the pile reducer tell your own
+play from an opponent's. (If a house rule made this +4 a targeted-draw card,
+the wheel hands off to aim mode instead and the request gains
+`&swap_with=<name>` — see §8.)
 
-On rejection — step 6 finding no matching rule, or step 7 hitting a `Reject`
-effect — only the acting player gets `Action_rejected`, and the state is
-unchanged.
+**2. `bin/web.ml` — HTTP to RPC.** The `/api/play` route parses `card_id` as
+an int, `color` through `Card.Color.of_string` — which accepts *lowercase
+only*, which is why the wheel's `data-color` values are written `blue` and
+not `Blue` — and the optional `swap_with`, building
+`Action.Client_to_server.Play {card_id = 42; declared_color = Some Blue;
+swap_with = None}`. `take_action` dispatches it on that session's RPC
+connection via `Rpc_protocol.take_action_rpc`.
+
+**3. `server.ml` — enqueue and return.** The implementation resolves the
+caller's room and seat (`in_room`), wraps the action as
+`{Queued_request. player_name; action; enqueued_at; from_timer = false}` and
+writes it to `room.request_writer`. It returns `Ok` straight away: the HTTP
+response means *queued*, not *legal*. A rejection arrives later on the event
+stream, not as an HTTP error.
+
+**4. Engine loop — one room, one action at a time.** `start_engine_loop`
+drains the room pipe with `Pipe.iter_without_pushback`, so every action in a
+room is serialised through a single handler and no two can interleave. Because
+`from_timer = false`, this also clears `room.autopilot` for that player: they
+have taken their seat back from the bot.
+
+**5. `Rule_engine.apply_action` — action to event.** Finished players are
+rejected up front (a spectator can't play, which also keeps the playability
+simulations honest). Then `event_of_client_action` looks the card id up in
+`state.card_registry` and produces
+`Event.CardPlayed {player; card; declared_color = Some Blue; swap_with = None}`.
+A named swap target would be resolved and validated here — unknown name, or
+yourself, fails before any rule runs.
+
+**6. `process_event` — which rule wins.** Rules are sorted by priority
+descending, ties broken by ascending id (definition order), and the *first*
+rule whose condition holds under `eval_condition` takes the move. Here that is
+
+```
+rule "play plus four" priority 110:
+  when card is plus four and your turn
+  do play the card, set color to declared, next player draws 4 cards, skip next player
+```
+
+Two things worth reading off that text. Its condition has no colour or value
+test, so in the default game a +4 is legal on anything and there is no
+challenge rule. And its priority is 110, above the 100s the other specials
+sit at — in the stacking variant this same rule also carries
+`not stack is open`, and `take penalty` at 105 outranks it so a +4 cannot
+dodge a pending penalty.
+
+**7. Effects — the whole list or nothing.** The parser compiled that `do`
+clause into six effects (`play the card` expands to two, `skip next player`
+to two `AdvanceTurn`s):
+
+```
+PlayTriggeringCard; CheckWinner finish; SetDeclaredColor;
+DrawForNextPlayer 4; AdvanceTurn; AdvanceTurn
+```
+
+`List.fold_result` threads the state through them in order:
+
+| effect | what it does here |
+|---|---|
+| `PlayTriggeringCard` | the +4 leaves the hand and becomes `top_card`; the old top goes to `played_pile` |
+| `CheckWinner finish` | if that emptied the hand, the actor joins `finished`; the ruleset's finish mode decides whether the game is now over |
+| `SetDeclaredColor` | `current_color <- Blue`. The one effect that needs the wheel: with `declared_color = None` it errors `"Wild requires a declared color"` |
+| `DrawForNextPlayer 4` | the next **live** seat in play direction draws 4 — not the actor, and the turn does not move |
+| `AdvanceTurn` ×2 | the turn steps past the victim, which is what "skipped" means |
+
+Any effect returning an error aborts the fold, `apply_action` returns that
+error, and `room.game_state` is never assigned — so a half-applied play is
+not representable, and the state everyone sees is exactly the one before the
+click.
+
+**8. UNO window.** `Game_state.update_uno_window` runs once per action,
+deliberately outside the ruleset (§11.3): if the actor's hand is now a single
+card they become the one catchable player, otherwise nobody is. Playing a +4
+down to one card is what arms everybody's UNO button.
+
+**9. Commit and broadcast.** The server sets `room.game_state <- next_state`,
+bumps `action_seq` (which is what the turn timers key off), and broadcasts —
+each `broadcast` writing to every client's pipe:
+
+- `Pile_updated {top_card; current_color = Blue; pending_draws}`
+- per-player `Hand_updated` from `send_hands`, each carrying that player's
+  freshly simulated `playable_ids`, `swap_target_ids` and `draw_target_ids`
+- `Hand_counts`
+- diffed notifications from `broadcast_notifications`: the victim's hand grew
+  without them acting, so `Forced_draw {player_name; count = 4}`; and
+  `turns_advanced` moved 2, so `Player_skipped` for that same player
+- `drive_or_auto_pass` then broadcasts
+  `Turn_changed {current_player_name; can_pass; stack_value; uno_race}` and
+  arms the turn timer / bot driver for whoever is up
+
+**10. Back over the wire.** `web.ml`'s `event_json` renders each event to
+JSON. Note the colour makes the return trip in a different spelling than it
+went out in: `color_name` is the sexp of the variant, so the pile comes back
+as `"current_color":"Blue"` (and an undeclared one as `"NoColor"`) where the
+request said `blue`. The browser polls `/api/poll` every 700ms, which drains
+that session's pipe, so all of the above typically arrives in one array.
+
+**11. Reducer.** `processEvents` calls `apply(ev, fx)` per event: each case
+mutates `state`, sets dirty flags, and pushes animation *intents* into `fx`
+rather than animating inline. For this action:
+
+- `pile` — sets `state.top` / `state.color`; because `current_color` (`Blue`)
+  differs from the card's own printed colour, it stamps
+  `top_card.declared = 'Blue'`, which is what makes the discard render blue
+  instead of wild-black. `top_card.id === lastPlayedId` from step 1 makes this
+  an `ownPlay` (fly from your hand slot) rather than an `oppPlay` (fly from
+  the player's seat).
+- `hand` — replaces your hand and all three id sets, dirtying hand and turn.
+- `hand_counts` — dirties the seats, and the victim's count jumping by 4
+  pushes an `oppDraw`: the card backs that fly from the draw pile to their
+  seat (`runFx` shows at most 4).
+- `forced_draw` — logs the line and pushes a `penalty` badge: `+4 cards` on
+  the victim's seat, or a full-screen `DRAW 4!` splash if the victim is you.
+- `skipped` — logs, and pushes a `skipped` intent that `runFx` then
+  deliberately **drops**: it filters out skip signals for anyone already in
+  the `penalty` set, because a +4 victim is skipped by the very same play and
+  the draw splash already tells that story. Two badges on one seat would read
+  as two separate things happening.
+- `turn` — updates the turn banner and the UNO arming (`uno_race`).
+
+**12. Render.** `render()` redraws only what the dirty flags name
+(`renderSeats`, `renderPile`, `renderHand`, the turn banner), then
+`updateHighlights()` relights the hand purely from the server's `playable`
+set. `runFx(fx)` plays the queued animations.
+
+On rejection — step 6 finding no rule that matches ("Illegal move: no rule
+allows that right now"), or step 7 hitting a `Reject` effect or a failing one
+such as the missing declared colour — only the acting player gets
+`Action_rejected` with that message, and every other client sees nothing,
+because there was no state change to tell them about.
 
 ---
 
