@@ -648,7 +648,7 @@ let rec process_event
    effects ask this about the card they just drew, so "playable" there
    means exactly what it means for the UI highlights: whatever the rules
    in force would actually allow, not official-rules matching. Mirrors
-   playable_and_swap_ids: any real colour stands in for a wild's
+   playable_and_target_ids: any real colour stands in for a wild's
    declaration, and failing only for want of a target still counts. *)
 and ruleset_accepts_play rules state ~player_id ~(played_card : Card.t) =
   match
@@ -665,9 +665,9 @@ and ruleset_accepts_play rules state ~player_id ~(played_card : Card.t) =
   with
   | Ok _ -> true
   | Error e ->
-    String.is_substring
-      (Error.to_string_hum e)
-      ~substring:Game_state.target_needed
+    let msg = Error.to_string_hum e in
+    String.is_substring msg ~substring:Game_state.target_needed_swap
+    || String.is_substring msg ~substring:Game_state.target_needed_draw
 
 and apply_action
   (rules : Ruleset.t)
@@ -713,16 +713,18 @@ let pass_available (rules : Ruleset.t) (state : Game_state.t) : bool =
    an out-of-turn jump-in shows up here for free, whatever condition the
    player wrote for it. Cheap: a hand times a ruleset is a few hundred
    condition checks. *)
-(* (playable ids, subset that also needs a swap target). A play that fails
-   only for want of a target IS legal - the UI just has to ask who first. *)
-let playable_and_swap_ids (rules : Ruleset.t) (state : Game_state.t) ~player_id
-  : int list * int list
+(* (playable ids, subset needing a swap target, subset needing a draw
+   target). A play that fails only for want of a target IS legal - the UI
+   just has to ask who first, and the split tells it how to word the ask.
+   A card wanting both reports as whichever effect ran first. *)
+let playable_and_target_ids (rules : Ruleset.t) (state : Game_state.t) ~player_id
+  : int list * int list * int list
   =
   match state.winner with
-  | Some _ -> [], []
+  | Some _ -> [], [], []
   | None ->
     (match List.nth state.players player_id with
-     | None -> [], []
+     | None -> [], [], []
      | Some player ->
        let statuses =
          List.filter_map (Player.get_hand player) ~f:(fun card_id ->
@@ -737,22 +739,29 @@ let playable_and_swap_ids (rules : Ruleset.t) (state : Game_state.t) ~player_id
            with
            | Ok _ -> Some (card_id, `Ready)
            | Error e ->
-             if String.is_substring
-                  (Error.to_string_hum e)
-                  ~substring:Game_state.target_needed
-             then Some (card_id, `Needs_target)
+             let msg = Error.to_string_hum e in
+             if String.is_substring msg ~substring:Game_state.target_needed_swap
+             then Some (card_id, `Needs_swap)
+             else if String.is_substring
+                       msg
+                       ~substring:Game_state.target_needed_draw
+             then Some (card_id, `Needs_draw)
              else None)
        in
        ( List.map statuses ~f:fst
        , List.filter_map statuses ~f:(function
-           | id, `Needs_target -> Some id
-           | _, `Ready -> None) ))
+           | id, `Needs_swap -> Some id
+           | _, (`Ready | `Needs_draw) -> None)
+       , List.filter_map statuses ~f:(function
+           | id, `Needs_draw -> Some id
+           | _, (`Ready | `Needs_swap) -> None) ))
 ;;
 
 let playable_card_ids (rules : Ruleset.t) (state : Game_state.t) ~player_id
   : int list
   =
-  fst (playable_and_swap_ids rules state ~player_id)
+  let ids, _, _ = playable_and_target_ids rules state ~player_id in
+  ids
 ;;
 
 (* Simulates every move the current player could make. When a pass is legal

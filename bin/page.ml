@@ -380,15 +380,21 @@ let html =
   #color-modal .wheel button:hover { transform:scale(1.05); }
   .swatch-red{background:var(--c-red)} .swatch-green{background:var(--c-green)}
   .swatch-blue{background:var(--c-blue)} .swatch-yellow{background:var(--c-yellow)}
-  #swap-modal { position:fixed; inset:0; background:rgba(0,0,0,.65);
-    display:flex; align-items:center; justify-content:center; z-index:30; }
-  #swap-modal .swap-box { background:var(--paper); border-radius:16px;
-    padding:1rem 1.3rem; min-width:min(320px,80vw);
-    box-shadow:0 0 0 6px #fff, 0 20px 60px rgba(0,0,0,.5);
-    animation:wheelin .35s var(--ease-pop); transform:none; }
-  #swap-modal h3 { margin:.1rem 0 .6rem; }
-  #swap-modal .swap-list { display:flex; flex-direction:column; gap:.5rem; }
-  #swap-modal .swap-list button { width:100%; text-align:left; }
+  /* aim mode: the table IS the picker - seats light up and clicking one
+     answers. translate (not transform) centers the banner, because the
+     pulse animation owns transform */
+  #aim-banner { position:fixed; top:14px; left:50%; translate:-50% 0;
+    z-index:30; background:var(--c-blue); color:#fff; font-weight:900;
+    font-style:italic; padding:.5rem 1.3rem; border-radius:999px;
+    text-align:center; box-shadow:0 0 0 4px #fff, 0 10px 30px rgba(0,0,0,.4);
+    animation:pulse 1.2s ease-in-out infinite; }
+  #aim-banner small { display:block; font-weight:600; font-style:normal; opacity:.85; }
+  #seats.aiming .seat:not(.out) { pointer-events:auto; cursor:pointer;
+    filter:drop-shadow(0 0 14px rgba(10,107,189,.9)); }
+  #seats.aiming .seat:not(.out) .plate { background:var(--c-blue); color:#fff;
+    animation:pulse 1.2s ease-in-out infinite; }
+  #seats.aiming .seat:not(.out):hover { transform:translate(-50%,-50%) scale(1.1); }
+  #seats.aiming .seat.out { opacity:.3; }
   #uno-splash { position:fixed; left:50%; top:38%; transform:translate(-50%,-50%) rotate(-6deg);
     z-index:40; font-size:clamp(2.5rem,9vw,4.5rem); font-weight:900; font-style:italic;
     color:var(--c-yellow); -webkit-text-stroke:2px #fff;
@@ -762,12 +768,7 @@ let html =
   </div>
 </div>
 
-<div id="swap-modal" hidden>
-  <div class="swap-box">
-    <h3>Aim it at…</h3>
-    <div class="swap-list"></div>
-  </div>
-</div>
+<div id="aim-banner" hidden><span id="aim-verb"></span><small>click a player — anywhere else cancels</small></div>
 
 <div id="uno-splash" hidden></div>
 <div id="win-overlay" hidden>
@@ -916,8 +917,10 @@ const freshState = () => ({ players:[], hand:[], top:null, color:null, current:n
               canPass:false, stackValue:null, stacking:false, unoRace:false,
               // card ids the server says are legal for us right now
               playable:new Set(),
-              // subset of playable that needs a swap target picked first
+              // subsets of playable that need a target picked first:
+              // trade hands vs make them draw - the aim banner words each
               swapTargets:new Set(),
+              drawTargets:new Set(),
               // names of players who have gone out while the game continues
               out:[],
               ready:[], bots:[], lastWinner:null });
@@ -1073,6 +1076,7 @@ function apply(ev, fx){
       // a 'hand' event follows immediately with the real set
       state.playable = new Set();
       state.swapTargets = new Set();
+      state.drawTargets = new Set();
       state.out = [];
       dirty.seats = dirty.pile = dirty.hand = dirty.turn = true;
       $('log').innerHTML = ''; $('win-overlay').hidden = true;
@@ -1089,6 +1093,12 @@ function apply(ev, fx){
       state.hand = orderedHand(ev.hand);
       state.playable = new Set(ev.playable || []);
       state.swapTargets = new Set(ev.swap_targets || []);
+      state.drawTargets = new Set(ev.draw_targets || []);
+      // the aimed card may have stopped needing (or allowing) a target -
+      // a timer played it, the rules changed - so a stale aim must not
+      // fire a play the server would reject
+      if (pendingSwap && !state.swapTargets.has(pendingSwap.id)
+                      && !state.drawTargets.has(pendingSwap.id)) cancelAim();
       // turn too: highlights change without the turn changing when a
       // jump-in becomes available on somebody else's go
       dirty.hand = dirty.turn = true;
@@ -1216,6 +1226,10 @@ function apply(ev, fx){
           scheduleCheck();
         }
         markRulesDirty();
+      } else if (snapshotMode){
+        // the room runs the defaults: entering it resets the editor to
+        // the template rather than keeping the last room's text
+        resetRulesEditor();
       }
       if (ev.player){
         $('rules-status').textContent = ev.player + ' set ' + ev.num_rules + ' house rules';
@@ -1348,6 +1362,14 @@ function renderSeats(){
     s.className = 'seat' + (p === state.current ? ' turn' : '') +
                   ((state.out || []).includes(p) ? ' out' : '');
     s.dataset.player = p;
+    s.onclick = (e) => {
+      // only answers the aim question; outside aim mode seats swallow no
+      // clicks (pointer-events keeps them inert anyway)
+      if (!pendingSwap || (state.out || []).includes(p)) return;
+      e.stopPropagation();
+      const ps = pendingSwap; cancelAim();
+      sendPlay(ps.id, ps.color, p);
+    };
     const fan = document.createElement('div'); fan.className = 'fan';
     const n = state.counts[p];
     const shown = Math.min(n === undefined ? 7 : n, 10);
@@ -1639,39 +1661,41 @@ async function sendPlay(cardId, color, target){
     (target ? '&swap_with=' + encodeURIComponent(target) : ''), {method:'POST'});
   if (!r.ok) toast(r.error); else lastPlayedId = cardId;
 }
-// cards the server flagged as needing a swap target get a player picker
-// (after the color wheel, if the card is also a wild)
+// cards the server flagged as needing a target turn the table into the
+// picker: seats light up and clicking one is the answer (after the color
+// wheel, if the card is also a wild)
 let pendingSwap = null; // {id, color}
-function openSwapModal(cardId, color){
+function enterAim(cardId, color, kind){
   pendingSwap = {id: cardId, color};
-  const box = document.querySelector('#swap-modal .swap-list');
-  box.innerHTML = '';
-  for (const p of state.players){
-    if (p === name) continue;
-    const b = document.createElement('button');
-    const n = state.counts[p];
-    b.textContent = p + (n === undefined ? '' : ' — ' + n + ' card' + (n === 1 ? '' : 's'));
-    b.onclick = (e) => {
-      e.stopPropagation();
-      $('swap-modal').hidden = true;
-      const ps = pendingSwap; pendingSwap = null;
-      if (ps) sendPlay(ps.id, ps.color, p);
-    };
-    box.append(b);
-  }
-  $('swap-modal').hidden = false;
+  // worded by what the card does: trading hands reads differently from
+  // making someone draw
+  $('aim-verb').textContent =
+    kind === 'swap' ? 'Swap cards with…' : 'Aim the draw at…';
+  $('seats').classList.add('aiming');
+  $('aim-banner').hidden = false;
 }
-$('swap-modal').onclick = (e) => {
-  if (e.target === $('swap-modal')){ $('swap-modal').hidden = true; pendingSwap = null; }
-};
+function cancelAim(){
+  pendingSwap = null;
+  $('seats').classList.remove('aiming');
+  $('aim-banner').hidden = true;
+}
+document.addEventListener('click', (e) => {
+  if (!pendingSwap) return;
+  // a seat answers the question and a hand click re-asks it (playCard
+  // restates the aim); any other click changes the player's mind
+  if (e.target.closest('#seats .seat') || e.target.closest('#hand')) return;
+  cancelAim();
+});
 
 async function playCard(card){
+  cancelAim();   // clicking a new card always restates the question
   if (card.value === 'Wild' || card.value === 'Wild4'){
     pendingWild = card;
     $('color-modal').hidden = false;
     return;
   }
-  if (state.swapTargets.has(card.id)){ openSwapModal(card.id, null); return; }
+  if (state.swapTargets.has(card.id)){ enterAim(card.id, null, 'swap'); return; }
+  if (state.drawTargets.has(card.id)){ enterAim(card.id, null, 'draw'); return; }
   sendPlay(card.id, null, null);
 }
 
@@ -1681,7 +1705,8 @@ document.querySelectorAll('#color-modal .wheel button').forEach(b => {
     $('color-modal').hidden = true;
     if (!pendingWild) return;
     const id = pendingWild.id; pendingWild = null;
-    if (state.swapTargets.has(id)){ openSwapModal(id, b.dataset.color); return; }
+    if (state.swapTargets.has(id)){ enterAim(id, b.dataset.color, 'swap'); return; }
+    if (state.drawTargets.has(id)){ enterAim(id, b.dataset.color, 'draw'); return; }
     sendPlay(id, b.dataset.color, null);
   };
 });
@@ -1735,6 +1760,8 @@ async function leaveParty(){
   name = null; code = null;
   state = freshState();
   pendingWild = null; lastPlayedId = null; handOrder = [];
+  cancelAim();
+  resetRulesEditor();
   hideCountdown();
   $('win-overlay').hidden = true;
   $('color-modal').hidden = true;
@@ -1778,6 +1805,25 @@ function markRulesDirty(){
 }
 
 $('rules-btn').onclick = applyRules;
+
+// back to the fresh-page rules panel: template text, default table
+// settings, nothing applied. The editor is per-room state - carrying it
+// into the next room leaves the box claiming rules that room never got.
+function resetRulesEditor(){
+  appliedText = null;
+  for (const id of ['toggle-stacking','toggle-drawuntil','toggle-jumpin','toggle-sevenzero'])
+    $(id).classList.remove('active');
+  $('set-deal').value = DEFAULT_DEAL;
+  $('set-timer').value = DEFAULT_TIMER;
+  $('ends-mode').value = 'first';
+  $('ends-count').hidden = true;
+  const ta = $('rules-text');
+  ta.value = presetText();
+  lastLoaded = ta.value;
+  $('rules-status').textContent = '';
+  markRulesDirty();
+  checkRules();
+}
 
 /* ---------- rules editor helpers ---------- */
 let lastLoaded = '';

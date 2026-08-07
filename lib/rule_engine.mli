@@ -50,10 +50,11 @@ val playable_card_ids
   -> player_id:int
   -> int list
 
-(* (playable ids, subset that also needs a swap target declared before the
-   play can go through - the UI asks with a player picker) *)
-val playable_and_swap_ids
+(* (playable ids, subset needing a swap target, subset needing a draw
+   target). Target-needing plays are legal - the UI asks who first, and
+   the split lets it word the picker as a swap or an aimed draw. *)
+val playable_and_target_ids
   :  Ruleset.t
   -> Game_state.t
   -> player_id:int
-  -> int list * int list
+  -> int list * int list * int list

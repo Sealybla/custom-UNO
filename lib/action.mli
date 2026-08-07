@@ -35,6 +35,9 @@ module Server_to_client : sig
         ; swap_target_ids : Int.t List.t
           (* subset of [playable_ids] that additionally needs a swap
              target declared - the UI asks with a player picker *)
+        ; draw_target_ids : Int.t List.t
+          (* same, but the target receives cards rather than trading
+             hands, so the picker words the ask differently *)
         }
     | Pile_updated of
         { top_card : Card.t

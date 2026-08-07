@@ -2558,7 +2558,7 @@ use seven zero|}
   print_s [%message "after the 0" (hands t : int list list) (t.turn : int)];
   [%expect
     {|
-    (e "Choose another player to aim this card at")
+    (e "Choose another player to swap hands with")
     ("after the 7" ("hands t" ((805) (804 803) (802))) (t.turn 1))
     ("after the 0" ("hands t" ((805) (802) (804 803))) (t.turn 1))
     |}]
@@ -2776,7 +2776,7 @@ use seven zero|}
 
 (* the server marks which playable cards still need a swap target by
    simulating each play - that is what drives the UI's player picker *)
-let%expect_test "playable_and_swap_ids flags chosen-swap cards" =
+let%expect_test "playable_and_target_ids flags chosen-swap cards" =
   let rules =
     Rule_parser.parse_ruleset {|use standard
 use seven zero|}
@@ -2795,11 +2795,13 @@ use seven zero|}
       ~turn:0
       ()
   in
-  let playable, needs_target =
-    Rule_engine.playable_and_swap_ids rules t ~player_id:0
+  let playable, needs_swap, needs_draw =
+    Rule_engine.playable_and_target_ids rules t ~player_id:0
   in
-  print_s [%message (playable : int list) (needs_target : int list)];
-  [%expect {| ((playable (871 870)) (needs_target (870))) |}]
+  print_s
+    [%message
+      (playable : int list) (needs_swap : int list) (needs_draw : int list)];
+  [%expect {| ((playable (871 870)) (needs_swap (870)) (needs_draw ())) |}]
 ;;
 
 (* the DSL's first setting (deal N cards) and its first blocking effect
@@ -2996,7 +2998,7 @@ rule "play plus four" priority 110:
         (List.map t.players ~f:(fun p -> List.length (Player.get_hand p)) : int list)];
   [%expect
     {|
-    (e "Choose another player to aim this card at")
+    (e "Choose another player to aim the draw at")
     ("aimed at c"
      ("List.map t.players ~f:(fun p -> List.length (Player.get_hand p))" (1 0 4))
      (t.turn 1))

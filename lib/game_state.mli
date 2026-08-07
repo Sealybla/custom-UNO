@@ -50,11 +50,13 @@ module Effect : sig
   [@@deriving sexp, compare, equal, bin_io]
 end
 
-(* the rejection text the chosen-target effects (SwapHandsWithChosen,
-   ChosenPlayerDraws) produce when the play declared no target. The server
-   greps for it when simulating playability, turning "would be legal, but
-   needs a target" into the UI's player picker. *)
-val target_needed : string
+(* the rejection texts the chosen-target effects produce when the play
+   declared no target: SwapHandsWithChosen the first, ChosenPlayerDraws the
+   second. The server greps for them when simulating playability, turning
+   "would be legal, but needs a target" into the UI's player picker - worded
+   as a swap or an aimed draw by which text matched. *)
+val target_needed_swap : string
+val target_needed_draw : string
 
 type t =
   { players : Player.t list

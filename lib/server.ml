@@ -132,14 +132,18 @@ let hand_counts_event (state : Game_state.t) =
 let hand_updated_event (room : Room.t) state player =
   (* asked per player, because with jump-in enabled someone who is not
      the current player may still have a legal move *)
-  let playable_ids, swap_target_ids =
-    Rule_engine.playable_and_swap_ids
+  let playable_ids, swap_target_ids, draw_target_ids =
+    Rule_engine.playable_and_target_ids
       room.ruleset
       state
       ~player_id:(Player.get_id player)
   in
   Action.Server_to_client.Hand_updated
-    { your_hand = hand_of_player state player; playable_ids; swap_target_ids }
+    { your_hand = hand_of_player state player
+    ; playable_ids
+    ; swap_target_ids
+    ; draw_target_ids
+    }
 ;;
 
 let send_hands (room : Room.t) state =
@@ -1126,17 +1130,17 @@ let start
             | Error e -> return (Error e)
             | Ok (name, room) ->
               let lobby_snapshot () =
-                lobby_event room
-                :: (if String.is_empty room.rules_text
-                    then []
-                    else
-                      (* empty player_name marks a snapshot, not a fresh edit *)
-                      [ Action.Server_to_client.Rules_updated
-                          { player_name = ""
-                          ; num_rules = List.length room.ruleset
-                          ; rules_text = room.rules_text
-                          }
-                      ])
+                (* empty player_name marks a snapshot, not a fresh edit;
+                   empty rules_text says the room runs the defaults, so a
+                   joiner's editor resets instead of keeping whatever the
+                   previous room was playing *)
+                [ lobby_event room
+                ; Action.Server_to_client.Rules_updated
+                    { player_name = ""
+                    ; num_rules = List.length room.ruleset
+                    ; rules_text = room.rules_text
+                    }
+                ]
               in
               (match room.game_state with
                | None -> return (Ok (lobby_snapshot ()))
@@ -1168,8 +1172,9 @@ let start
                            (* Game_started has no playable ids, so a client
                               rebuilding from this snapshot would think
                               nothing was playable until the next action *)
-                         ; (let playable_ids, swap_target_ids =
-                              Rule_engine.playable_and_swap_ids
+                         ; (let playable_ids, swap_target_ids, draw_target_ids
+                              =
+                              Rule_engine.playable_and_target_ids
                                 room.ruleset
                                 game
                                 ~player_id:(Player.get_id player)
@@ -1178,6 +1183,7 @@ let start
                               { your_hand = hand_of_player game player
                               ; playable_ids
                               ; swap_target_ids
+                              ; draw_target_ids
                               })
                           ; hand_counts_event game
                           ; turn_changed_event room game

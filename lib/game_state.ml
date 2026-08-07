@@ -75,14 +75,14 @@ module Effect = struct
     | SwapHandsWithNext
     (* like SwapHandsWithNext but with the player the actor named when
        playing the card (the authentic seven-zero 7); rejects the play
-       with [target_needed] when no target was declared *)
+       with [target_needed_swap] when no target was declared *)
     | SwapHandsWithChosen
     (* every hand moves one seat in the play direction (seven-zero's 0) *)
     | RotateHands
     (* every player except the actor draws (chaos house rules) *)
     | AllOthersDraw of int
     (* the player the actor aimed the card at draws (targeted +4 rules);
-       rejects with [target_needed] when no target was declared. NO winner
+       rejects with [target_needed_draw] when no target was declared. NO winner
        guard: like the built-in +2/+4, a winning final card still delivers
        its draws. *)
     | ChosenPlayerDraws of int
@@ -311,7 +311,11 @@ let draw_n t player_id n =
   go t n
 ;;
 
-let target_needed = "Choose another player to aim this card at"
+(* the engine's playability probe matches these exact strings to sort
+   needs-a-target cards from illegal ones - and swaps from aimed draws, so
+   the UI can word its picker by what the card does. Keep them distinct. *)
+let target_needed_swap = "Choose another player to swap hands with"
+let target_needed_draw = "Choose another player to aim the draw at"
 
 (* trade two players' entire hands. No catch-window bookkeeping here:
    update_uno_window recomputes it from the actor's final hand after every
@@ -555,7 +559,7 @@ let apply_effect ?card_playable t ~(event : Event.t) (eff : Effect.t)
         else
           Ok (swap_hands t ~a:(Player.get_id player) ~b:(Player.get_id target))
       | Event.CardPlayed { swap_with = None; _ } ->
-        Or_error.error_string target_needed
+        Or_error.error_string target_needed_swap
       | _ ->
         Or_error.error_string
           "'swap hands with chosen player' only makes sense on a card play")
@@ -608,7 +612,7 @@ let apply_effect ?card_playable t ~(event : Event.t) (eff : Effect.t)
            "That player has already finished - pick someone still playing"
        else draw_n t (Player.get_id target) n
      | Event.CardPlayed { swap_with = None; _ } ->
-       Or_error.error_string target_needed
+       Or_error.error_string target_needed_draw
      | _ ->
        Or_error.error_string
          "'chosen player draws' only makes sense on a card play")

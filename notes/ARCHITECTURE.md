@@ -487,10 +487,11 @@ HTTP routes: `/api/{create-room, join, leave, poll, state, start, ready, draw,
 pass, uno, play, bots, rules, check-rules, preset-rules, login, me, mode-save,
 mode-delete}`.
 
-**Card legality is computed server-side.** `Rule_engine.playable_and_swap_ids`
+**Card legality is computed server-side.** `Rule_engine.playable_and_target_ids`
 simulates every card in the hand and returns the ids that are legal, plus the
-subset that still needs a swap target chosen. The browser only highlights what
-that list says. Legality was briefly duplicated in JS; with user-editable rules
+subsets that still need a target chosen (split into hand-swaps and aimed
+draws, so the UI can word the picker). The browser only highlights what
+those lists say. Legality was briefly duplicated in JS; with user-editable rules
 that duplicate is guaranteed to drift, so the client no longer has an opinion.
 
 ### Terminal (`bin/client.ml`)
